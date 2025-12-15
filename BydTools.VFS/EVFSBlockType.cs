@@ -133,6 +133,6 @@
         /// <summary>
         /// Raw assets
         /// </summary>
-        Raw = 100
+        Raw = 100,
     }
 }

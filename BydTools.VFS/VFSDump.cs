@@ -1,10 +1,12 @@
-﻿using System.Reflection;
-using BydTools.VFS.Crypto;
+﻿using BydTools.VFS.Crypto;
 using BydTools.VFS.Extensions;
 
 namespace BydTools.VFS;
 
-internal class VFSDump
+/// <summary>
+/// Provides functionality to dump files from VFS blocks.
+/// </summary>
+public class VFSDumper
 {
     /// <summary>
     /// Maps EVFSBlockType to groupCfgName as used in BLC files.
@@ -60,151 +62,38 @@ internal class VFSDump
         { EVFSBlockType.AudioKorean, "E9D31017" },
     };
 
-    static void Main(string[] args)
-    {
-        if (args.Length == 0)
-        {
-            PrintHelp();
-            return;
-        }
-
-        // Manual command line parsing to support:
-        // BydTools.VFS.exe --gamepath "xxx" --blocktype "xxx" --output "xxx"
-        string? gamePath = null;
-        string? blockTypeString = null;
-        string? outputDir = null;
-        bool showHelp = false;
-        bool showVersion = false;
-
-        for (int i = 0; i < args.Length; i++)
-        {
-            var arg = args[i];
-
-            switch (arg)
-            {
-                case "-h":
-                case "--help":
-                    showHelp = true;
-                    break;
-
-                case "-v":
-                case "--version":
-                    showVersion = true;
-                    break;
-
-                case "--gamepath":
-                    if (i + 1 >= args.Length)
-                    {
-                        Console.Error.WriteLine("Error: --gamepath requires a value.");
-                        return;
-                    }
-                    gamePath = args[++i];
-                    break;
-
-                case "--blocktype":
-                    if (i + 1 >= args.Length)
-                    {
-                        Console.Error.WriteLine("Error: --blocktype requires a value.");
-                        return;
-                    }
-                    blockTypeString = args[++i];
-                    break;
-
-                case "--output":
-                    if (i + 1 >= args.Length)
-                    {
-                        Console.Error.WriteLine("Error: --output requires a value.");
-                        return;
-                    }
-                    outputDir = args[++i];
-                    break;
-
-                default:
-                    Console.Error.WriteLine("Unknown argument: {0}", arg);
-                    PrintHelp();
-                    return;
-            }
-        }
-
-        if (showVersion)
-        {
-            PrintVersion();
-            if (!showHelp)
-                return;
-        }
-
-        if (showHelp)
-        {
-            PrintHelp();
-            return;
-        }
-
-        if (string.IsNullOrWhiteSpace(gamePath))
-        {
-            Console.Error.WriteLine("Error: --gamepath is required.");
-            PrintHelp();
-            return;
-        }
-
-        // Default output directory
-        outputDir ??= Path.Combine(AppContext.BaseDirectory, "Assets");
-
-        // Parse blocktype, support name or numeric value, default is All
-        EVFSBlockType dumpAssetType = EVFSBlockType.All;
-        if (!string.IsNullOrWhiteSpace(blockTypeString))
-        {
-            if (!Enum.TryParse<EVFSBlockType>(blockTypeString, ignoreCase: true, out dumpAssetType))
-            {
-                // Try parse as numeric value
-                if (byte.TryParse(blockTypeString, out var btValue) &&
-                    Enum.IsDefined(typeof(EVFSBlockType), btValue))
-                {
-                    dumpAssetType = (EVFSBlockType)btValue;
-                }
-                else
-                {
-                    Console.Error.WriteLine("Error: failed to parse blocktype \"{0}\".", blockTypeString);
-                    Console.Error.WriteLine("Available types: {0}", string.Join(", ", blockHashMap.Keys));
-                    return;
-                }
-            }
-        }
-
-        var streamingAssetsPath = Path.Combine(gamePath, VFSDefine.VFS_DIR);
-        if (!Directory.Exists(streamingAssetsPath))
-        {
-            Console.Error.WriteLine("Error: VFS directory ({1}) not found under \"{0}\".", gamePath, VFSDefine.VFS_DIR);
-            return;
-        }
-
-        if (dumpAssetType == EVFSBlockType.All)
-        {
-            foreach (var type in blockHashMap.Keys)
-            {
-                DumpAssetByType(streamingAssetsPath, type, outputDir);
-            }
-        }
-        else
-        {
-            DumpAssetByType(streamingAssetsPath, dumpAssetType, outputDir);
-        }
-    }
-
-    private static void DumpAssetByType(string streamingAssetsPath, EVFSBlockType dumpAssetType, string outputDir)
+    /// <summary>
+    /// Dumps files from a VFS block type.
+    /// </summary>
+    /// <param name="streamingAssetsPath">Path to the VFS directory.</param>
+    /// <param name="dumpAssetType">The block type to dump.</param>
+    /// <param name="outputDir">Output directory for dumped files.</param>
+    public void DumpAssetByType(
+        string streamingAssetsPath,
+        EVFSBlockType dumpAssetType,
+        string outputDir
+    )
     {
         Console.WriteLine("Dumping {0} files...", dumpAssetType.ToString());
 
         // Use the pre-computed hash to find the block directory
         if (!blockHashMap.TryGetValue(dumpAssetType, out var hashName))
         {
-            Console.Error.WriteLine("Block type {0} has no known hash mapping!", dumpAssetType.ToString());
+            Console.Error.WriteLine(
+                "Block type {0} has no known hash mapping!",
+                dumpAssetType.ToString()
+            );
             return;
         }
 
         var blockDir = Path.Combine(streamingAssetsPath, hashName);
         if (!Directory.Exists(blockDir))
         {
-            Console.Error.WriteLine("Block directory {0} not found for type {1}!", hashName, dumpAssetType.ToString());
+            Console.Error.WriteLine(
+                "Block directory {0} not found for type {1}!",
+                hashName,
+                dumpAssetType.ToString()
+            );
             return;
         }
 
@@ -224,7 +113,13 @@ internal class VFSDump
         // Decrypt the BLC file content (starting after the header)
         using var chacha = new CSChaCha20(Convert.FromBase64String(VFSDefine.CHACHA_KEY), nonce, 1);
         var decryptedBytes = chacha.DecryptBytes(blockFile[VFSDefine.BLOCK_HEAD_LEN..]);
-        Buffer.BlockCopy(decryptedBytes, 0, blockFile, VFSDefine.BLOCK_HEAD_LEN, decryptedBytes.Length);
+        Buffer.BlockCopy(
+            decryptedBytes,
+            0,
+            blockFile,
+            VFSDefine.BLOCK_HEAD_LEN,
+            decryptedBytes.Length
+        );
 
         // Parse the VFBlockMainInfo structure.
         // Note: the version field is located at the beginning of the BLC file (offset 0).
@@ -239,7 +134,8 @@ internal class VFSDump
             // Convert MD5 to hex string for filename.
             // We write back the in-memory UInt128 as little-endian bytes to recover the original
             // 16-byte sequence so that the generated filename matches the .chk filename on disk.
-            var chunkMd5Name = chunk.md5Name.ToHexStringLittleEndian() + FVFBlockChunkInfo.FILE_EXTENSION;
+            var chunkMd5Name =
+                chunk.md5Name.ToHexStringLittleEndian() + FVFBlockChunkInfo.FILE_EXTENSION;
             var chunkFilePath = Path.Combine(blockDir, chunkMd5Name);
 
             if (!File.Exists(chunkFilePath))
@@ -266,11 +162,29 @@ internal class VFSDump
                     // Build nonce for file decryption:
                     // - First 4 bytes: VFS_PROTO_VERSION (little-endian)
                     // - Next 8 bytes: ivSeed (little-endian)
-                    byte[] fileNonce = GC.AllocateUninitializedArray<byte>(VFSDefine.BLOCK_HEAD_LEN);
-                    Buffer.BlockCopy(BitConverter.GetBytes(vfBlockMainInfo.version), 0, fileNonce, 0, sizeof(int));
-                    Buffer.BlockCopy(BitConverter.GetBytes(file.ivSeed), 0, fileNonce, sizeof(int), sizeof(long));
+                    byte[] fileNonce = GC.AllocateUninitializedArray<byte>(
+                        VFSDefine.BLOCK_HEAD_LEN
+                    );
+                    Buffer.BlockCopy(
+                        BitConverter.GetBytes(vfBlockMainInfo.version),
+                        0,
+                        fileNonce,
+                        0,
+                        sizeof(int)
+                    );
+                    Buffer.BlockCopy(
+                        BitConverter.GetBytes(file.ivSeed),
+                        0,
+                        fileNonce,
+                        sizeof(int),
+                        sizeof(long)
+                    );
 
-                    using var fileChacha = new CSChaCha20(Convert.FromBase64String(VFSDefine.CHACHA_KEY), fileNonce, 1);
+                    using var fileChacha = new CSChaCha20(
+                        Convert.FromBase64String(VFSDefine.CHACHA_KEY),
+                        fileNonce,
+                        1
+                    );
 
                     // Read encrypted data
                     var encryptedData = new byte[file.len];
@@ -288,7 +202,11 @@ internal class VFSDump
                 }
             }
 
-            Console.WriteLine("  Dumped {0} file(s) from chunk {1}", chunk.files.Length, chunkMd5Name);
+            Console.WriteLine(
+                "  Dumped {0} file(s) from chunk {1}",
+                chunk.files.Length,
+                chunkMd5Name
+            );
         }
 
         Console.WriteLine("  Completed dumping {0}!", dumpAssetType.ToString());
@@ -297,7 +215,7 @@ internal class VFSDump
     /// <summary>
     /// Prints detailed debug information for a BLC file (VFBlockMainInfo).
     /// </summary>
-    private static void DumpBlockInfo(VFBlockMainInfo info)
+    private void DumpBlockInfo(VFBlockMainInfo info)
     {
         Console.WriteLine("========== BLC INFO ==========");
         Console.WriteLine("GroupCfgName   : {0}", info.groupCfgName);
@@ -325,11 +243,21 @@ internal class VFSDump
                 Console.WriteLine("    File #{0}:", j);
                 Console.WriteLine("      name        : {0}", file.fileName);
                 Console.WriteLine("      nameHash    : 0x{0:X16}", file.fileNameHash);
-                Console.WriteLine("      chunkMD5    : {0}", file.fileChunkMD5Name.ToHexStringLittleEndian());
-                Console.WriteLine("      dataMD5     : {0}", file.fileDataMD5.ToHexStringLittleEndian());
+                Console.WriteLine(
+                    "      chunkMD5    : {0}",
+                    file.fileChunkMD5Name.ToHexStringLittleEndian()
+                );
+                Console.WriteLine(
+                    "      dataMD5     : {0}",
+                    file.fileDataMD5.ToHexStringLittleEndian()
+                );
                 Console.WriteLine("      offset      : {0}", file.offset);
                 Console.WriteLine("      len         : {0}", file.len);
-                Console.WriteLine("      blockType   : {0} ({1})", file.blockType, (byte)file.blockType);
+                Console.WriteLine(
+                    "      blockType   : {0} ({1})",
+                    file.blockType,
+                    (byte)file.blockType
+                );
                 Console.WriteLine("      useEncrypt  : {0}", file.bUseEncrypt);
                 if (file.bUseEncrypt)
                 {
@@ -343,30 +271,13 @@ internal class VFSDump
         Console.WriteLine("======== END BLC INFO ========");
     }
 
-    private static void PrintHelp()
-    {
-        var exeName = Path.GetFileName(Assembly.GetEntryAssembly()?.Location ?? "BydTools.VFS.exe");
-        Console.WriteLine("Usage:");
-        Console.WriteLine("  BydTools.VFS.exe --gamepath <game_path> [--blocktype <type>] [--output <output_dir>] [-h|--help] [-v|--version]", exeName);
-        Console.WriteLine();
-        Console.WriteLine("Arguments:");
-        Console.WriteLine("  --gamepath   Game data directory that contains the VFS folder");
-        Console.WriteLine("  --blocktype  Block type to dump, supports name or numeric value, default is all");
-        Console.WriteLine("               Available types: {0}", string.Join(", ", blockHashMap.Keys));
-        Console.WriteLine("  --output     Output directory, default is ./Assets next to the executable");
-        Console.WriteLine("  -h, --help   Show help information");
-        Console.WriteLine("  -v, --version   Show version information");
-        Console.WriteLine();
-        Console.WriteLine("Examples:");
-        Console.WriteLine("  BydTools.VFS.exe --gamepath \"D:\\\\Game\" --blocktype Bundle --output \"D:\\\\DumpedAssets\"", exeName);
-        Console.WriteLine("  BydTools.VFS.exe --gamepath \"D:\\\\Game\" --blocktype 12", exeName);
-        Console.WriteLine("  BydTools.VFS.exe --gamepath \"D:\\\\Game\"", exeName);
-    }
+    /// <summary>
+    /// Gets the block type name map.
+    /// </summary>
+    public static Dictionary<EVFSBlockType, string> BlockTypeNameMap => blockTypeNameMap;
 
-    private static void PrintVersion()
-    {
-        var asm = Assembly.GetEntryAssembly() ?? Assembly.GetExecutingAssembly();
-        var version = asm.GetName().Version?.ToString() ?? "unknown";
-        Console.WriteLine("{0} v{1}", asm.GetName().Name, version);
-    }
+    /// <summary>
+    /// Gets the block hash map.
+    /// </summary>
+    public static Dictionary<EVFSBlockType, string> BlockHashMap => blockHashMap;
 }

@@ -34,7 +34,9 @@ public class VFBlockMainInfo
         // Read groupCfgHashName as big-endian 4 bytes, convert to hex string.
         // The blog mentions: "groupCfgHashName is 8 bytes long but only the first 4 bytes are valid".
         // We read 4 bytes in big-endian and convert to uppercase hex.
-        groupCfgHashName = Convert.ToHexString(bytes.AsSpan(offset, 4).ToArray().Reverse().ToArray());
+        groupCfgHashName = Convert.ToHexString(
+            bytes.AsSpan(offset, 4).ToArray().Reverse().ToArray()
+        );
         offset += sizeof(long); // Skip full 8 bytes as per the structure
 
         // Read groupFileInfoNum (4 bytes, little-endian)
@@ -80,7 +82,9 @@ public class VFBlockMainInfo
             foreach (ref var file in chunk.files.AsSpan())
             {
                 // Read fileName (2 bytes length + UTF-8 string)
-                ushort fileNameLength = BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(offset));
+                ushort fileNameLength = BinaryPrimitives.ReadUInt16LittleEndian(
+                    bytes.AsSpan(offset)
+                );
                 offset += sizeof(ushort);
                 file.fileName = Encoding.UTF8.GetString(bytes.AsSpan(offset, fileNameLength));
                 offset += fileNameLength;
@@ -90,7 +94,9 @@ public class VFBlockMainInfo
                 offset += sizeof(long);
 
                 // Read fileChunkMD5Name (16 bytes as UInt128, little-endian)
-                file.fileChunkMD5Name = BinaryPrimitives.ReadUInt128LittleEndian(bytes.AsSpan(offset));
+                file.fileChunkMD5Name = BinaryPrimitives.ReadUInt128LittleEndian(
+                    bytes.AsSpan(offset)
+                );
                 offset += Marshal.SizeOf<UInt128>();
 
                 // Read fileDataMD5 (16 bytes as UInt128, little-endian)

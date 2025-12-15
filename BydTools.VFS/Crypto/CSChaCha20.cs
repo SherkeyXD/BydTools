@@ -17,9 +17,9 @@
 
 using System;
 using System.IO;
-using System.Threading.Tasks;
-using System.Runtime.Intrinsics;
 using System.Runtime.CompilerServices;
+using System.Runtime.Intrinsics;
+using System.Threading.Tasks;
 
 namespace BydTools.VFS.Crypto;
 
@@ -51,7 +51,7 @@ public enum SimdMode
     /// <summary>
     /// No SIMD
     /// </summary>
-    None
+    None,
 }
 
 /// <summary>
@@ -127,12 +127,8 @@ public sealed class CSChaCha20 : IDisposable
     /// </summary>
     public uint[] State
     {
-        get
-        {
-            return state;
-        }
+        get { return state; }
     }
-
 
     // These are the same constants defined in the reference implementation.
     // http://cr.yp.to/streamciphers/timings/estreambench/submissions/salsa20/chacha8/ref/chacha.c
@@ -154,7 +150,9 @@ public sealed class CSChaCha20 : IDisposable
 
         if (key.Length != allowedKeyLength)
         {
-            throw new ArgumentException($"Key length must be {allowedKeyLength}. Actual: {key.Length}");
+            throw new ArgumentException(
+                $"Key length must be {allowedKeyLength}. Actual: {key.Length}"
+            );
         }
 
         state[4] = Util.U8To32Little(key, 0);
@@ -198,7 +196,9 @@ public sealed class CSChaCha20 : IDisposable
         {
             // There has already been some state set up. Clear it before exiting.
             Dispose();
-            throw new ArgumentException($"Nonce length must be {allowedNonceLength}. Actual: {nonce.Length}");
+            throw new ArgumentException(
+                $"Nonce length must be {allowedNonceLength}. Actual: {nonce.Length}"
+            );
         }
 
         state[12] = counter;
@@ -235,7 +235,12 @@ public sealed class CSChaCha20 : IDisposable
     /// <param name="input">Input byte array</param>
     /// <param name="numBytes">Number of bytes to encrypt</param>
     /// <param name="simdMode">Chosen SIMD mode (default is auto-detect)</param>
-    public void EncryptBytes(byte[] output, byte[] input, int numBytes, SimdMode simdMode = SimdMode.AutoDetect)
+    public void EncryptBytes(
+        byte[] output,
+        byte[] input,
+        int numBytes,
+        SimdMode simdMode = SimdMode.AutoDetect
+    )
     {
         if (output == null)
         {
@@ -249,12 +254,18 @@ public sealed class CSChaCha20 : IDisposable
 
         if (numBytes < 0 || numBytes > input.Length)
         {
-            throw new ArgumentOutOfRangeException("numBytes", "The number of bytes to read must be between [0..input.Length]");
+            throw new ArgumentOutOfRangeException(
+                "numBytes",
+                "The number of bytes to read must be between [0..input.Length]"
+            );
         }
 
         if (output.Length < numBytes)
         {
-            throw new ArgumentOutOfRangeException("output", $"Output byte array should be able to take at least {numBytes}");
+            throw new ArgumentOutOfRangeException(
+                "output",
+                $"Output byte array should be able to take at least {numBytes}"
+            );
         }
 
         if (simdMode == SimdMode.AutoDetect)
@@ -272,7 +283,12 @@ public sealed class CSChaCha20 : IDisposable
     /// <param name="input">Input stream</param>
     /// <param name="howManyBytesToProcessAtTime">How many bytes to read and write at time, default is 1024</param>
     /// <param name="simdMode">Chosen SIMD mode (default is auto-detect)</param>
-    public void EncryptStream(Stream output, Stream input, int howManyBytesToProcessAtTime = 1024, SimdMode simdMode = SimdMode.AutoDetect)
+    public void EncryptStream(
+        Stream output,
+        Stream input,
+        int howManyBytesToProcessAtTime = 1024,
+        SimdMode simdMode = SimdMode.AutoDetect
+    )
     {
         if (simdMode == SimdMode.AutoDetect)
         {
@@ -289,7 +305,12 @@ public sealed class CSChaCha20 : IDisposable
     /// <param name="input">Input stream</param>
     /// <param name="howManyBytesToProcessAtTime">How many bytes to read and write at time, default is 1024</param>
     /// <param name="simdMode">Chosen SIMD mode (default is auto-detect)</param>
-    public async Task EncryptStreamAsync(Stream output, Stream input, int howManyBytesToProcessAtTime = 1024, SimdMode simdMode = SimdMode.AutoDetect)
+    public async Task EncryptStreamAsync(
+        Stream output,
+        Stream input,
+        int howManyBytesToProcessAtTime = 1024,
+        SimdMode simdMode = SimdMode.AutoDetect
+    )
     {
         if (simdMode == SimdMode.AutoDetect)
         {
@@ -343,7 +364,10 @@ public sealed class CSChaCha20 : IDisposable
 
         if (numBytes < 0 || numBytes > input.Length)
         {
-            throw new ArgumentOutOfRangeException("numBytes", "The number of bytes to read must be between [0..input.Length]");
+            throw new ArgumentOutOfRangeException(
+                "numBytes",
+                "The number of bytes to read must be between [0..input.Length]"
+            );
         }
 
         if (simdMode == SimdMode.AutoDetect)
@@ -419,7 +443,12 @@ public sealed class CSChaCha20 : IDisposable
     /// <param name="input">Input byte array</param>
     /// <param name="numBytes">Number of bytes to decrypt</param>
     /// <param name="simdMode">Chosen SIMD mode (default is auto-detect)</param>
-    public void DecryptBytes(byte[] output, byte[] input, int numBytes, SimdMode simdMode = SimdMode.AutoDetect)
+    public void DecryptBytes(
+        byte[] output,
+        byte[] input,
+        int numBytes,
+        SimdMode simdMode = SimdMode.AutoDetect
+    )
     {
         if (output == null)
         {
@@ -433,12 +462,18 @@ public sealed class CSChaCha20 : IDisposable
 
         if (numBytes < 0 || numBytes > input.Length)
         {
-            throw new ArgumentOutOfRangeException("numBytes", "The number of bytes to read must be between [0..input.Length]");
+            throw new ArgumentOutOfRangeException(
+                "numBytes",
+                "The number of bytes to read must be between [0..input.Length]"
+            );
         }
 
         if (output.Length < numBytes)
         {
-            throw new ArgumentOutOfRangeException("output", $"Output byte array should be able to take at least {numBytes}");
+            throw new ArgumentOutOfRangeException(
+                "output",
+                $"Output byte array should be able to take at least {numBytes}"
+            );
         }
 
         if (simdMode == SimdMode.AutoDetect)
@@ -456,7 +491,12 @@ public sealed class CSChaCha20 : IDisposable
     /// <param name="input">Input stream</param>
     /// <param name="howManyBytesToProcessAtTime">How many bytes to read and write at time, default is 1024</param>
     /// <param name="simdMode">Chosen SIMD mode (default is auto-detect)</param>
-    public void DecryptStream(Stream output, Stream input, int howManyBytesToProcessAtTime = 1024, SimdMode simdMode = SimdMode.AutoDetect)
+    public void DecryptStream(
+        Stream output,
+        Stream input,
+        int howManyBytesToProcessAtTime = 1024,
+        SimdMode simdMode = SimdMode.AutoDetect
+    )
     {
         if (simdMode == SimdMode.AutoDetect)
         {
@@ -473,7 +513,12 @@ public sealed class CSChaCha20 : IDisposable
     /// <param name="input">Input stream</param>
     /// <param name="howManyBytesToProcessAtTime">How many bytes to read and write at time, default is 1024</param>
     /// <param name="simdMode">Chosen SIMD mode (default is auto-detect)</param>
-    public async Task DecryptStreamAsync(Stream output, Stream input, int howManyBytesToProcessAtTime = 1024, SimdMode simdMode = SimdMode.AutoDetect)
+    public async Task DecryptStreamAsync(
+        Stream output,
+        Stream input,
+        int howManyBytesToProcessAtTime = 1024,
+        SimdMode simdMode = SimdMode.AutoDetect
+    )
     {
         if (simdMode == SimdMode.AutoDetect)
         {
@@ -527,7 +572,10 @@ public sealed class CSChaCha20 : IDisposable
 
         if (numBytes < 0 || numBytes > input.Length)
         {
-            throw new ArgumentOutOfRangeException("numBytes", "The number of bytes to read must be between [0..input.Length]");
+            throw new ArgumentOutOfRangeException(
+                "numBytes",
+                "The number of bytes to read must be between [0..input.Length]"
+            );
         }
 
         if (simdMode == SimdMode.AutoDetect)
@@ -591,7 +639,12 @@ public sealed class CSChaCha20 : IDisposable
 
     #endregion // Decryption methods
 
-    private void WorkStreams(Stream output, Stream input, SimdMode simdMode, int howManyBytesToProcessAtTime = 1024)
+    private void WorkStreams(
+        Stream output,
+        Stream input,
+        SimdMode simdMode,
+        int howManyBytesToProcessAtTime = 1024
+    )
     {
         int readBytes;
 
@@ -608,22 +661,40 @@ public sealed class CSChaCha20 : IDisposable
         }
     }
 
-    private async Task WorkStreamsAsync(Stream output, Stream input, SimdMode simdMode, int howManyBytesToProcessAtTime = 1024)
+    private async Task WorkStreamsAsync(
+        Stream output,
+        Stream input,
+        SimdMode simdMode,
+        int howManyBytesToProcessAtTime = 1024
+    )
     {
         byte[] readBytesBuffer = new byte[howManyBytesToProcessAtTime];
         byte[] writeBytesBuffer = new byte[howManyBytesToProcessAtTime];
-        int howManyBytesWereRead = await input.ReadAsync(readBytesBuffer, 0, howManyBytesToProcessAtTime);
+        int howManyBytesWereRead = await input.ReadAsync(
+            readBytesBuffer,
+            0,
+            howManyBytesToProcessAtTime
+        );
 
         while (howManyBytesWereRead > 0)
         {
             // Encrypt or decrypt
-            WorkBytes(output: writeBytesBuffer, input: readBytesBuffer, numBytes: howManyBytesWereRead, simdMode);
+            WorkBytes(
+                output: writeBytesBuffer,
+                input: readBytesBuffer,
+                numBytes: howManyBytesWereRead,
+                simdMode
+            );
 
             // Write
             await output.WriteAsync(writeBytesBuffer, 0, howManyBytesWereRead);
 
             // Read more
-            howManyBytesWereRead = await input.ReadAsync(readBytesBuffer, 0, howManyBytesToProcessAtTime);
+            howManyBytesWereRead = await input.ReadAsync(
+                readBytesBuffer,
+                0,
+                howManyBytesToProcessAtTime
+            );
         }
     }
 
@@ -641,8 +712,8 @@ public sealed class CSChaCha20 : IDisposable
             throw new ObjectDisposedException("state", "The ChaCha state has been disposed");
         }
 
-        uint[] x = new uint[stateLength];    // Working buffer
-        byte[] tmp = new byte[processBytesAtTime];  // Temporary buffer
+        uint[] x = new uint[stateLength]; // Working buffer
+        byte[] tmp = new byte[processBytesAtTime]; // Temporary buffer
         int offset = 0;
 
         int howManyFullLoops = numBytes / processBytesAtTime;
@@ -725,7 +796,11 @@ public sealed class CSChaCha20 : IDisposable
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static void UpdateStateAndGenerateTemporaryBuffer(uint[] stateToModify, uint[] workingBuffer, byte[] temporaryBuffer)
+    private static void UpdateStateAndGenerateTemporaryBuffer(
+        uint[] stateToModify,
+        uint[] workingBuffer,
+        byte[] temporaryBuffer
+    )
     {
         // Copy state to working buffer
         Buffer.BlockCopy(stateToModify, 0, workingBuffer, 0, stateLength * sizeof(uint));
@@ -801,8 +876,8 @@ public sealed class CSChaCha20 : IDisposable
     {
         Dispose(true);
         /*
-			* The Garbage Collector does not need to invoke the finalizer because Dispose(bool) has already done all the cleanup needed.
-			*/
+            * The Garbage Collector does not need to invoke the finalizer because Dispose(bool) has already done all the cleanup needed.
+            */
         GC.SuppressFinalize(this);
     }
 

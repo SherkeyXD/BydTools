@@ -39,5 +39,5 @@ public enum EVFSLoaderPosType : byte
     /// <summary>
     /// Asset loaded from VFS build.
     /// </summary>
-    VFS_Build = 13
+    VFS_Build = 13,
 }
