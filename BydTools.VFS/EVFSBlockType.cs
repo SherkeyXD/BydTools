@@ -1,4 +1,4 @@
-﻿namespace BeyondTools.VFS
+﻿namespace BydTools.VFS
 {
     /// <summary>
     /// VFS block types as defined in the game's VFS system.

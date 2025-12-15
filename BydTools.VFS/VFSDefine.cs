@@ -1,4 +1,4 @@
-﻿namespace BeyondTools.VFS;
+﻿namespace BydTools.VFS;
 
 /// <summary>
 /// Constants used for VFS (Virtual File System) operations.

@@ -1,6 +1,6 @@
 ﻿using System.Text.Json.Serialization;
 
-namespace BeyondTools.VFS;
+namespace BydTools.VFS;
 
 /// <summary>
 /// Represents chunk information within a VFS block.

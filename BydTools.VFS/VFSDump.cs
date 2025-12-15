@@ -1,8 +1,8 @@
 ﻿using System.Reflection;
-using BeyondTools.VFS.Crypto;
-using BeyondTools.VFS.Extensions;
+using BydTools.VFS.Crypto;
+using BydTools.VFS.Extensions;
 
-namespace BeyondTools.VFS;
+namespace BydTools.VFS;
 
 internal class VFSDump
 {
@@ -69,7 +69,7 @@ internal class VFSDump
         }
 
         // Manual command line parsing to support:
-        // BeyondTools.VFS.exe --gamepath "xxx" --blocktype "xxx" --output "xxx"
+        // BydTools.VFS.exe --gamepath "xxx" --blocktype "xxx" --output "xxx"
         string? gamePath = null;
         string? blockTypeString = null;
         string? outputDir = null;
@@ -345,9 +345,9 @@ internal class VFSDump
 
     private static void PrintHelp()
     {
-        var exeName = Path.GetFileName(Assembly.GetEntryAssembly()?.Location ?? "BeyondTools.VFS.exe");
+        var exeName = Path.GetFileName(Assembly.GetEntryAssembly()?.Location ?? "BydTools.VFS.exe");
         Console.WriteLine("Usage:");
-        Console.WriteLine("  BeyondTools.VFS.exe --gamepath <game_path> [--blocktype <type>] [--output <output_dir>] [-h|--help] [-v|--version]", exeName);
+        Console.WriteLine("  BydTools.VFS.exe --gamepath <game_path> [--blocktype <type>] [--output <output_dir>] [-h|--help] [-v|--version]", exeName);
         Console.WriteLine();
         Console.WriteLine("Arguments:");
         Console.WriteLine("  --gamepath   Game data directory that contains the VFS folder");
@@ -358,9 +358,9 @@ internal class VFSDump
         Console.WriteLine("  -v, --version   Show version information");
         Console.WriteLine();
         Console.WriteLine("Examples:");
-        Console.WriteLine("  BeyondTools.VFS.exe --gamepath \"D:\\\\Game\" --blocktype Bundle --output \"D:\\\\DumpedAssets\"", exeName);
-        Console.WriteLine("  BeyondTools.VFS.exe --gamepath \"D:\\\\Game\" --blocktype 12", exeName);
-        Console.WriteLine("  BeyondTools.VFS.exe --gamepath \"D:\\\\Game\"", exeName);
+        Console.WriteLine("  BydTools.VFS.exe --gamepath \"D:\\\\Game\" --blocktype Bundle --output \"D:\\\\DumpedAssets\"", exeName);
+        Console.WriteLine("  BydTools.VFS.exe --gamepath \"D:\\\\Game\" --blocktype 12", exeName);
+        Console.WriteLine("  BydTools.VFS.exe --gamepath \"D:\\\\Game\"", exeName);
     }
 
     private static void PrintVersion()

@@ -1,8 +1,0 @@
-{
-  "profiles": {
-    "BeyondTools.VFS": {
-      "commandName": "Project",
-      "commandLineArgs": "C:/Users/rafi1/Desktop/etc/Beyond_TMP/Game/Beyond_Data/StreamingAssets InitialBundle C:/EndfieldOut/Assets"
-    }
-  }
-}

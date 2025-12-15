@@ -1,4 +1,4 @@
-﻿namespace BeyondTools.VFS;
+﻿namespace BydTools.VFS;
 
 /// <summary>
 /// Represents file information for a virtual file within a VFS chunk.

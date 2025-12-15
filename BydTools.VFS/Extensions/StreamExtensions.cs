@@ -5,7 +5,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace BeyondTools.VFS.Extensions
+namespace BydTools.VFS.Extensions
 {
     internal static class StreamExtensions
     {

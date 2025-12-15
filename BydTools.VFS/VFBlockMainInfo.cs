@@ -2,7 +2,7 @@
 using System.Runtime.InteropServices;
 using System.Text;
 
-namespace BeyondTools.VFS;
+namespace BydTools.VFS;
 
 /// <summary>
 /// Represents the main information structure of a VFS block (BLC file).

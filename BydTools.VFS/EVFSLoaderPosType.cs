@@ -1,4 +1,4 @@
-﻿namespace BeyondTools.VFS;
+﻿namespace BydTools.VFS;
 
 /// <summary>
 /// Specifies the loader position type for VFS assets.

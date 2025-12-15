@@ -21,7 +21,7 @@ using System.Threading.Tasks;
 using System.Runtime.Intrinsics;
 using System.Runtime.CompilerServices;
 
-namespace BeyondTools.VFS.Crypto;
+namespace BydTools.VFS.Crypto;
 
 /// <summary>
 /// Chosen SIMD mode

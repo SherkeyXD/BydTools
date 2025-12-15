@@ -1,10 +1,12 @@
-## BeyondTools.VFS
+# BydTools
+
+## BydTools.VFS
 
 Dump specific types of files from the game's VFS.
 
 ```
 Usage:
-  BeyondTools.VFS.exe --gamepath <game_path> [--blocktype <type>] [--output <output_dir>] [-h|--help] [-v|--version]
+  BydTools.VFS.exe --gamepath <game_path> [--blocktype <type>] [--output <output_dir>] [-h|--help] [-v|--version]
 
 Arguments:
   --gamepath   Game data directory that contains the VFS folder.
@@ -15,13 +17,12 @@ Arguments:
   -v, --version   Show version information.
 
 Examples:
-  BeyondTools.VFS.exe --gamepath "D:\\Game" --blocktype Bundle --output "D:\\DumpedAssets"
-  BeyondTools.VFS.exe --gamepath "D:\\Game" --blocktype 12
-  BeyondTools.VFS.exe --gamepath "D:\\Game"
+  BydTools.VFS.exe --gamepath "D:\\Game" --blocktype Bundle --output "D:\\DumpedAssets"
+  BydTools.VFS.exe --gamepath "D:\\Game" --blocktype 12
+  BydTools.VFS.exe --gamepath "D:\\Game"
 ```
-
 
 ## Acknowledgements
 
-+ [isHarryh](https://github.com/isHarryh) for unpacking strategy
-+ [rfi/BeyondTools](https://git.crepe.moe/rfi/BeyondTools) the original repo
+- [isHarryh](https://github.com/isHarryh) for unpacking strategy
+- [rfi/BydTools](https://git.crepe.moe/rfi/BydTools) the original repo

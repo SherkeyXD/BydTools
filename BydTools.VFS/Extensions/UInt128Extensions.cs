@@ -1,6 +1,6 @@
 using System.Buffers.Binary;
 
-namespace BeyondTools.VFS.Extensions;
+namespace BydTools.VFS.Extensions;
 
 /// <summary>
 /// Extension methods for UInt128 to convert to hex strings.
