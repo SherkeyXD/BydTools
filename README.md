@@ -21,7 +21,7 @@ Examples:
 ```
 
 
-### Acknowledgements
+## Acknowledgements
 
 + [isHarryh](https://github.com/isHarryh) for unpacking strategy
 + [rfi/BeyondTools](https://git.crepe.moe/rfi/BeyondTools) the original repo
