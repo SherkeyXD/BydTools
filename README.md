@@ -10,7 +10,7 @@ Dump specific types of files from the game's VFS.
 
 ```auto
 Usage:
-  BydTools.cli vfs --gamepath <game_path> [--blocktype <type>] [--output <output_dir>] [-h|--help]
+  BydTools.CLI.exe vfs --gamepath <game_path> [--blocktype <type>] [--output <output_dir>] [-h|--help]
 
 Arguments:
   --gamepath   Game data directory that contains the VFS folder
@@ -31,7 +31,7 @@ Extract files from PCK archives and convert audio files.
 
 ```auto
 Usage:
-  BydTools.cli pck --input <pck_file> --output <output_dir> [--format <format>] [--codebooks <codebooks_path>] [-h|--help]
+  BydTools.CLI.exe pck --input <pck_file> --output <output_dir> [--format <format>] [--codebooks <codebooks_path>] [-h|--help]
 
 Arguments:
   --input, -i      Input PCK file path
