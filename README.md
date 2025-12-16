@@ -48,6 +48,6 @@ Examples:
 ## Acknowledgements
 
 - [isHarryh](https://github.com/isHarryh) for unpacking strategy and pck processing
-- [rfi/BydTools](https://git.crepe.moe/rfi/BydTools) the original repo
+- [rfi/BeyondTools](https://git.crepe.moe/rfi/BeyondTools) the original repo
 - [AssetRipper/BnkExtractor](https://github.com/AssetRipper/BnkExtractor) for bnk and wem processing
 - [Xiph.Org Foundation](https://www.xiph.org/) for ogg processing
