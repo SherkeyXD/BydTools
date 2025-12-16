@@ -55,3 +55,13 @@ CodeCoverage/
 *.VisualState.xml
 TestResult.xml
 nunit-*.xml
+
+# Visual Studio
+.vs/
+.vscode/
+.idea/
+.env/
+.env.local/
+.env.development.local/
+.env.test.local/
+.env.production.local/
