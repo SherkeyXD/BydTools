@@ -62,7 +62,7 @@
         /// Table/data assets (.bytes files, encrypted)
         /// Hash: 42A8FCA6
         /// </summary>
-        Table = 14,
+        TableCfg = 14,
 
         /// <summary>
         /// Video assets (Criware USM .usm files)
@@ -86,13 +86,13 @@
         /// JSON data (.json files, encrypted)
         /// Hash: 775A31D1
         /// </summary>
-        JsonData = 18,
+        Json = 18,
 
         /// <summary>
         /// Lua scripts (.lua files, encrypted)
         /// Hash: 19E3AE45
         /// </summary>
-        Lua = 19,
+        LuaScript = 19,
 
         /// <summary>
         /// IFix patch output (usually empty)

@@ -16,16 +16,16 @@ public class VFSDumper
     /// Block types that require SparkBuffer decryption before saving.
     /// Based on the table: only encrypted (bUseEncrypt = true) block types with SparkBuffer format.
     /// - BundleManifest: Manifest Map (.hgmmap) - encrypted
-    /// - Table: Binary Data (.bytes) - encrypted
-    /// - JsonData: JSON Data (.json) - encrypted
-    /// - Lua: Lua Script (.lua) - encrypted
+    /// - TableCfg: Binary Data (.bytes) - encrypted
+    /// - Json: JSON Data (.json) - encrypted
+    /// - LuaScript: Lua Script (.lua) - encrypted
     /// </summary>
     private static readonly HashSet<EVFSBlockType> SparkBufferBlockTypes = new()
     {
         EVFSBlockType.BundleManifest,  // blockType=3, .hgmmap, encrypted
-        EVFSBlockType.Table,           // blockType=14, .bytes, encrypted
-        EVFSBlockType.JsonData,        // blockType=18, .json, encrypted
-        EVFSBlockType.Lua              // blockType=19, .lua, encrypted
+        EVFSBlockType.TableCfg,        // blockType=14, .bytes, encrypted
+        EVFSBlockType.Json,            // blockType=18, .json, encrypted
+        EVFSBlockType.LuaScript        // blockType=19, .lua, encrypted
     };
 
     /// <summary>
@@ -50,12 +50,12 @@ public class VFSDumper
         { EVFSBlockType.Audio, "Audio" },
         { EVFSBlockType.Bundle, "Bundle" },
         { EVFSBlockType.DynamicStreaming, "DynamicStreaming" },
-        { EVFSBlockType.Table, "Table" },
+        { EVFSBlockType.TableCfg, "TableCfg" },
         { EVFSBlockType.Video, "Video" },
         { EVFSBlockType.IV, "IV" },
         { EVFSBlockType.Streaming, "Streaming" },
-        { EVFSBlockType.JsonData, "JsonData" },
-        { EVFSBlockType.Lua, "Lua" },
+        { EVFSBlockType.Json, "Json" },
+        { EVFSBlockType.LuaScript, "LuaScript" },
         { EVFSBlockType.IFixPatch, "IFixPatchOut" },
         { EVFSBlockType.ExtendData, "ExtendData" },
         { EVFSBlockType.AudioChinese, "AudioChinese" },
@@ -77,12 +77,12 @@ public class VFSDumper
         { EVFSBlockType.Audio, "24ED34CF" },
         { EVFSBlockType.Bundle, "7064D8E2" },
         { EVFSBlockType.DynamicStreaming, "23D53F5D" },
-        { EVFSBlockType.Table, "42A8FCA6" },
+        { EVFSBlockType.TableCfg, "42A8FCA6" },
         { EVFSBlockType.Video, "55FC21C6" },
         { EVFSBlockType.IV, "A63D7E6A" },
         { EVFSBlockType.Streaming, "C3442D43" },
-        { EVFSBlockType.JsonData, "775A31D1" },
-        { EVFSBlockType.Lua, "19E3AE45" },
+        { EVFSBlockType.Json, "775A31D1" },
+        { EVFSBlockType.LuaScript, "19E3AE45" },
         { EVFSBlockType.IFixPatch, "DAFE52C9" },
         { EVFSBlockType.ExtendData, "D6E622F7" },
         { EVFSBlockType.AudioChinese, "E1E7D7CE" },
@@ -323,15 +323,15 @@ public class VFSDumper
                         string outputFilePath;
                         switch (dumpAssetType)
                         {
-                            case EVFSBlockType.Lua:
+                            case EVFSBlockType.LuaScript:
                                 // Lua scripts: save as .lua with JSON representation
                                 outputFilePath = Path.ChangeExtension(filePath, ".lua.json");
                                 break;
-                            case EVFSBlockType.JsonData:
+                            case EVFSBlockType.Json:
                                 // JSON data: keep original .json extension
                                 outputFilePath = Path.ChangeExtension(filePath, ".json");
                                 break;
-                            case EVFSBlockType.Table:
+                            case EVFSBlockType.TableCfg:
                                 // Table data: change .bytes to .json
                                 outputFilePath = Path.ChangeExtension(filePath, ".json");
                                 break;
