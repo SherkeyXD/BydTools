@@ -252,9 +252,9 @@ class Program
             return;
         }
 
-        if (format != "wem" && format != "ogg" && format != "mp3")
+        if (format != "wem" && format != "ogg")
         {
-            Console.Error.WriteLine("Error: --format must be one of: wem, ogg, mp3");
+            Console.Error.WriteLine("Error: --format must be one of: wem, ogg");
             PrintPCKHelp();
             return;
         }
@@ -283,7 +283,7 @@ class Program
         Console.WriteLine("Arguments:");
         Console.WriteLine("  --input, -i      Input PCK file path");
         Console.WriteLine("  --output, -o     Output directory");
-        Console.WriteLine("  --format, -f      Output format: wem, ogg, or mp3 (default: wem)");
+        Console.WriteLine("  --format, -f      Output format: wem or ogg (default: wem)");
         Console.WriteLine(
             "  --codebooks, -c   Path to packed_codebooks.bin (required for WEM to OGG conversion)"
         );

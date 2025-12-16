@@ -9,8 +9,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="NAudio.Lame" Version="2.1.0" />
-    <PackageReference Include="NVorbis" Version="0.10.5" />
     <PackageReference Include="OggVorbisSharp" Version="1.0.1" />
   </ItemGroup>
 

@@ -14,8 +14,4 @@
     <ProjectReference Include="..\BydTools.VFS\BydTools.VFS.csproj" />
     <ProjectReference Include="..\BydTools.PCK\BydTools.PCK.csproj" />
   </ItemGroup>
-
-  <ItemGroup>
-    <PackageReference Include="NAudio.Lame" Version="2.1.0" />
-  </ItemGroup>
 </Project>

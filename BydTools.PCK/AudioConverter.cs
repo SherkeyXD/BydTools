@@ -1,9 +1,6 @@
 using System.Reflection;
 using System.Runtime.InteropServices;
 using BnkExtractor;
-using NAudio.Lame;
-using NAudio.Wave;
-using NVorbis;
 
 namespace BydTools.PCK;
 
@@ -14,44 +11,8 @@ public class AudioConverter
 {
     static AudioConverter()
     {
-        // 确保 NAudio.Lame 的原生 DLL 能被找到
         // 触发 Extractor 的静态构造函数以初始化 DLL 搜索路径
         _ = typeof(Extractor);
-    }
-
-    /// <summary>
-    /// Converts OGG file to MP3.
-    /// </summary>
-    /// <param name="oggPath">Path to the OGG file.</param>
-    /// <param name="mp3Path">Path to the output MP3 file.</param>
-    /// <param name="bitrate">MP3 bitrate in kbps (default: 192).</param>
-    public void ConvertOggToMp3(string oggPath, string mp3Path, int bitrate = 192)
-    {
-        if (!File.Exists(oggPath))
-            throw new FileNotFoundException("OGG file not found", oggPath);
-
-        using var reader = new VorbisReader(oggPath);
-        var sampleRate = reader.SampleRate;
-        var channels = reader.Channels;
-        var waveFormat = new WaveFormat(sampleRate, 16, channels);
-
-        using var writer = new LameMP3FileWriter(mp3Path, waveFormat, bitrate);
-        var buffer = new float[4096 * channels];
-        var pcmBuffer = new byte[buffer.Length * 2]; // 16-bit samples = 2 bytes per sample
-        int samplesRead;
-
-        while ((samplesRead = reader.ReadSamples(buffer, 0, buffer.Length)) > 0)
-        {
-            // Convert float samples to 16-bit PCM
-            for (int i = 0; i < samplesRead; i++)
-            {
-                short sample = (short)(Math.Max(-1.0f, Math.Min(1.0f, buffer[i])) * 32767);
-                pcmBuffer[i * 2] = (byte)(sample & 0xFF);
-                pcmBuffer[i * 2 + 1] = (byte)(sample >> 8);
-            }
-
-            writer.Write(pcmBuffer, 0, samplesRead * 2 * channels);
-        }
     }
 
     /// <summary>

@@ -24,11 +24,11 @@ public class PckConverter
     /// 流程：
     /// 1. 先用 PckExtractor 把 PCK 里的 BNK/WEM 原样导出到临时目录；
     /// 2. 对每个 BNK 调用 BnkExtractor.Extractor.ParseBnk 解析出内部的 WEM；
-    /// 3. 根据格式转换：WEM -> OGG -> (可选) MP3
+    /// 3. 根据格式转换：WEM -> OGG
     /// </summary>
     /// <param name="pckPath">PCK 文件路径</param>
     /// <param name="outputDir">最终输出目录</param>
-    /// <param name="format">输出格式：wem, ogg, 或 mp3</param>
+    /// <param name="format">输出格式：wem 或 ogg</param>
     public void ExtractAndConvert(string pckPath, string outputDir, string format = "ogg")
     {
         if (!File.Exists(pckPath))
@@ -71,7 +71,6 @@ public class PckConverter
             // 3. 根据格式转换文件
             var wemFiles = Directory.GetFiles(tempDir, "*.wem", SearchOption.AllDirectories);
             int convertedCount = 0;
-            var audioConverter = new AudioConverter();
 
             foreach (var wemFile in wemFiles)
             {
@@ -116,52 +115,30 @@ public class PckConverter
                         GC.Collect();
                         GC.WaitForPendingFinalizers();
 
-                        // 根据目标格式处理
-                        if (format.ToLowerInvariant() == "mp3")
+                        // 转换为 OGG 格式
+                        finalOutputPath = Path.Combine(outputDir, $"{fileName}.ogg");
+                        try
                         {
-                            // OGG -> MP3
-                            finalOutputPath = Path.Combine(outputDir, $"{fileName}.mp3");
+                            Extractor.RevorbOgg(sourceOgg, finalOutputPath);
 
-                            // 先 revorb OGG（如果可能）
-                            string revorbedOgg = Path.Combine(tempDir, $"{fileName}_revorb.ogg");
-                            try
+                            // 验证 revorb 后的文件是否存在且有效
+                            if (
+                                !File.Exists(finalOutputPath)
+                                || new FileInfo(finalOutputPath).Length == 0
+                            )
                             {
-                                Extractor.RevorbOgg(sourceOgg, revorbedOgg);
-                                audioConverter.ConvertOggToMp3(revorbedOgg, finalOutputPath);
-                            }
-                            catch
-                            {
-                                // Revorb 失败，直接使用原始 OGG
-                                audioConverter.ConvertOggToMp3(sourceOgg, finalOutputPath);
+                                throw new InvalidOperationException(
+                                    "Revorb failed: output file is missing or empty"
+                                );
                             }
                         }
-                        else // format == "ogg"
+                        catch (Exception revorbEx)
                         {
-                            // 尝试 revorb，如果失败则直接使用原始 OGG
-                            finalOutputPath = Path.Combine(outputDir, $"{fileName}.ogg");
-                            try
-                            {
-                                Extractor.RevorbOgg(sourceOgg, finalOutputPath);
-
-                                // 验证 revorb 后的文件是否存在且有效
-                                if (
-                                    !File.Exists(finalOutputPath)
-                                    || new FileInfo(finalOutputPath).Length == 0
-                                )
-                                {
-                                    throw new InvalidOperationException(
-                                        "Revorb failed: output file is missing or empty"
-                                    );
-                                }
-                            }
-                            catch (Exception revorbEx)
-                            {
-                                // Revorb 失败，输出警告但继续使用原始 OGG
-                                Console.WriteLine(
-                                    $"Warning: Failed to revorb OGG for {Path.GetFileName(wemFile)}: {revorbEx.Message}. Using unrevorbed OGG file."
-                                );
-                                File.Copy(sourceOgg, finalOutputPath, overwrite: true);
-                            }
+                            // Revorb 失败，输出警告但继续使用原始 OGG
+                            Console.WriteLine(
+                                $"Warning: Failed to revorb OGG for {Path.GetFileName(wemFile)}: {revorbEx.Message}. Using unrevorbed OGG file."
+                            );
+                            File.Copy(sourceOgg, finalOutputPath, overwrite: true);
                         }
                         convertedCount++;
                     }

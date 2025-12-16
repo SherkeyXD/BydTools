@@ -42,7 +42,7 @@ namespace BnkExtractor
                             }
                         }
 
-                        // 确保 PATH 包含应用程序目录，以便 NAudio.Lame 能找到 libmp3lame DLL
+                        // 确保 PATH 包含应用程序目录，以便原生 DLL 能被找到
                         string currentPath2 = Environment.GetEnvironmentVariable("PATH") ?? "";
                         if (!currentPath2.Contains(appDir))
                         {
