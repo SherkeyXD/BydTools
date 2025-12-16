@@ -32,13 +32,12 @@ Extract files from PCK archives and convert audio files.
 
 ```auto
 Usage:
-  BydTools.CLI.exe pck --input <pck_file> --output <output_dir> [--format <format>] [--codebooks <codebooks_path>] [-h|--help]
+  BydTools.CLI.exe pck --input <pck_file> --output <output_dir> [--format <format>] [-h|--help]
 
 Arguments:
   --input, -i      Input PCK file path
   --output, -o     Output directory
   --format, -f     Output format: wem or ogg (default: wem)
-  --codebooks, -c  Path to packed_codebooks.bin (required for WEM to OGG conversion)
   -h, --help       Show help information
 
 Examples:

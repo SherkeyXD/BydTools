@@ -171,7 +171,6 @@ class Program
         string? inputPath = null;
         string? outputDir = null;
         string format = "wem";
-        string? codebooksPath = null;
         bool showHelp = false;
 
         for (int i = 0; i < args.Length; i++)
@@ -213,16 +212,6 @@ class Program
                         return;
                     }
                     format = args[++i];
-                    break;
-
-                case "--codebooks":
-                case "-c":
-                    if (i + 1 >= args.Length)
-                    {
-                        Console.Error.WriteLine("Error: --codebooks requires a value.");
-                        return;
-                    }
-                    codebooksPath = args[++i];
                     break;
 
                 default:
@@ -276,7 +265,7 @@ class Program
         var exeName = GetExecutableName();
         Console.WriteLine("Usage:");
         Console.WriteLine(
-            "  {0} pck --input <pck_file> --output <output_dir> [--format <format>] [--codebooks <codebooks_path>] [-h|--help]",
+            "  {0} pck --input <pck_file> --output <output_dir> [--format <format>] [-h|--help]",
             exeName
         );
         Console.WriteLine();
@@ -284,9 +273,6 @@ class Program
         Console.WriteLine("  --input, -i      Input PCK file path");
         Console.WriteLine("  --output, -o     Output directory");
         Console.WriteLine("  --format, -f      Output format: wem or ogg (default: wem)");
-        Console.WriteLine(
-            "  --codebooks, -c   Path to packed_codebooks.bin (required for WEM to OGG conversion)"
-        );
         Console.WriteLine("  -h, --help        Show help information");
     }
 
