@@ -13,22 +13,6 @@ public class VFSDumper
     private readonly SparkBufferDumper? _sparkBufferDumper;
 
     /// <summary>
-    /// Block types that require SparkBuffer decryption before saving.
-    /// Based on the table: only encrypted (bUseEncrypt = true) block types with SparkBuffer format.
-    /// - BundleManifest: Manifest Map (.hgmmap) - encrypted
-    /// - TableCfg: Binary Data (.bytes) - encrypted
-    /// - Json: JSON Data (.json) - encrypted
-    /// - LuaScript: Lua Script (.lua) - encrypted
-    /// </summary>
-    private static readonly HashSet<EVFSBlockType> SparkBufferBlockTypes = new()
-    {
-        EVFSBlockType.BundleManifest,  // blockType=3, .hgmmap, encrypted
-        EVFSBlockType.TableCfg,        // blockType=14, .bytes, encrypted
-        EVFSBlockType.Json,            // blockType=18, .json, encrypted
-        EVFSBlockType.LuaScript        // blockType=19, .lua, encrypted
-    };
-
-    /// <summary>
     /// Initializes a new instance of the VFSDumper class.
     /// </summary>
     /// <param name="logger">Optional logger for output. If null, uses Console directly.</param>
@@ -310,55 +294,53 @@ public class VFSDumper
                     chunkFs.ReadExactly(fileData);
                 }
 
-                // Check if this block type requires SparkBuffer decryption
-                // Only certain encrypted block types use SparkBuffer format
-                if (SparkBufferBlockTypes.Contains(dumpAssetType) && _sparkBufferDumper != null)
+                // Check if we need to decrypt with SparkBuffer
+                if (dumpAssetType == EVFSBlockType.TableCfg && 
+                    Path.GetExtension(file.fileName).Equals(".bytes", StringComparison.OrdinalIgnoreCase))
                 {
+                    if (_logger != null)
+                    {
+                        _logger.Verbose($"  Attempting SparkBuffer decryption for: {file.fileName}");
+                    }
+
                     try
                     {
-                        // Decrypt SparkBuffer data
-                        var content = _sparkBufferDumper.Decrypt(fileData);
-                        
-                        // Determine output file extension based on block type
-                        string outputFilePath;
-                        switch (dumpAssetType)
+                        // Try to decrypt with SparkBuffer
+                        var decryptedJson = _sparkBufferDumper?.Decrypt(fileData);
+                        if (!string.IsNullOrEmpty(decryptedJson))
                         {
-                            case EVFSBlockType.LuaScript:
-                                // Lua scripts: save as .lua with JSON representation
-                                outputFilePath = Path.ChangeExtension(filePath, ".lua.json");
-                                break;
-                            case EVFSBlockType.Json:
-                                // JSON data: keep original .json extension
-                                outputFilePath = Path.ChangeExtension(filePath, ".json");
-                                break;
-                            case EVFSBlockType.TableCfg:
-                                // Table data: change .bytes to .json
-                                outputFilePath = Path.ChangeExtension(filePath, ".json");
-                                break;
-                            case EVFSBlockType.BundleManifest:
-                                // Manifest: change .hgmmap to .json
-                                outputFilePath = Path.ChangeExtension(filePath, ".json");
-                                break;
-                            default:
-                                outputFilePath = filePath + ".json";
-                                break;
+                            // Change extension to .json
+                            var jsonFilePath = Path.ChangeExtension(filePath, ".json");
+                            File.WriteAllText(jsonFilePath, decryptedJson);
+                            
+                            if (_logger != null)
+                            {
+                                _logger.Info($"  ✓ Decrypted SparkBuffer: {file.fileName} -> {Path.GetFileName(jsonFilePath)}");
+                            }
+                            
+                            extractedCount++;
+                            continue;
                         }
-                        
-                        File.WriteAllText(outputFilePath, content);
-                        _logger?.Verbose("  Decrypted SparkBuffer: {0} -> {1}", file.fileName, Path.GetFileName(outputFilePath));
+                        else
+                        {
+                            if (_logger != null)
+                            {
+                                _logger.Verbose($"  SparkBuffer decryption returned empty for {file.fileName}");
+                            }
+                        }
                     }
                     catch (Exception ex)
                     {
-                        // If SparkBuffer decryption fails, save the original data
-                        _logger?.Verbose("  SparkBuffer decryption failed for {0}, saving original: {1}", file.fileName, ex.Message);
-                        File.WriteAllBytes(filePath, fileData);
+                        if (_logger != null)
+                        {
+                            _logger.Error($"  ✗ SparkBuffer decryption failed for {file.fileName}: {ex.Message}");
+                        }
+                        // Fall through to save original file
                     }
                 }
-                else
-                {
-                    // Save file as-is for non-SparkBuffer block types
-                    File.WriteAllBytes(filePath, fileData);
-                }
+
+                // Save file as-is
+                File.WriteAllBytes(filePath, fileData);
 
                 extractedCount++;
             }

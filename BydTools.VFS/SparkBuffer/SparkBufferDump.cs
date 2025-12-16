@@ -1,6 +1,4 @@
 ﻿using BydTools.VFS;
-using System.Diagnostics.CodeAnalysis;
-using System.Text.Json;
 using System.Text.Json.Nodes;
 
 namespace BydTools.VFS.SparkBuffer
@@ -26,8 +24,6 @@ namespace BydTools.VFS.SparkBuffer
         /// </summary>
         /// <param name="tableCfgDir">Directory containing SparkBuffer binary files.</param>
         /// <param name="outputDir">Output directory for JSON files.</param>
-        [RequiresUnreferencedCode("JSON serialization may require types that cannot be statically analyzed.")]
-        [RequiresDynamicCode("JSON serialization may require runtime code generation.")]
         public void DumpDirectory(string tableCfgDir, string outputDir)
         {
             if (!Directory.Exists(tableCfgDir))
@@ -70,8 +66,6 @@ namespace BydTools.VFS.SparkBuffer
         /// </summary>
         /// <param name="data">The SparkBuffer binary data.</param>
         /// <returns>String representation of the SparkBuffer data.</returns>
-        [RequiresUnreferencedCode("JSON serialization may require types that cannot be statically analyzed.")]
-        [RequiresDynamicCode("JSON serialization may require runtime code generation.")]
         public string Decrypt(byte[] data)
         {
             using var memoryStream = new MemoryStream(data);
@@ -85,8 +79,6 @@ namespace BydTools.VFS.SparkBuffer
         /// </summary>
         /// <param name="binaryReader">BinaryReader positioned at the start of the SparkBuffer file.</param>
         /// <returns>String representation of the SparkBuffer data.</returns>
-        [RequiresUnreferencedCode("JSON serialization may require types that cannot be statically analyzed.")]
-        [RequiresDynamicCode("JSON serialization may require runtime code generation.")]
         public string Decrypt(BinaryReader binaryReader)
         {
             // Clear previous type definitions to avoid conflicts
@@ -134,10 +126,10 @@ namespace BydTools.VFS.SparkBuffer
                 case SparkType.Bean:
                     var rootBeanType = SparkManager.BeanTypeFromHash((int)rootDef.typeHash!);
                     var beanDump = ReadBeanAsJObject(binaryReader, rootBeanType);
-                    return beanDump!.ToString();
+                    return beanDump!.ToJsonString(SparkManager.jsonSerializerOptions);
                 case SparkType.Map:
                     var mapDump = ReadMapAsJObject(binaryReader, rootDef);
-                    return JsonSerializer.Serialize(mapDump, SparkManager.jsonSerializerOptions);
+                    return mapDump!.ToJsonString(SparkManager.jsonSerializerOptions);
                 default:
                     throw new NotSupportedException(string.Format("Unsupported root type {0}", rootDef.type));
             }
@@ -148,8 +140,6 @@ namespace BydTools.VFS.SparkBuffer
         /// </summary>
         /// <param name="binaryReader">BinaryReader positioned at the start of the SparkBuffer file.</param>
         /// <param name="outputDir">Output directory for the JSON file.</param>
-        [RequiresUnreferencedCode("JSON serialization may require types that cannot be statically analyzed.")]
-        [RequiresDynamicCode("JSON serialization may require runtime code generation.")]
         public void DumpFile(BinaryReader binaryReader, string outputDir)
         {
             var originalPosition = binaryReader.BaseStream.Position;
@@ -175,8 +165,6 @@ namespace BydTools.VFS.SparkBuffer
             File.WriteAllText(resultFilePath, content);
         }
 
-        [RequiresUnreferencedCode("JSON serialization may require types that cannot be statically analyzed.")]
-        [RequiresDynamicCode("JSON serialization may require runtime code generation.")]
         private JsonObject? ReadMapAsJObject(BinaryReader binaryReader, BeanType.Field typeDef)
         {
             var mapDump = new JsonObject();
@@ -210,8 +198,6 @@ namespace BydTools.VFS.SparkBuffer
             return mapDump;
         }
 
-        [RequiresUnreferencedCode("JSON serialization may require types that cannot be statically analyzed.")]
-        [RequiresDynamicCode("JSON serialization may require runtime code generation.")]
         private JsonObject? ReadBeanAsJObject(BinaryReader binaryReader, BeanType beanType, bool pointer = false)
         {
             long? pointerOrigin = null;
@@ -254,26 +240,26 @@ namespace BydTools.VFS.SparkBuffer
                             switch (beanField.type2)
                             {
                                 case SparkType.String:
-                                    jArray.Add(binaryReader.ReadSparkBufferStringOffset());
+                                    jArray.Add((JsonNode?)JsonValue.Create(binaryReader.ReadSparkBufferStringOffset()));
                                     break;
                                 case SparkType.Bean:
-                                    jArray.Add(ReadBeanAsJObject(binaryReader, SparkManager.BeanTypeFromHash((int)beanField.typeHash!), true));
+                                    jArray.Add((JsonNode?)ReadBeanAsJObject(binaryReader, SparkManager.BeanTypeFromHash((int)beanField.typeHash!), true));
                                     break;
                                 case SparkType.Float:
-                                    jArray.Add(binaryReader.ReadSingle());
+                                    jArray.Add((JsonNode?)JsonValue.Create(binaryReader.ReadSingle()));
                                     break;
                                 case SparkType.Long:
-                                    jArray.Add(binaryReader.ReadSparkBufferLong());
+                                    jArray.Add((JsonNode?)JsonValue.Create(binaryReader.ReadSparkBufferLong()));
                                     break;
                                 case SparkType.Int:
                                 case SparkType.Enum:
-                                    jArray.Add(binaryReader.ReadInt32());
+                                    jArray.Add((JsonNode?)JsonValue.Create(binaryReader.ReadInt32()));
                                     break;
                                 case SparkType.Bool:
-                                    jArray.Add(binaryReader.ReadBoolean());
+                                    jArray.Add((JsonNode?)JsonValue.Create(binaryReader.ReadBoolean()));
                                     break;
                                 case SparkType.Double:
-                                    jArray.Add(binaryReader.ReadSparkBufferDouble());
+                                    jArray.Add((JsonNode?)JsonValue.Create(binaryReader.ReadSparkBufferDouble()));
                                     break;
                                 default:
                                     throw new NotSupportedException(string.Format("Unsupported array type {0} on bean array field, position: {1}", beanField.type2, binaryReader.BaseStream.Position));

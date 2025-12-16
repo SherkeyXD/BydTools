@@ -1,11 +1,14 @@
 ﻿using System.Text.Json;
-using System.Text.Json.Serialization;
+using System.Text.Json.Nodes;
 
 namespace BydTools.VFS.SparkBuffer
 {
     public static class SparkManager
     {
-        public static readonly JsonSerializerOptions jsonSerializerOptions = new() { IncludeFields = true, WriteIndented = true, NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals };
+        public static readonly JsonSerializerOptions jsonSerializerOptions = new() 
+        { 
+            WriteIndented = true
+        };
 
         private static readonly Dictionary<int, BeanType> beanTypeMap = [];
         private static readonly Dictionary<int, EnumType> enumTypeMap = [];
