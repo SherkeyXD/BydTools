@@ -1,6 +1,7 @@
 # BydTools
 
-A collection of tools
+>[!WARNING]
+> This project was completed with AI assistance, low quality code may be everywhere.
 
 ## Usage
 
