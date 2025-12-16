@@ -1,4 +1,4 @@
-﻿namespace BydTools.VFS.SparkBuffer
+namespace BydTools.Utils.SparkBuffer
 {
     public struct EnumType
     {
@@ -29,3 +29,4 @@
         }
     }
 }
+

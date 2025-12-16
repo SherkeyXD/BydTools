@@ -1,6 +1,6 @@
 using System.Text;
 
-namespace BydTools.VFS.SparkBuffer
+namespace BydTools.Utils.SparkBuffer
 {
     public static class BinaryReaderExtensions
     {

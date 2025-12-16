@@ -1,6 +1,6 @@
 # BydTools
 
->[!WARNING]
+> [!WARNING]
 > This project was completed with AI assistance, low quality code may be everywhere.
 
 ## TODO
@@ -8,17 +8,17 @@
 ### VFS
 
 - [ ] `Json` got some files that is not json
-- [ ] `LuaScript` is encrypted(base64?)
+- [ ] `LuaScript` is encrypted(xxtea, key is dynamically generated)
 - [ ] `Video` is usm encrypted and can be decrypted by [WannaCRI](https://github.com/donmai-me/WannaCRI)
 
 ### PCK
 
-- [ ] find a way to restore filename(AudioDislog.json?)
+- [ ] find a way to restore filename and filepath(maybe AudioDialog.json and AudioCueTable.json)
 - [ ] some files are not wwise riff(plg maybe)
 
 ## Usage
 
-### VFS Command
+### BydTools.VFS
 
 Dump specific types of files from the game's VFS.
 
@@ -39,7 +39,7 @@ Examples:
   BydTools.CLI vfs --gamepath /path/to/game
 ```
 
-### PCK Command
+### BydTools.PCK
 
 Extract files from PCK archives and convert audio files.
 

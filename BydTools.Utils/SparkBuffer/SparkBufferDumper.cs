@@ -1,72 +1,19 @@
-﻿using BydTools.VFS;
 using System.Text.Json.Nodes;
 
-namespace BydTools.VFS.SparkBuffer
+namespace BydTools.Utils.SparkBuffer
 {
     /// <summary>
     /// Provides functionality to dump SparkBuffer binary files to JSON format.
     /// </summary>
-    internal class SparkBufferDumper
+    public class SparkBufferDumper
     {
-        private readonly ILogger? _logger;
-
-        /// <summary>
-        /// Initializes a new instance of the SparkBufferDumper class.
-        /// </summary>
-        /// <param name="logger">Optional logger for output.</param>
-        public SparkBufferDumper(ILogger? logger = null)
-        {
-            _logger = logger;
-        }
-
-        /// <summary>
-        /// Dumps all SparkBuffer files from a directory to JSON format.
-        /// </summary>
-        /// <param name="tableCfgDir">Directory containing SparkBuffer binary files.</param>
-        /// <param name="outputDir">Output directory for JSON files.</param>
-        public void DumpDirectory(string tableCfgDir, string outputDir)
-        {
-            if (!Directory.Exists(tableCfgDir))
-                throw new FileNotFoundException($"{tableCfgDir} isn't a valid directory");
-            if (!Directory.Exists(outputDir))
-                Directory.CreateDirectory(outputDir);
-
-            var success = 0;
-            var processingCount = 0;
-            foreach (var tablePath in Directory.EnumerateFiles(tableCfgDir))
-            {
-                var fileName = Path.GetFileName(tablePath);
-                _logger?.Info("Reading {0}...", fileName);
-                processingCount++;
-
-                using var file = File.OpenRead(tablePath);
-                using var binaryReader = new BinaryReader(file);
-
-                try
-                {
-                    DumpFile(binaryReader, outputDir);
-                    _logger?.Info("Dumped {0} successfully", fileName);
-                    success++;
-                }
-                catch (Exception ex)
-                {
-                    _logger?.Error("Error in reading {0}, Error: {1}", fileName, ex.ToString());
-#if DEBUG
-                    // throw;
-#endif
-                }
-            }
-
-            _logger?.Info("Dumped {0}/{1}", success, processingCount);
-        }
-
         /// <summary>
         /// Decrypts SparkBuffer data from bytes and returns string representation.
         /// The output format depends on the SparkBuffer content structure (JSON format).
         /// </summary>
         /// <param name="data">The SparkBuffer binary data.</param>
         /// <returns>String representation of the SparkBuffer data.</returns>
-        public string Decrypt(byte[] data)
+        public static string Decrypt(byte[] data)
         {
             using var memoryStream = new MemoryStream(data);
             using var binaryReader = new BinaryReader(memoryStream);
@@ -79,7 +26,7 @@ namespace BydTools.VFS.SparkBuffer
         /// </summary>
         /// <param name="binaryReader">BinaryReader positioned at the start of the SparkBuffer file.</param>
         /// <returns>String representation of the SparkBuffer data.</returns>
-        public string Decrypt(BinaryReader binaryReader)
+        public static string Decrypt(BinaryReader binaryReader)
         {
             // Clear previous type definitions to avoid conflicts
             SparkManager.ClearTypeDefinitions();
@@ -136,36 +83,30 @@ namespace BydTools.VFS.SparkBuffer
         }
 
         /// <summary>
-        /// Dumps a single SparkBuffer file to JSON format.
+        /// Reads the root definition name from a SparkBuffer without fully parsing it.
         /// </summary>
         /// <param name="binaryReader">BinaryReader positioned at the start of the SparkBuffer file.</param>
-        /// <param name="outputDir">Output directory for the JSON file.</param>
-        public void DumpFile(BinaryReader binaryReader, string outputDir)
+        /// <returns>The name of the root definition.</returns>
+        public static string GetRootDefinitionName(BinaryReader binaryReader)
         {
             var originalPosition = binaryReader.BaseStream.Position;
             
             // Read offsets
-            var typeDefOffset = binaryReader.ReadInt32();
+            binaryReader.ReadInt32(); // typeDefOffset
             var rootDefOffset = binaryReader.ReadInt32();
-            var dataOffset = binaryReader.ReadInt32();
-
+            
             // Read root definition to get the name
             binaryReader.Seek(rootDefOffset);
-            var rootDef = new BeanType.Field
-            {
-                type = binaryReader.ReadSparkType(),
-                name = binaryReader.ReadSparkBufferString()
-            };
-
-            // Reset to original position and decrypt
-            binaryReader.BaseStream.Position = originalPosition;
-            var content = Decrypt(binaryReader);
+            binaryReader.ReadSparkType(); // type
+            var name = binaryReader.ReadSparkBufferString();
             
-            var resultFilePath = Path.Combine(outputDir, $"{rootDef.name}.json");
-            File.WriteAllText(resultFilePath, content);
+            // Reset to original position
+            binaryReader.BaseStream.Position = originalPosition;
+            
+            return name;
         }
 
-        private JsonObject? ReadMapAsJObject(BinaryReader binaryReader, BeanType.Field typeDef)
+        private static JsonObject? ReadMapAsJObject(BinaryReader binaryReader, BeanType.Field typeDef)
         {
             var mapDump = new JsonObject();
             var kvCount = binaryReader.ReadInt32();
@@ -198,7 +139,7 @@ namespace BydTools.VFS.SparkBuffer
             return mapDump;
         }
 
-        private JsonObject? ReadBeanAsJObject(BinaryReader binaryReader, BeanType beanType, bool pointer = false)
+        private static JsonObject? ReadBeanAsJObject(BinaryReader binaryReader, BeanType beanType, bool pointer = false)
         {
             long? pointerOrigin = null;
             if (pointer)
@@ -314,3 +255,4 @@ namespace BydTools.VFS.SparkBuffer
         }
     }
 }
+

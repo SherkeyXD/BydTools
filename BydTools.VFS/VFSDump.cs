@@ -1,6 +1,6 @@
-﻿using BydTools.VFS.Crypto;
-using BydTools.VFS.Extensions;
-using BydTools.VFS.SparkBuffer;
+﻿using BydTools.Utils.Crypto;
+using BydTools.Utils.Extensions;
+using BydTools.Utils.SparkBuffer;
 
 namespace BydTools.VFS;
 
@@ -10,7 +10,6 @@ namespace BydTools.VFS;
 public class VFSDumper
 {
     private readonly ILogger? _logger;
-    private readonly SparkBufferDumper? _sparkBufferDumper;
 
     /// <summary>
     /// Initializes a new instance of the VFSDumper class.
@@ -19,7 +18,6 @@ public class VFSDumper
     public VFSDumper(ILogger? logger = null)
     {
         _logger = logger;
-        _sparkBufferDumper = new SparkBufferDumper(logger);
     }
     /// <summary>
     /// Maps EVFSBlockType to groupCfgName as used in BLC files.
@@ -306,7 +304,7 @@ public class VFSDumper
                     try
                     {
                         // Try to decrypt with SparkBuffer
-                        var decryptedJson = _sparkBufferDumper?.Decrypt(fileData);
+                        var decryptedJson = SparkBufferDumper.Decrypt(fileData);
                         if (!string.IsNullOrEmpty(decryptedJson))
                         {
                             // Change extension to .json

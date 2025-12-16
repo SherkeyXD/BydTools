@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Copyright (c) 2015, 2018 Scott Bennett
  *           (c) 2018-2023 Kaarlo Räihä
  *
@@ -18,7 +18,7 @@
 using System.Runtime.CompilerServices;
 using System.Runtime.Intrinsics;
 
-namespace BydTools.VFS.Crypto;
+namespace BydTools.Utils.Crypto;
 
 /// <summary>
 /// Chosen SIMD mode
@@ -1000,3 +1000,4 @@ public static class Util
         }
     }
 }
+

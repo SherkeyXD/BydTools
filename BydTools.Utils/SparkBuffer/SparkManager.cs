@@ -1,7 +1,6 @@
-﻿using System.Text.Json;
-using System.Text.Json.Nodes;
+using System.Text.Json;
 
-namespace BydTools.VFS.SparkBuffer
+namespace BydTools.Utils.SparkBuffer
 {
     public static class SparkManager
     {
@@ -59,3 +58,4 @@ namespace BydTools.VFS.SparkBuffer
         }
     }
 }
+

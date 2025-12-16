@@ -1,4 +1,4 @@
-﻿namespace BydTools.VFS.SparkBuffer
+namespace BydTools.Utils.SparkBuffer
 {
     public enum SparkType : byte
     {
@@ -15,3 +15,4 @@
         Map
     }
 }
+

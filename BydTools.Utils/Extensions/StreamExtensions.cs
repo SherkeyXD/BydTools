@@ -1,6 +1,6 @@
-﻿namespace BydTools.VFS.Extensions
+namespace BydTools.Utils.Extensions
 {
-    internal static class StreamExtensions
+    public static class StreamExtensions
     {
         public static void CopyBytes(this Stream inStream, Stream outStream, long? count = null)
         {
@@ -24,3 +24,4 @@
         }
     }
 }
+

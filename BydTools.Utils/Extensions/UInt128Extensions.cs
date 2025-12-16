@@ -1,11 +1,11 @@
 using System.Buffers.Binary;
 
-namespace BydTools.VFS.Extensions;
+namespace BydTools.Utils.Extensions;
 
 /// <summary>
 /// Extension methods for UInt128 to convert to hex strings.
 /// </summary>
-internal static class UInt128Extensions
+public static class UInt128Extensions
 {
     /// <summary>
     /// Converts a UInt128 value to a hexadecimal string in big-endian format.
@@ -32,3 +32,4 @@ internal static class UInt128Extensions
         return Convert.ToHexString(bytes);
     }
 }
+
