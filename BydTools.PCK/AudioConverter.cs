@@ -1,3 +1,6 @@
+using System.Reflection;
+using System.Runtime.InteropServices;
+using BnkExtractor;
 using NAudio.Lame;
 using NAudio.Wave;
 using NVorbis;
@@ -9,6 +12,13 @@ namespace BydTools.PCK;
 /// </summary>
 public class AudioConverter
 {
+    static AudioConverter()
+    {
+        // 确保 NAudio.Lame 的原生 DLL 能被找到
+        // 触发 Extractor 的静态构造函数以初始化 DLL 搜索路径
+        _ = typeof(Extractor);
+    }
+
     /// <summary>
     /// Converts OGG file to MP3.
     /// </summary>

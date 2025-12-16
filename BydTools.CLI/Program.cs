@@ -9,7 +9,8 @@ class Program
     {
         return Path.GetFileNameWithoutExtension(
             Assembly.GetEntryAssembly()?.GetName().Name
-                ?? Assembly.GetExecutingAssembly().GetName().Name ?? "BydTools.CLI"
+                ?? Assembly.GetExecutingAssembly().GetName().Name
+                ?? "BydTools.CLI"
         );
     }
 
@@ -261,7 +262,7 @@ class Program
         try
         {
             var converter = new BydTools.PCK.PckConverter();
-            converter.ExtractAndConvert(inputPath, outputDir, format, codebooksPath);
+            converter.ExtractAndConvert(inputPath, outputDir, format);
         }
         catch (Exception ex)
         {
@@ -287,20 +288,6 @@ class Program
             "  --codebooks, -c   Path to packed_codebooks.bin (required for WEM to OGG conversion)"
         );
         Console.WriteLine("  -h, --help        Show help information");
-        Console.WriteLine();
-        Console.WriteLine("Examples:");
-        Console.WriteLine(
-            "  {0} pck --input /path/to/file.pck --output /path/to/output --format ogg",
-            exeName
-        );
-        Console.WriteLine(
-            "  {0} pck --input /path/to/file.pck --output /path/to/output --format mp3",
-            exeName
-        );
-        Console.WriteLine(
-            "  {0} pck --input /path/to/file.pck --output /path/to/output --format wem",
-            exeName
-        );
     }
 
     static void PrintHelp()
@@ -315,16 +302,6 @@ class Program
         Console.WriteLine();
         Console.WriteLine("Options:");
         Console.WriteLine("  -h, --help    Show help information");
-        Console.WriteLine();
-        Console.WriteLine("Examples:");
-        Console.WriteLine(
-            "  {0} vfs --gamepath /path/to/game --blocktype Bundle --output /path/to/output",
-            exeName
-        );
-        Console.WriteLine(
-            "  {0} pck --input /path/to/file.pck --output /path/to/output --format ogg",
-            exeName
-        );
     }
 
     static void PrintVFSHelp()
@@ -349,13 +326,5 @@ class Program
             "  --output     Output directory, default is ./Assets next to the executable"
         );
         Console.WriteLine("  -h, --help   Show help information");
-        Console.WriteLine();
-        Console.WriteLine("Examples:");
-        Console.WriteLine(
-            "  {0} vfs --gamepath /path/to/game --blocktype Bundle --output /path/to/output",
-            exeName
-        );
-        Console.WriteLine("  {0} vfs --gamepath /path/to/game --blocktype 12", exeName);
-        Console.WriteLine("  {0} vfs --gamepath /path/to/game", exeName);
     }
 }
