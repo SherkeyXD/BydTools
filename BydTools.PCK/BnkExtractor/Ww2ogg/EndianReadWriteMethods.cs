@@ -1,7 +1,4 @@
-﻿using System;
-using System.IO;
-
-namespace BnkExtractor.Ww2ogg;
+﻿namespace BnkExtractor.Ww2ogg;
 
 internal static class EndianReadWriteMethods
 {

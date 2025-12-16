@@ -1,8 +1,6 @@
-﻿using System.IO;
-using System.Linq;
+﻿using BnkExtractor.Ww2ogg;
 using System.Reflection;
 using System.Runtime.InteropServices;
-using BnkExtractor.Ww2ogg;
 
 namespace BnkExtractor
 {
@@ -14,9 +12,12 @@ namespace BnkExtractor
         static Extractor()
         {
             // 确保原生 DLL 能被找到：将应用程序目录和子目录添加到 DLL 搜索路径
-            string appDir =
-                Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
-                ?? AppContext.BaseDirectory;
+            // 使用 AppContext.BaseDirectory，它在单文件应用和普通应用中都能正常工作
+            string appDir = AppContext.BaseDirectory;
+            if (string.IsNullOrEmpty(appDir))
+            {
+                appDir = ".";
+            }
             if (Directory.Exists(appDir))
             {
                 // 在 Windows 上，SetDllDirectory 可以添加目录到 DLL 搜索路径

@@ -1,5 +1,4 @@
-﻿using System;
-using BnkExtractor.Ww2ogg.Exceptions;
+﻿using BnkExtractor.Ww2ogg.Exceptions;
 
 namespace BnkExtractor.Ww2ogg;
 

@@ -1,11 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-
-namespace BydTools.VFS.Extensions
+﻿namespace BydTools.VFS.Extensions
 {
     internal static class StreamExtensions
     {

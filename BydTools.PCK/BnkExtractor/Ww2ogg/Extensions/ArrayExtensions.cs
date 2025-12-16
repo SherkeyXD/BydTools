@@ -1,6 +1,4 @@
-﻿using System;
-
-namespace BnkExtractor.Ww2ogg.Extensions;
+﻿namespace BnkExtractor.Ww2ogg.Extensions;
 
 internal static class ArrayExtensions
 {

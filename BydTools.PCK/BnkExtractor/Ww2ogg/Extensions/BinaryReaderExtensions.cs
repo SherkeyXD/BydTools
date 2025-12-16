@@ -1,7 +1,4 @@
-﻿using System;
-using System.IO;
-
-namespace BnkExtractor.Ww2ogg.Extensions;
+﻿namespace BnkExtractor.Ww2ogg.Extensions;
 
 internal static class BinaryReaderExtensions
 {

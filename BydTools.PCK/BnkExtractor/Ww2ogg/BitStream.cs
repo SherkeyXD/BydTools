@@ -1,6 +1,4 @@
-﻿using System.IO;
-
-namespace BnkExtractor.Ww2ogg;
+﻿namespace BnkExtractor.Ww2ogg;
 
 // host-endian-neutral integer reading
 // using an istream, pull off individual bits with get_bit (LSB first)

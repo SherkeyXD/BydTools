@@ -1,5 +1,4 @@
-﻿using System.IO;
-using BnkExtractor.Ww2ogg.Extensions;
+﻿using BnkExtractor.Ww2ogg.Extensions;
 
 namespace BnkExtractor.Ww2ogg;
 

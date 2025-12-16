@@ -1,6 +1,4 @@
-﻿using System.Collections.Generic;
-
-namespace BnkExtractor.BnkExtr
+﻿namespace BnkExtractor.BnkExtr
 {
     public class EventObject
     {

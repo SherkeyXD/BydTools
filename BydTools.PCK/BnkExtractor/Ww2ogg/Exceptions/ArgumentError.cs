@@ -1,6 +1,4 @@
-﻿using System;
-
-namespace BnkExtractor.Ww2ogg.Exceptions;
+﻿namespace BnkExtractor.Ww2ogg.Exceptions;
 
 public class ArgumentError : Exception
 {

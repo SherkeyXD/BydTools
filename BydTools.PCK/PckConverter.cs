@@ -1,5 +1,4 @@
 using BnkExtractor;
-using BnkExtractor.Ww2ogg.Exceptions;
 
 namespace BydTools.PCK;
 

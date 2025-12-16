@@ -1,6 +1,4 @@
-﻿using System.IO;
-
-namespace BnkExtractor.BnkExtr
+﻿namespace BnkExtractor.BnkExtr
 {
     public class Object : IReadable
     {

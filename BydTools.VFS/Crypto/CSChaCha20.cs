@@ -15,11 +15,8 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-using System;
-using System.IO;
 using System.Runtime.CompilerServices;
 using System.Runtime.Intrinsics;
-using System.Threading.Tasks;
 
 namespace BydTools.VFS.Crypto;
 
