@@ -3,6 +3,19 @@
 >[!WARNING]
 > This project was completed with AI assistance, low quality code may be everywhere.
 
+## TODO
+
+### VFS
+
+- [ ] `Json` got some files that is not json
+- [ ] `LuaScript` is encrypted(base64?)
+- [ ] `Video` is usm encrypted and can be decrypted by [WannaCRI](https://github.com/donmai-me/WannaCRI)
+
+### PCK
+
+- [ ] find a way to restore filename(AudioDislog.json?)
+- [ ] some files are not wwise riff(plg maybe)
+
 ## Usage
 
 ### VFS Command
@@ -16,7 +29,7 @@ Usage:
 Arguments:
   --gamepath   Game data directory that contains the VFS folder
   --blocktype  Block type to dump, supports name or numeric value, default is all
-               Available types: InitialAudio, InitialBundle, BundleManifest, InitialExtendData, Audio, Bundle, DynamicStreaming, Table, Video, IV, Streaming, JsonData, Lua, IFixPatch, ExtendData, AudioChinese, AudioEnglish, AudioJapanese, AudioKorean
+               Available types: InitialAudio, InitialBundle, BundleManifest, InitialExtendData, Audio, Bundle, DynamicStreaming, TableCfg, Video, IV, Streaming, Json, LuaScript, IFixPatch, ExtendData, AudioChinese, AudioEnglish, AudioJapanese, AudioKorean
   --output     Output directory, default is ./Assets next to the executable
   -h, --help   Show help information
 
