@@ -6,8 +6,8 @@ namespace BnkExtractor.Ww2ogg;
 
 public class CodebookLibrary
 {
-    private byte[] codebook_data;
-    private int[] codebook_offsets;
+    private byte[]? codebook_data;
+    private int[]? codebook_offsets;
     private int codebook_count;
 
     public CodebookLibrary(string filename)
@@ -51,7 +51,7 @@ public class CodebookLibrary
         this.codebook_count = 0;
     }
 
-    public byte[] get_codebook(int i)
+    public byte[]? get_codebook(int i)
     {
         if (codebook_data == null || codebook_offsets == null)
         {
@@ -84,7 +84,7 @@ public class CodebookLibrary
 
     public void rebuild(int i, BitOggStream bos)
     {
-        byte[] cb = get_codebook(i);
+        byte[]? cb = get_codebook(i);
 
         int signed_cb_size = get_codebook_size(i);
 

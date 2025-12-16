@@ -8,7 +8,7 @@ namespace BnkExtractor.BnkExtr
         /// <summary>
         /// 4 ascii characters
         /// </summary>
-        public string sign;
+        public string sign = string.Empty;
         public uint size;
 
         public int GetByteSize() => 8;

@@ -14,7 +14,7 @@ internal class StringStream
         return this;
     }
 
-    public StringStream Add(object obj) => Add(obj.ToString());
+    public StringStream Add(object? obj) => Add(obj?.ToString() ?? string.Empty);
 
     public string str() => stringBuilder.ToString();
 }

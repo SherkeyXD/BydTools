@@ -60,8 +60,8 @@ public class Wwise_RIFF_Vorbis
     private bool _no_granule = false;
     private bool _mod_packets = false;
 
-    private Func<BinaryReader, ushort> read16Delegate = null;
-    private Func<BinaryReader, uint> read32Delegate = null;
+    private Func<BinaryReader, ushort>? read16Delegate = null;
+    private Func<BinaryReader, uint>? read32Delegate = null;
 
     public Wwise_RIFF_Vorbis(
         string name,
@@ -467,7 +467,7 @@ public class Wwise_RIFF_Vorbis
     {
         BitOggStream os = new BitOggStream(of);
 
-        bool[] mode_blockflag = null;
+        bool[]? mode_blockflag = null;
         int mode_bits = 0;
         bool prev_blockflag = false;
 
@@ -543,8 +543,8 @@ public class Wwise_RIFF_Vorbis
                     Bit_uint1 packet_type = new(0);
                     Bit_uint.WriteBits(os, packet_type);
 
-                    Bit_uintv mode_number_p = null;
-                    Bit_uintv remainder_p = null;
+                    Bit_uintv? mode_number_p = null;
+                    Bit_uintv? remainder_p = null;
 
                     {
                         // collect mode number from first byte
@@ -561,7 +561,7 @@ public class Wwise_RIFF_Vorbis
                         Bit_uintv.ReadBits(ss, remainder_p);
                     }
 
-                    if (mode_blockflag[mode_number_p])
+                    if (mode_blockflag[mode_number_p!])
                     {
                         // long window, peek at next frame
 
@@ -602,11 +602,11 @@ public class Wwise_RIFF_Vorbis
                         _infile.seekg(offset + 1);
                     }
 
-                    prev_blockflag = mode_blockflag[mode_number_p];
+                    prev_blockflag = mode_blockflag[mode_number_p!];
                     mode_number_p = null;
 
                     // OUT: remaining bits of first (input) byte
-                    Bit_uintv.WriteBits(os, remainder_p);
+                    Bit_uintv.WriteBits(os, remainder_p!);
                     remainder_p = null;
                 }
                 else
@@ -632,10 +632,10 @@ public class Wwise_RIFF_Vorbis
             }
         }
 
-        mode_blockflag = null;
+        mode_blockflag = null!;
     }
 
-    private void generate_ogg_header(BitOggStream os, ref bool[] mode_blockflag, ref int mode_bits)
+    private void generate_ogg_header(BitOggStream os, ref bool[]? mode_blockflag, ref int mode_bits)
     {
         {
             // generate identification packet
@@ -790,7 +790,7 @@ public class Wwise_RIFF_Vorbis
                     {
                         cbl.rebuild((int)codebook_id, os);
                     }
-                    catch (InvalidIdException e)
+                    catch (InvalidIdException)
                     {
                         //         B         C         V
                         //    4    2    4    3    5    6
@@ -820,7 +820,7 @@ public class Wwise_RIFF_Vorbis
                         }
 
                         // just an invalid codebook
-                        throw e;
+                        throw;
                     }
                 }
             }
@@ -939,8 +939,8 @@ public class Wwise_RIFF_Vorbis
                         }
                     }
 
-                    floor1_class_dimensions_list = null;
-                    floor1_partition_class_list = null;
+                    floor1_class_dimensions_list = null!;
+                    floor1_partition_class_list = null!;
                 }
 
                 // residue count
@@ -1024,7 +1024,7 @@ public class Wwise_RIFF_Vorbis
                         }
                     }
 
-                    residue_cascade = null;
+                    residue_cascade = null!;
                 }
 
                 // mapping count

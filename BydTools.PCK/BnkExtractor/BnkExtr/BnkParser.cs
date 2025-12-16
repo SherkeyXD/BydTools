@@ -24,8 +24,9 @@ namespace BnkExtractor.BnkExtr
 
         public static string CreateOutputDirectory(string bnk_filename)
         {
+            var baseDir = Path.GetDirectoryName(bnk_filename) ?? ".";
             var directory = Path.Combine(
-                Path.GetDirectoryName(bnk_filename),
+                baseDir,
                 Path.GetFileNameWithoutExtension(bnk_filename)
             );
             Directory.CreateDirectory(directory);
@@ -220,11 +221,14 @@ namespace BnkExtractor.BnkExtr
             // Reset EOF
             bnkReader.BaseStream.Position = 0;
 
-            var outputDirectory = Path.GetDirectoryName(bnkFilepath);
-
+            string outputDirectory;
             if (!noDirectory)
             {
                 outputDirectory = CreateOutputDirectory(bnkFilepath);
+            }
+            else
+            {
+                outputDirectory = Path.GetDirectoryName(bnkFilepath) ?? ".";
             }
 
             // Dump objects information
