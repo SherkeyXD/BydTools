@@ -8,6 +8,16 @@ namespace BydTools.VFS;
 /// </summary>
 public class VFSDumper
 {
+    private readonly ILogger? _logger;
+
+    /// <summary>
+    /// Initializes a new instance of the VFSDumper class.
+    /// </summary>
+    /// <param name="logger">Optional logger for output. If null, uses Console directly.</param>
+    public VFSDumper(ILogger? logger = null)
+    {
+        _logger = logger;
+    }
     /// <summary>
     /// Maps EVFSBlockType to groupCfgName as used in BLC files.
     /// </summary>
@@ -74,34 +84,67 @@ public class VFSDumper
         string outputDir
     )
     {
-        Console.WriteLine("Dumping {0} files...", dumpAssetType.ToString());
-
         // Use the pre-computed hash to find the block directory
         if (!blockHashMap.TryGetValue(dumpAssetType, out var hashName))
         {
-            Console.Error.WriteLine(
-                "Block type {0} has no known hash mapping!",
-                dumpAssetType.ToString()
-            );
+            if (_logger != null)
+            {
+                _logger.Error(
+                    "Block type {0} has no known hash mapping!",
+                    dumpAssetType.ToString()
+                );
+            }
+            else
+            {
+                Console.Error.WriteLine(
+                    "Block type {0} has no known hash mapping!",
+                    dumpAssetType.ToString()
+                );
+            }
             return;
         }
 
         var blockDir = Path.Combine(streamingAssetsPath, hashName);
         if (!Directory.Exists(blockDir))
         {
-            Console.Error.WriteLine(
-                "Block directory {0} not found for type {1}!",
-                hashName,
-                dumpAssetType.ToString()
-            );
+            if (_logger != null)
+            {
+                _logger.Error(
+                    "Block directory {0} not found for type {1}!",
+                    hashName,
+                    dumpAssetType.ToString()
+                );
+            }
+            else
+            {
+                Console.Error.WriteLine(
+                    "Block directory {0} not found for type {1}!",
+                    hashName,
+                    dumpAssetType.ToString()
+                );
+            }
             return;
         }
 
         var blockFilePath = Path.Combine(blockDir, hashName + ".blc");
         if (!File.Exists(blockFilePath))
         {
-            Console.Error.WriteLine("BLC file not found: {0}", blockFilePath);
+            if (_logger != null)
+            {
+                _logger.Error("BLC file not found: {0}", blockFilePath);
+            }
+            else
+            {
+                Console.Error.WriteLine("BLC file not found: {0}", blockFilePath);
+            }
             return;
+        }
+
+        // Print input/output info
+        if (_logger != null)
+        {
+            _logger.Info($"Input: {streamingAssetsPath}");
+            _logger.Info($"Output: {outputDir}");
         }
 
         var blockFile = File.ReadAllBytes(blockFilePath);
@@ -126,9 +169,42 @@ public class VFSDumper
         // XXE1 only decrypts the payload after BLOCK_HEAD_LEN, so the start offset should be 0 here.
         var vfBlockMainInfo = new VFBlockMainInfo(blockFile, 0);
 
-        // Print the whole BLC structure for debugging to verify parsing.
+        // Count files by type
+        var fileTypeCounts = new Dictionary<string, int>();
+        int totalFiles = 0;
+        foreach (var chunk in vfBlockMainInfo.allChunks)
+        {
+            totalFiles += chunk.files.Length;
+            foreach (var file in chunk.files)
+            {
+                var ext = Path.GetExtension(file.fileName).ToLowerInvariant();
+                if (string.IsNullOrEmpty(ext))
+                    ext = "(no extension)";
+                fileTypeCounts.TryGetValue(ext, out var count);
+                fileTypeCounts[ext] = count + 1;
+            }
+        }
+
+        // Print found files info
+        if (_logger != null)
+        {
+            var typeDetails = string.Join(", ", fileTypeCounts.Select(kvp => $"{kvp.Value} {kvp.Key}"));
+            _logger.Info($"Found {totalFiles} files ({typeDetails})");
+        }
+
+        // Print verbose BLC structure info
         DumpBlockInfo(vfBlockMainInfo);
 
+        // Track created directories to avoid duplicate messages
+        var createdDirs = new HashSet<string>();
+
+        // Print extracting message
+        if (_logger != null)
+        {
+            _logger.Info("Extracting...");
+        }
+
+        int extractedCount = 0;
         foreach (var chunk in vfBlockMainInfo.allChunks)
         {
             // Convert MD5 to hex string for filename.
@@ -140,7 +216,14 @@ public class VFSDumper
 
             if (!File.Exists(chunkFilePath))
             {
-                Console.Error.WriteLine("  Chunk file not found: {0}", chunkMd5Name);
+                if (_logger != null)
+                {
+                    _logger.Verbose($"  Chunk file not found: {chunkMd5Name}");
+                }
+                else
+                {
+                    Console.Error.WriteLine("  Chunk file not found: {0}", chunkMd5Name);
+                }
                 continue;
             }
 
@@ -152,7 +235,14 @@ public class VFSDumper
                 var fileDir = Path.GetDirectoryName(filePath);
 
                 if (!string.IsNullOrEmpty(fileDir) && !Directory.Exists(fileDir))
+                {
                     Directory.CreateDirectory(fileDir);
+                    // Only log directory creation once per directory
+                    if (createdDirs.Add(fileDir) && _logger != null)
+                    {
+                        _logger.Info($"  Created directory: {fileDir}");
+                    }
+                }
 
                 // Always seek to the file offset first
                 chunkFs.Seek(file.offset, SeekOrigin.Begin);
@@ -200,75 +290,88 @@ public class VFSDumper
                     using var fileFs = File.Create(filePath);
                     chunkFs.CopyBytes(fileFs, file.len);
                 }
+
+                extractedCount++;
             }
 
-            Console.WriteLine(
-                "  Dumped {0} file(s) from chunk {1}",
-                chunk.files.Length,
-                chunkMd5Name
-            );
+            if (_logger != null)
+            {
+                _logger.Verbose(
+                    "  Dumped {0} file(s) from chunk {1}",
+                    chunk.files.Length,
+                    chunkMd5Name
+                );
+            }
         }
 
-        Console.WriteLine("  Completed dumping {0}!", dumpAssetType.ToString());
+        // Print completion message
+        if (_logger != null)
+        {
+            _logger.Info($"Done, {extractedCount} files extracted.");
+        }
     }
 
     /// <summary>
     /// Prints detailed debug information for a BLC file (VFBlockMainInfo).
+    /// Only shown in verbose mode.
     /// </summary>
     private void DumpBlockInfo(VFBlockMainInfo info)
     {
-        Console.WriteLine("========== BLC INFO ==========");
-        Console.WriteLine("GroupCfgName   : {0}", info.groupCfgName);
-        Console.WriteLine("GroupCfgHash   : {0}", info.groupCfgHashName);
-        Console.WriteLine("Version        : {0}", info.version);
-        Console.WriteLine("BlockType      : {0} ({1})", info.blockType, (byte)info.blockType);
-        Console.WriteLine("FileInfoNum    : {0}", info.groupFileInfoNum);
-        Console.WriteLine("ChunksLength   : {0}", info.groupChunksLength);
-        Console.WriteLine("ChunksCount    : {0}", info.allChunks.Length);
-        Console.WriteLine("------------------------------");
-
-        for (int i = 0; i < info.allChunks.Length; i++)
+        if (_logger != null)
         {
-            ref readonly var chunk = ref info.allChunks[i];
-            Console.WriteLine("Chunk #{0}:", i);
-            Console.WriteLine("  md5Name      : {0}", chunk.md5Name.ToHexStringLittleEndian());
-            Console.WriteLine("  contentMD5   : {0}", chunk.contentMD5.ToHexStringLittleEndian());
-            Console.WriteLine("  length       : {0}", chunk.length);
-            Console.WriteLine("  blockType    : {0} ({1})", chunk.blockType, (byte)chunk.blockType);
-            Console.WriteLine("  filesCount   : {0}", chunk.files.Length);
+            _logger.Verbose("========== BLC INFO ==========");
+            _logger.Verbose("GroupCfgName   : {0}", info.groupCfgName);
+            _logger.Verbose("GroupCfgHash   : {0}", info.groupCfgHashName);
+            _logger.Verbose("Version        : {0}", info.version);
+            _logger.Verbose("BlockType      : {0} ({1})", info.blockType, (byte)info.blockType);
+            _logger.Verbose("FileInfoNum    : {0}", info.groupFileInfoNum);
+            _logger.Verbose("ChunksLength   : {0}", info.groupChunksLength);
+            _logger.Verbose("ChunksCount    : {0}", info.allChunks.Length);
+            _logger.Verbose("------------------------------");
 
-            for (int j = 0; j < chunk.files.Length; j++)
+            for (int i = 0; i < info.allChunks.Length; i++)
             {
-                ref readonly var file = ref chunk.files[j];
-                Console.WriteLine("    File #{0}:", j);
-                Console.WriteLine("      name        : {0}", file.fileName);
-                Console.WriteLine("      nameHash    : 0x{0:X16}", file.fileNameHash);
-                Console.WriteLine(
-                    "      chunkMD5    : {0}",
-                    file.fileChunkMD5Name.ToHexStringLittleEndian()
-                );
-                Console.WriteLine(
-                    "      dataMD5     : {0}",
-                    file.fileDataMD5.ToHexStringLittleEndian()
-                );
-                Console.WriteLine("      offset      : {0}", file.offset);
-                Console.WriteLine("      len         : {0}", file.len);
-                Console.WriteLine(
-                    "      blockType   : {0} ({1})",
-                    file.blockType,
-                    (byte)file.blockType
-                );
-                Console.WriteLine("      useEncrypt  : {0}", file.bUseEncrypt);
-                if (file.bUseEncrypt)
+                ref readonly var chunk = ref info.allChunks[i];
+                _logger.Verbose("Chunk #{0}:", i);
+                _logger.Verbose("  md5Name      : {0}", chunk.md5Name.ToHexStringLittleEndian());
+                _logger.Verbose("  contentMD5   : {0}", chunk.contentMD5.ToHexStringLittleEndian());
+                _logger.Verbose("  length       : {0}", chunk.length);
+                _logger.Verbose("  blockType    : {0} ({1})", chunk.blockType, (byte)chunk.blockType);
+                _logger.Verbose("  filesCount   : {0}", chunk.files.Length);
+
+                for (int j = 0; j < chunk.files.Length; j++)
                 {
-                    Console.WriteLine("      ivSeed      : {0}", file.ivSeed);
+                    ref readonly var file = ref chunk.files[j];
+                    _logger.Verbose("    File #{0}:", j);
+                    _logger.Verbose("      name        : {0}", file.fileName);
+                    _logger.Verbose("      nameHash    : 0x{0:X16}", file.fileNameHash);
+                    _logger.Verbose(
+                        "      chunkMD5    : {0}",
+                        file.fileChunkMD5Name.ToHexStringLittleEndian()
+                    );
+                    _logger.Verbose(
+                        "      dataMD5     : {0}",
+                        file.fileDataMD5.ToHexStringLittleEndian()
+                    );
+                    _logger.Verbose("      offset      : {0}", file.offset);
+                    _logger.Verbose("      len         : {0}", file.len);
+                    _logger.Verbose(
+                        "      blockType   : {0} ({1})",
+                        file.blockType,
+                        (byte)file.blockType
+                    );
+                    _logger.Verbose("      useEncrypt  : {0}", file.bUseEncrypt);
+                    if (file.bUseEncrypt)
+                    {
+                        _logger.Verbose("      ivSeed      : {0}", file.ivSeed);
+                    }
                 }
+
+                _logger.Verbose("------------------------------");
             }
 
-            Console.WriteLine("------------------------------");
+            _logger.Verbose("======== END BLC INFO ========");
         }
-
-        Console.WriteLine("======== END BLC INFO ========");
     }
 
     /// <summary>

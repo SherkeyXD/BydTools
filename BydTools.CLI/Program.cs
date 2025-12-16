@@ -1,5 +1,6 @@
-using BydTools.VFS;
 using System.Reflection;
+using BydTools.PCK;
+using BydTools.VFS;
 
 namespace BydTools.CLI;
 
@@ -50,6 +51,7 @@ class Program
         string? blockTypeString = null;
         string? outputDir = null;
         bool showHelp = false;
+        bool verbose = false;
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -60,6 +62,11 @@ class Program
                 case "-h":
                 case "--help":
                     showHelp = true;
+                    break;
+
+                case "--verbose":
+                case "-v":
+                    verbose = true;
                     break;
 
                 case "--gamepath":
@@ -152,7 +159,8 @@ class Program
             return;
         }
 
-        var dumper = new VFSDumper();
+        var logger = new Logger(verbose);
+        var dumper = new VFSDumper(logger);
         if (dumpAssetType == EVFSBlockType.All)
         {
             foreach (var type in VFSDumper.BlockHashMap.Keys)
@@ -172,6 +180,7 @@ class Program
         string? outputDir = null;
         string format = "wem";
         bool showHelp = false;
+        bool verbose = false;
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -182,6 +191,11 @@ class Program
                 case "-h":
                 case "--help":
                     showHelp = true;
+                    break;
+
+                case "--verbose":
+                case "-v":
+                    verbose = true;
                     break;
 
                 case "--input":
@@ -250,7 +264,8 @@ class Program
 
         try
         {
-            var converter = new BydTools.PCK.PckConverter();
+            var logger = new Logger(verbose);
+            var converter = new PckConverter(logger);
             converter.ExtractAndConvert(inputPath, outputDir, format);
         }
         catch (Exception ex)
@@ -273,6 +288,7 @@ class Program
         Console.WriteLine("  --input, -i      Input PCK file path");
         Console.WriteLine("  --output, -o     Output directory");
         Console.WriteLine("  --format, -f      Output format: wem or ogg (default: wem)");
+        Console.WriteLine("  --verbose, -v     Enable verbose output");
         Console.WriteLine("  -h, --help        Show help information");
     }
 
@@ -311,6 +327,7 @@ class Program
         Console.WriteLine(
             "  --output     Output directory, default is ./Assets next to the executable"
         );
+        Console.WriteLine("  --verbose, -v   Enable verbose output");
         Console.WriteLine("  -h, --help   Show help information");
     }
 }

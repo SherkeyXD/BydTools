@@ -5,6 +5,17 @@ namespace BydTools.PCK;
 /// </summary>
 public class PckExtractor
 {
+    private readonly ILogger? _logger;
+
+    /// <summary>
+    /// Initializes a new instance of the PckExtractor class.
+    /// </summary>
+    /// <param name="logger">Optional logger for output. If null, uses Console directly.</param>
+    public PckExtractor(ILogger? logger = null)
+    {
+        _logger = logger;
+    }
+
     /// <summary>
     /// Extracts files from a PCK archive.
     /// </summary>
@@ -33,8 +44,14 @@ public class PckExtractor
         using var fileStream = File.OpenRead(pckPath);
         var parser = new PckParser(fileStream);
 
-        if (printProgress)
+        if (printProgress && _logger != null)
+        {
+            _logger.VerboseNoNewline("(0.0%) Reading entries");
+        }
+        else if (printProgress)
+        {
             Console.Write("(0.0%) Reading entries");
+        }
 
         var entries = parser.GetEntries();
         int savedCount = 0;
@@ -42,7 +59,13 @@ public class PckExtractor
         for (int i = 0; i < entries.Count; i++)
         {
             var entry = entries[i];
-            if (printProgress)
+            if (printProgress && _logger != null)
+            {
+                _logger.VerboseNoNewline(
+                    $"\r({(i + 1) * 100.0 / entries.Count:F1}%) [{i + 1}/{entries.Count}] Processing entry ID {entry.FileId}"
+                );
+            }
+            else if (printProgress)
             {
                 Console.Write(
                     $"\r({(i + 1) * 100.0 / entries.Count:F1}%) [{i + 1}/{entries.Count}] Processing entry ID {entry.FileId}"
@@ -85,7 +108,13 @@ public class PckExtractor
             }
         }
 
-        if (printProgress)
+        if (printProgress && _logger != null)
+        {
+            _logger.Verbose($"\nExtracted {savedCount} files to {Path.GetFullPath(outputDir)}");
+        }
+        else if (printProgress)
+        {
             Console.WriteLine($"\nExtracted {savedCount} files to {Path.GetFullPath(outputDir)}");
+        }
     }
 }

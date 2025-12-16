@@ -9,13 +9,16 @@ namespace BydTools.PCK;
 public class PckConverter
 {
     private readonly PckExtractor _extractor;
+    private readonly ILogger? _logger;
 
     /// <summary>
     /// Initializes a new instance of the PckConverter class.
     /// </summary>
-    public PckConverter()
+    /// <param name="logger">Optional logger for output. If null, uses Console directly.</param>
+    public PckConverter(ILogger? logger = null)
     {
-        _extractor = new PckExtractor();
+        _logger = logger;
+        _extractor = new PckExtractor(_logger);
     }
 
     /// <summary>
@@ -35,6 +38,13 @@ public class PckConverter
 
         Directory.CreateDirectory(outputDir);
 
+        // Print input/output info
+        if (_logger != null)
+        {
+            _logger.Info($"Input: {pckPath}");
+            _logger.Info($"Output: {outputDir}");
+        }
+
         // 1. 先把 BNK/WEM 从 PCK 提取到临时目录
         string tempDir = Path.Combine(outputDir, ".pck_extract");
         Directory.CreateDirectory(tempDir);
@@ -51,8 +61,21 @@ public class PckConverter
                 printProgress: false
             );
 
-            // 2. 解析所有 BNK 为 WEM
+            // Count files
             var bnkFiles = Directory.GetFiles(tempDir, "*.bnk", SearchOption.AllDirectories);
+            var wemFiles = Directory.GetFiles(tempDir, "*.wem", SearchOption.AllDirectories);
+
+            if (_logger != null)
+            {
+                _logger.Info($"Found {bnkFiles.Length} BNK files, {wemFiles.Length} WEM files");
+            }
+
+            // 2. 解析所有 BNK 为 WEM
+            if (_logger != null)
+            {
+                _logger.Info("Processing BNK files...");
+            }
+
             foreach (var bnkFile in bnkFiles)
             {
                 try
@@ -61,14 +84,37 @@ public class PckConverter
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine(
-                        $"Error parsing BNK {Path.GetFileName(bnkFile)}: {ex.Message}"
-                    );
+                    if (_logger != null)
+                    {
+                        _logger.Verbose(
+                            $"Error parsing BNK {Path.GetFileName(bnkFile)}: {ex.Message}"
+                        );
+                    }
+                    else
+                    {
+                        Console.WriteLine(
+                            $"Error parsing BNK {Path.GetFileName(bnkFile)}: {ex.Message}"
+                        );
+                    }
                 }
             }
 
+            // Re-count WEM files after BNK parsing
+            wemFiles = Directory.GetFiles(tempDir, "*.wem", SearchOption.AllDirectories);
+
             // 3. 根据格式转换文件
-            var wemFiles = Directory.GetFiles(tempDir, "*.wem", SearchOption.AllDirectories);
+            if (_logger != null)
+            {
+                if (format.ToLowerInvariant() == "ogg")
+                {
+                    _logger.Info("Converting WEM to OGG...");
+                }
+                else
+                {
+                    _logger.Info("Extracting WEM files...");
+                }
+            }
+
             int convertedCount = 0;
 
             foreach (var wemFile in wemFiles)
@@ -96,9 +142,18 @@ public class PckConverter
                         catch (BnkExtractor.Ww2ogg.Exceptions.ParseException ex)
                         {
                             // WEM 文件不是标准的 Wwise RIFF Vorbis 格式，无法转换
-                            Console.WriteLine(
-                                $"Skipping WEM {Path.GetFileName(wemFile)}: {ex.Message} (file may not be in Wwise RIFF Vorbis format)"
-                            );
+                            if (_logger != null)
+                            {
+                                _logger.Verbose(
+                                    $"Skipping WEM {Path.GetFileName(wemFile)}: {ex.Message} (file may not be in Wwise RIFF Vorbis format)"
+                                );
+                            }
+                            else
+                            {
+                                Console.WriteLine(
+                                    $"Skipping WEM {Path.GetFileName(wemFile)}: {ex.Message} (file may not be in Wwise RIFF Vorbis format)"
+                                );
+                            }
                             continue;
                         }
 
@@ -134,9 +189,18 @@ public class PckConverter
                         catch (Exception revorbEx)
                         {
                             // Revorb 失败，输出警告但继续使用原始 OGG
-                            Console.WriteLine(
-                                $"Warning: Failed to revorb OGG for {Path.GetFileName(wemFile)}: {revorbEx.Message}. Using unrevorbed OGG file."
-                            );
+                            if (_logger != null)
+                            {
+                                _logger.Verbose(
+                                    $"Warning: Failed to revorb OGG for {Path.GetFileName(wemFile)}: {revorbEx.Message}. Using unrevorbed OGG file."
+                                );
+                            }
+                            else
+                            {
+                                Console.WriteLine(
+                                    $"Warning: Failed to revorb OGG for {Path.GetFileName(wemFile)}: {revorbEx.Message}. Using unrevorbed OGG file."
+                                );
+                            }
                             File.Copy(sourceOgg, finalOutputPath, overwrite: true);
                         }
                         convertedCount++;
@@ -144,15 +208,32 @@ public class PckConverter
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine(
-                        $"Error converting WEM {Path.GetFileName(wemFile)}: {ex.Message}"
-                    );
+                    if (_logger != null)
+                    {
+                        _logger.Verbose(
+                            $"Error converting WEM {Path.GetFileName(wemFile)}: {ex.Message}"
+                        );
+                    }
+                    else
+                    {
+                        Console.WriteLine(
+                            $"Error converting WEM {Path.GetFileName(wemFile)}: {ex.Message}"
+                        );
+                    }
                 }
             }
 
-            Console.WriteLine(
-                $"Converted {convertedCount} BNK/WEM file(s) to {format.ToUpperInvariant()}"
-            );
+            // Print completion message
+            if (_logger != null)
+            {
+                _logger.Info($"Done, {convertedCount} files extracted.");
+            }
+            else
+            {
+                Console.WriteLine(
+                    $"Converted {convertedCount} BNK/WEM file(s) to {format.ToUpperInvariant()}"
+                );
+            }
         }
         finally
         {
