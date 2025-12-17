@@ -7,7 +7,20 @@
 
 ### VFS
 
-- [ ] `Json` got some files that is not json
+- [ ] `Json` got some files that is not json (MemoryPack format, hard to unpack):
+  - AnimationConfig
+  - AtmosphericNpcData
+  - Interactive
+  - LevelConfig
+  - LevelData
+  - LevelScriptData
+  - LevelScriptTemplateData
+  - LipSync
+  - NPC
+  - NavMesh
+  - NonGeneratedConfigs
+  - SkillData
+  - SpawnerConfig
 - [ ] `LuaScript` is encrypted(xxtea, key is dynamically generated)
 - [ ] `Video` is usm encrypted and can be decrypted by [WannaCRI](https://github.com/donmai-me/WannaCRI)
 
@@ -64,3 +77,5 @@ Examples:
 - [rfi/BeyondTools](https://git.crepe.moe/rfi/BeyondTools) the original repo
 - [AssetRipper/BnkExtractor](https://github.com/AssetRipper/BnkExtractor) for bnk and wem processing
 - [Xiph.Org Foundation](https://www.xiph.org/) for ogg processing
+- [Cysharp/MemoryPack](https://github.com/Cysharp/MemoryPack) for MemoryPack binary format detection
+- Friends from discord servers
