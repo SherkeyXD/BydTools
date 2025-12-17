@@ -178,7 +178,7 @@ class Program
     {
         string? inputPath = null;
         string? outputDir = null;
-        string format = "wem";
+        string format = "ogg";
         bool showHelp = false;
         bool verbose = false;
 
@@ -287,9 +287,9 @@ class Program
         Console.WriteLine("Arguments:");
         Console.WriteLine("  --input, -i      Input PCK file path");
         Console.WriteLine("  --output, -o     Output directory");
-        Console.WriteLine("  --format, -f      Output format: wem or ogg (default: wem)");
-        Console.WriteLine("  --verbose, -v     Enable verbose output");
-        Console.WriteLine("  -h, --help        Show help information");
+        Console.WriteLine("  --format, -f     Output format: wem or ogg (default: ogg)");
+        Console.WriteLine("  --verbose, -v    Enable verbose output");
+        Console.WriteLine("  -h, --help       Show help information");
     }
 
     static void PrintHelp()
