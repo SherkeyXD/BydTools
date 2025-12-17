@@ -63,11 +63,12 @@ Usage:
 Arguments:
   --input, -i      Input PCK file path
   --output, -o     Output directory
-  --format, -f     Output format: wem or ogg (default: ogg)
+  --format, -f     Output format: bnk, wem or ogg (default: ogg)
   -h, --help       Show help information
 
 Examples:
   BydTools.CLI pck --input /path/to/file.pck --output /path/to/output
+  BydTools.CLI pck --input /path/to/file.pck --output /path/to/output --format bnk
   BydTools.CLI pck --input /path/to/file.pck --output /path/to/output --format wem
 ```
 

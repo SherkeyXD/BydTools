@@ -30,7 +30,7 @@ public class PckConverter
     /// </summary>
     /// <param name="pckPath">PCK 文件路径</param>
     /// <param name="outputDir">最终输出目录</param>
-    /// <param name="format">输出格式：wem 或 ogg</param>
+    /// <param name="format">输出格式：bnk、wem 或 ogg</param>
     public void ExtractAndConvert(string pckPath, string outputDir, string format = "ogg")
     {
         if (!File.Exists(pckPath))
@@ -68,6 +68,35 @@ public class PckConverter
             if (_logger != null)
             {
                 _logger.Info($"Found {bnkFiles.Length} BNK files, {wemFiles.Length} WEM files");
+            }
+
+            // 如果格式为 bnk，直接提取 BNK 文件
+            if (format.ToLowerInvariant() == "bnk")
+            {
+                if (_logger != null)
+                {
+                    _logger.Info("Extracting BNK files...");
+                }
+
+                int extractedCount = 0;
+                foreach (var bnkFile in bnkFiles)
+                {
+                    string fileName = Path.GetFileName(bnkFile);
+                    string finalOutputPath = Path.Combine(outputDir, fileName);
+                    File.Copy(bnkFile, finalOutputPath, overwrite: true);
+                    extractedCount++;
+                }
+
+                if (_logger != null)
+                {
+                    _logger.Info($"Done, {extractedCount} files extracted.");
+                }
+                else
+                {
+                    Console.WriteLine($"Extracted {extractedCount} BNK file(s)");
+                }
+
+                return;
             }
 
             // 2. 解析所有 BNK 为 WEM

@@ -255,9 +255,9 @@ class Program
             return;
         }
 
-        if (format != "wem" && format != "ogg")
+        if (format != "bnk" && format != "wem" && format != "ogg")
         {
-            Console.Error.WriteLine("Error: --format must be one of: wem, ogg");
+            Console.Error.WriteLine("Error: --format must be one of: bnk, wem, ogg");
             PrintPCKHelp();
             return;
         }
@@ -287,7 +287,7 @@ class Program
         Console.WriteLine("Arguments:");
         Console.WriteLine("  --input, -i      Input PCK file path");
         Console.WriteLine("  --output, -o     Output directory");
-        Console.WriteLine("  --format, -f     Output format: wem or ogg (default: ogg)");
+        Console.WriteLine("  --format, -f     Output format: bnk, wem, ogg (default: ogg)");
         Console.WriteLine("  --verbose, -v    Enable verbose output");
         Console.WriteLine("  -h, --help       Show help information");
     }
