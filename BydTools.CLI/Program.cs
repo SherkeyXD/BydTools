@@ -178,7 +178,7 @@ class Program
     {
         string? inputPath = null;
         string? outputDir = null;
-        string format = "ogg";
+        string mode = "ogg";
         bool showHelp = false;
         bool verbose = false;
 
@@ -218,14 +218,14 @@ class Program
                     outputDir = args[++i];
                     break;
 
-                case "--format":
-                case "-f":
+                case "--mode":
+                case "-m":
                     if (i + 1 >= args.Length)
                     {
-                        Console.Error.WriteLine("Error: --format requires a value.");
+                        Console.Error.WriteLine("Error: --mode requires a value.");
                         return;
                     }
-                    format = args[++i];
+                    mode = args[++i];
                     break;
 
                 default:
@@ -255,9 +255,9 @@ class Program
             return;
         }
 
-        if (format != "bnk" && format != "wem" && format != "ogg")
+        if (mode != "raw" && mode != "ogg")
         {
-            Console.Error.WriteLine("Error: --format must be one of: bnk, wem, ogg");
+            Console.Error.WriteLine("Error: --mode must be one of: raw, ogg");
             PrintPCKHelp();
             return;
         }
@@ -266,7 +266,7 @@ class Program
         {
             var logger = new Logger(verbose);
             var converter = new PckConverter(logger);
-            converter.ExtractAndConvert(inputPath, outputDir, format);
+            converter.ExtractAndConvert(inputPath, outputDir, mode);
         }
         catch (Exception ex)
         {
@@ -280,14 +280,16 @@ class Program
         var exeName = GetExecutableName();
         Console.WriteLine("Usage:");
         Console.WriteLine(
-            "  {0} pck --input <pck_file> --output <output_dir> [--format <format>] [-h|--help]",
+            "  {0} pck --input <pck_file> --output <output_dir> [--mode <mode>] [-h|--help]",
             exeName
         );
         Console.WriteLine();
         Console.WriteLine("Arguments:");
         Console.WriteLine("  --input, -i      Input PCK file path");
         Console.WriteLine("  --output, -o     Output directory");
-        Console.WriteLine("  --format, -f     Output format: bnk, wem, ogg (default: ogg)");
+        Console.WriteLine("  --mode, -m       Extract mode: raw, ogg (default: ogg)");
+        Console.WriteLine("                   raw: Extract wem/bnk/plg files without conversion");
+        Console.WriteLine("                   ogg: Convert files to ogg, keep unconvertible files raw");
         Console.WriteLine("  --verbose, -v    Enable verbose output");
         Console.WriteLine("  -h, --help       Show help information");
     }

@@ -27,7 +27,6 @@
 ### PCK
 
 - [ ] find a way to restore filename and filepath(maybe AudioDialog.json and AudioCueTable.json)
-- [ ] some files are not wwise riff(plg maybe)
 
 ## Usage
 
@@ -58,18 +57,21 @@ Extract files from PCK archives and convert audio files.
 
 ```auto
 Usage:
-  BydTools.CLI.exe pck --input <pck_file> --output <output_dir> [--format <format>] [-h|--help]
+  BydTools.CLI.exe pck --input <pck_file> --output <output_dir> [--mode <mode>] [-h|--help]
 
 Arguments:
   --input, -i      Input PCK file path
   --output, -o     Output directory
-  --format, -f     Output format: bnk, wem or ogg (default: ogg)
+  --mode, -m       Extract mode: raw, ogg (default: ogg)
+                   raw: Extract wem/bnk/plg files without conversion
+                   ogg: Convert files to ogg, keep unconvertible files raw
+  --verbose, -v    Enable verbose output
   -h, --help       Show help information
 
 Examples:
   BydTools.CLI pck --input /path/to/file.pck --output /path/to/output
-  BydTools.CLI pck --input /path/to/file.pck --output /path/to/output --format bnk
-  BydTools.CLI pck --input /path/to/file.pck --output /path/to/output --format wem
+  BydTools.CLI pck --input /path/to/file.pck --output /path/to/output --mode raw
+  BydTools.CLI pck --input /path/to/file.pck --output /path/to/output --mode ogg --verbose
 ```
 
 ## Acknowledgements

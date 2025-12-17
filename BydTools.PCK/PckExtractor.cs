@@ -25,15 +25,13 @@ public class PckExtractor
     /// <param name="extractBnk">Whether to extract BNK files.</param>
     /// <param name="extractPlg">Whether to extract PLG files.</param>
     /// <param name="extractUnknown">Whether to extract unknown files.</param>
-    /// <param name="printProgress">Whether to print progress.</param>
     public void ExtractFiles(
         string pckPath,
         string outputDir,
         bool extractWem = true,
         bool extractBnk = true,
         bool extractPlg = true,
-        bool extractUnknown = true,
-        bool printProgress = true
+        bool extractUnknown = true
     )
     {
         if (!File.Exists(pckPath))
@@ -44,33 +42,12 @@ public class PckExtractor
         using var fileStream = File.OpenRead(pckPath);
         var parser = new PckParser(fileStream);
 
-        if (printProgress && _logger != null)
-        {
-            _logger.VerboseNoNewline("(0.0%) Reading entries");
-        }
-        else if (printProgress)
-        {
-            Console.Write("(0.0%) Reading entries");
-        }
-
         var entries = parser.GetEntries();
         int savedCount = 0;
 
         for (int i = 0; i < entries.Count; i++)
         {
             var entry = entries[i];
-            if (printProgress && _logger != null)
-            {
-                _logger.VerboseNoNewline(
-                    $"\r({(i + 1) * 100.0 / entries.Count:F1}%) [{i + 1}/{entries.Count}] Processing entry ID {entry.FileId}"
-                );
-            }
-            else if (printProgress)
-            {
-                Console.Write(
-                    $"\r({(i + 1) * 100.0 / entries.Count:F1}%) [{i + 1}/{entries.Count}] Processing entry ID {entry.FileId}"
-                );
-            }
 
             byte[] fileData = parser.GetFile(entry);
             if (fileData.Length < 4)
@@ -106,15 +83,6 @@ public class PckExtractor
                 File.WriteAllBytes(outputPath, fileData);
                 savedCount++;
             }
-        }
-
-        if (printProgress && _logger != null)
-        {
-            _logger.Verbose($"\nExtracted {savedCount} files to {Path.GetFullPath(outputDir)}");
-        }
-        else if (printProgress)
-        {
-            Console.WriteLine($"\nExtracted {savedCount} files to {Path.GetFullPath(outputDir)}");
         }
     }
 }

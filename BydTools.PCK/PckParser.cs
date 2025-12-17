@@ -198,14 +198,23 @@ public class PckParser
                     if (pos + 24 > header.Length)
                         throw new EndOfStreamException("No enough data for reading entries");
 
-                    uint fileIdHigh = BinaryPrimitives.ReadUInt32LittleEndian(
+                    // For uint64 ID format, the layout is:
+                    // fileId (pos+0) = fileId_low
+                    // one (pos+4) = fileId_high
+                    // size (pos+8) = 1 (marker)
+                    // offset (pos+12) = actual_size
+                    // typeFlag (pos+16) = actual_offset
+                    // pos+20 = actual_typeFlag
+                    uint actualSize = offset; // pos+12 contains the actual size
+                    uint actualOffset = typeFlag; // pos+16 contains the actual offset
+                    uint actualTypeFlag = BinaryPrimitives.ReadUInt32LittleEndian(
                         header.AsSpan(pos + 20, 4)
                     );
-                    ulong fileId64 = fileId | ((ulong)fileIdHigh << 32);
+                    ulong fileId64 = fileId | ((ulong)one << 32);
 
-                    if (typeFlag == 0 || typeFlag == 1)
+                    if (actualTypeFlag == 0 || actualTypeFlag == 1)
                     {
-                        entries.Add(new PckEntry(fileId64, one, size, offset, typeFlag));
+                        entries.Add(new PckEntry(fileId64, 1, actualSize, actualOffset, actualTypeFlag));
                         pos += 24;
                         continue;
                     }
