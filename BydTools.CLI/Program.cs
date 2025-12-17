@@ -289,7 +289,9 @@ class Program
         Console.WriteLine("  --output, -o     Output directory");
         Console.WriteLine("  --mode, -m       Extract mode: raw, ogg (default: ogg)");
         Console.WriteLine("                   raw: Extract wem/bnk/plg files without conversion");
-        Console.WriteLine("                   ogg: Convert files to ogg, keep unconvertible files raw");
+        Console.WriteLine(
+            "                   ogg: Convert files to ogg, keep unconvertible files raw"
+        );
         Console.WriteLine("  --verbose, -v    Enable verbose output");
         Console.WriteLine("  -h, --help       Show help information");
     }

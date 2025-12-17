@@ -93,4 +93,3 @@ public class Logger : BydTools.VFS.ILogger, BydTools.PCK.ILogger
         Console.Error.WriteLine(format, args);
     }
 }
-

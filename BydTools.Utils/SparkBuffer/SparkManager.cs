@@ -4,9 +4,9 @@ namespace BydTools.Utils.SparkBuffer
 {
     public static class SparkManager
     {
-        public static readonly JsonSerializerOptions jsonSerializerOptions = new() 
-        { 
-            WriteIndented = true
+        public static readonly JsonSerializerOptions jsonSerializerOptions = new()
+        {
+            WriteIndented = true,
         };
 
         private static readonly Dictionary<int, BeanType> beanTypeMap = [];
@@ -21,11 +21,9 @@ namespace BydTools.Utils.SparkBuffer
             enumTypeMap.Clear();
         }
 
-        public static BeanType BeanTypeFromHash(int hash)
-            => beanTypeMap[hash];
+        public static BeanType BeanTypeFromHash(int hash) => beanTypeMap[hash];
 
-        public static EnumType EnumTypeFromHash(int hash)
-            => enumTypeMap[hash];
+        public static EnumType EnumTypeFromHash(int hash) => enumTypeMap[hash];
 
         public static void ReadTypeDefinitions(BinaryReader reader)
         {
@@ -51,11 +49,14 @@ namespace BydTools.Utils.SparkBuffer
                     }
                     default:
 #pragma warning disable CA2208
-                        throw new ArgumentOutOfRangeException(nameof(sparkType), sparkType.ToString(), "Invalid spark type on type definition section");
+                        throw new ArgumentOutOfRangeException(
+                            nameof(sparkType),
+                            sparkType.ToString(),
+                            "Invalid spark type on type definition section"
+                        );
 #pragma warning restore CA2208
                 }
             }
         }
     }
 }
-

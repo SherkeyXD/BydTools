@@ -30,7 +30,7 @@ namespace BydTools.Utils.SparkBuffer
         {
             // Clear previous type definitions to avoid conflicts
             SparkManager.ClearTypeDefinitions();
-            
+
             var typeDefOffset = binaryReader.ReadInt32();
             var rootDefOffset = binaryReader.ReadInt32();
             var dataOffset = binaryReader.ReadInt32();
@@ -42,7 +42,7 @@ namespace BydTools.Utils.SparkBuffer
             var rootDef = new BeanType.Field
             {
                 type = binaryReader.ReadSparkType(),
-                name = binaryReader.ReadSparkBufferString()
+                name = binaryReader.ReadSparkBufferString(),
             };
 
             if (rootDef.type.IsEnumOrBeanType())
@@ -78,7 +78,9 @@ namespace BydTools.Utils.SparkBuffer
                     var mapDump = ReadMapAsJObject(binaryReader, rootDef);
                     return mapDump!.ToJsonString(SparkManager.jsonSerializerOptions);
                 default:
-                    throw new NotSupportedException(string.Format("Unsupported root type {0}", rootDef.type));
+                    throw new NotSupportedException(
+                        string.Format("Unsupported root type {0}", rootDef.type)
+                    );
             }
         }
 
@@ -90,23 +92,26 @@ namespace BydTools.Utils.SparkBuffer
         public static string GetRootDefinitionName(BinaryReader binaryReader)
         {
             var originalPosition = binaryReader.BaseStream.Position;
-            
+
             // Read offsets
             binaryReader.ReadInt32(); // typeDefOffset
             var rootDefOffset = binaryReader.ReadInt32();
-            
+
             // Read root definition to get the name
             binaryReader.Seek(rootDefOffset);
             binaryReader.ReadSparkType(); // type
             var name = binaryReader.ReadSparkBufferString();
-            
+
             // Reset to original position
             binaryReader.BaseStream.Position = originalPosition;
-            
+
             return name;
         }
 
-        private static JsonObject? ReadMapAsJObject(BinaryReader binaryReader, BeanType.Field typeDef)
+        private static JsonObject? ReadMapAsJObject(
+            BinaryReader binaryReader,
+            BeanType.Field typeDef
+        )
         {
             var mapDump = new JsonObject();
             var kvCount = binaryReader.ReadInt32();
@@ -119,27 +124,40 @@ namespace BydTools.Utils.SparkBuffer
                     SparkType.String => binaryReader.ReadSparkBufferStringOffset(),
                     SparkType.Int => binaryReader.ReadInt32().ToString(),
                     SparkType.Long => binaryReader.ReadSparkBufferLong().ToString(),
-                    _ => throw new NotSupportedException(string.Format("Unsupported map key type {0}", typeDef.type2)),
+                    _ => throw new NotSupportedException(
+                        string.Format("Unsupported map key type {0}", typeDef.type2)
+                    ),
                 };
                 mapDump[key] = null;
 
-
                 mapDump[key] = typeDef.type3 switch
                 {
-                    SparkType.Bean => ReadBeanAsJObject(binaryReader, SparkManager.BeanTypeFromHash((int)typeDef.typeHash2!), true),
+                    SparkType.Bean => ReadBeanAsJObject(
+                        binaryReader,
+                        SparkManager.BeanTypeFromHash((int)typeDef.typeHash2!),
+                        true
+                    ),
                     SparkType.String => binaryReader.ReadSparkBufferStringOffset(),
                     SparkType.Int => binaryReader.ReadInt32(),
                     SparkType.Float => binaryReader.ReadSingle(),
-                    SparkType.Enum => binaryReader.ReadSparkBufferEnum(SparkManager.EnumTypeFromHash(typeDef.typeHash2!.Value)),
+                    SparkType.Enum => binaryReader.ReadSparkBufferEnum(
+                        SparkManager.EnumTypeFromHash(typeDef.typeHash2!.Value)
+                    ),
                     SparkType.Bool => binaryReader.ReadSparkBufferBool(),
-                    _ => throw new NotSupportedException(string.Format("Unsupported map value type {0}", typeDef.type3)),
+                    _ => throw new NotSupportedException(
+                        string.Format("Unsupported map value type {0}", typeDef.type3)
+                    ),
                 };
             }
 
             return mapDump;
         }
 
-        private static JsonObject? ReadBeanAsJObject(BinaryReader binaryReader, BeanType beanType, bool pointer = false)
+        private static JsonObject? ReadBeanAsJObject(
+            BinaryReader binaryReader,
+            BeanType beanType,
+            bool pointer = false
+        )
         {
             long? pointerOrigin = null;
             if (pointer)
@@ -153,7 +171,7 @@ namespace BydTools.Utils.SparkBuffer
             }
 
             var dumpObj = new JsonObject();
-            
+
             foreach (var (fieldIndex, beanField) in beanType.fields.Index())
             {
                 long? origin = null;
@@ -181,29 +199,58 @@ namespace BydTools.Utils.SparkBuffer
                             switch (beanField.type2)
                             {
                                 case SparkType.String:
-                                    jArray.Add((JsonNode?)JsonValue.Create(binaryReader.ReadSparkBufferStringOffset()));
+                                    jArray.Add(
+                                        (JsonNode?)
+                                            JsonValue.Create(
+                                                binaryReader.ReadSparkBufferStringOffset()
+                                            )
+                                    );
                                     break;
                                 case SparkType.Bean:
-                                    jArray.Add((JsonNode?)ReadBeanAsJObject(binaryReader, SparkManager.BeanTypeFromHash((int)beanField.typeHash!), true));
+                                    jArray.Add(
+                                        (JsonNode?)ReadBeanAsJObject(
+                                            binaryReader,
+                                            SparkManager.BeanTypeFromHash((int)beanField.typeHash!),
+                                            true
+                                        )
+                                    );
                                     break;
                                 case SparkType.Float:
-                                    jArray.Add((JsonNode?)JsonValue.Create(binaryReader.ReadSingle()));
+                                    jArray.Add(
+                                        (JsonNode?)JsonValue.Create(binaryReader.ReadSingle())
+                                    );
                                     break;
                                 case SparkType.Long:
-                                    jArray.Add((JsonNode?)JsonValue.Create(binaryReader.ReadSparkBufferLong()));
+                                    jArray.Add(
+                                        (JsonNode?)
+                                            JsonValue.Create(binaryReader.ReadSparkBufferLong())
+                                    );
                                     break;
                                 case SparkType.Int:
                                 case SparkType.Enum:
-                                    jArray.Add((JsonNode?)JsonValue.Create(binaryReader.ReadInt32()));
+                                    jArray.Add(
+                                        (JsonNode?)JsonValue.Create(binaryReader.ReadInt32())
+                                    );
                                     break;
                                 case SparkType.Bool:
-                                    jArray.Add((JsonNode?)JsonValue.Create(binaryReader.ReadBoolean()));
+                                    jArray.Add(
+                                        (JsonNode?)JsonValue.Create(binaryReader.ReadBoolean())
+                                    );
                                     break;
                                 case SparkType.Double:
-                                    jArray.Add((JsonNode?)JsonValue.Create(binaryReader.ReadSparkBufferDouble()));
+                                    jArray.Add(
+                                        (JsonNode?)
+                                            JsonValue.Create(binaryReader.ReadSparkBufferDouble())
+                                    );
                                     break;
                                 default:
-                                    throw new NotSupportedException(string.Format("Unsupported array type {0} on bean array field, position: {1}", beanField.type2, binaryReader.BaseStream.Position));
+                                    throw new NotSupportedException(
+                                        string.Format(
+                                            "Unsupported array type {0} on bean array field, position: {1}",
+                                            beanField.type2,
+                                            binaryReader.BaseStream.Position
+                                        )
+                                    );
                             }
                         }
 
@@ -226,11 +273,18 @@ namespace BydTools.Utils.SparkBuffer
                         dumpObj[beanField.name] = binaryReader.ReadSparkBufferStringOffset();
                         break;
                     case SparkType.Bean:
-                        dumpObj[beanField.name] = ReadBeanAsJObject(binaryReader, SparkManager.BeanTypeFromHash((int)beanField.typeHash!), true);
+                        dumpObj[beanField.name] = ReadBeanAsJObject(
+                            binaryReader,
+                            SparkManager.BeanTypeFromHash((int)beanField.typeHash!),
+                            true
+                        );
                         break;
                     case SparkType.Bool:
                         dumpObj[beanField.name] = binaryReader.ReadBoolean();
-                        if (beanType.fields.Length > fieldIndex + 1 && beanType.fields[fieldIndex + 1].type != SparkType.Bool)
+                        if (
+                            beanType.fields.Length > fieldIndex + 1
+                            && beanType.fields[fieldIndex + 1].type != SparkType.Bool
+                        )
                             binaryReader.Align4Bytes();
                         break;
                     case SparkType.Map:
@@ -241,7 +295,13 @@ namespace BydTools.Utils.SparkBuffer
                         binaryReader.Seek(mapOrigin);
                         break;
                     case SparkType.Byte:
-                        throw new Exception(string.Format("Dumping bean field type {0} isn't supported, position: {1}", beanField.type, binaryReader.BaseStream.Position));
+                        throw new Exception(
+                            string.Format(
+                                "Dumping bean field type {0} isn't supported, position: {1}",
+                                beanField.type,
+                                binaryReader.BaseStream.Position
+                            )
+                        );
                 }
 
                 if (origin is not null)
@@ -255,4 +315,3 @@ namespace BydTools.Utils.SparkBuffer
         }
     }
 }
-

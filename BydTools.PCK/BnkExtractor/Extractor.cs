@@ -1,6 +1,6 @@
-﻿using BnkExtractor.Ww2ogg;
-using System.Reflection;
+﻿using System.Reflection;
 using System.Runtime.InteropServices;
+using BnkExtractor.Ww2ogg;
 
 namespace BnkExtractor
 {

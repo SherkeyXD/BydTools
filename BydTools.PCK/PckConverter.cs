@@ -48,7 +48,10 @@ public class PckConverter
         string normalizedMode = mode.ToLowerInvariant();
         if (normalizedMode != "raw" && normalizedMode != "ogg")
         {
-            throw new ArgumentException($"Invalid mode: {mode}. Must be 'raw' or 'ogg'", nameof(mode));
+            throw new ArgumentException(
+                $"Invalid mode: {mode}. Must be 'raw' or 'ogg'",
+                nameof(mode)
+            );
         }
 
         // raw 模式：直接提取 wem/bnk/plg
@@ -94,7 +97,9 @@ public class PckConverter
 
             if (_logger != null)
             {
-                _logger.Info($"Found {bnkFiles.Length} BNK, {wemFiles.Length} WEM, {plgFiles.Length} PLG files");
+                _logger.Info(
+                    $"Found {bnkFiles.Length} BNK, {wemFiles.Length} WEM, {plgFiles.Length} PLG files"
+                );
             }
 
             // 2. 解析所有 BNK 为 WEM
@@ -221,7 +226,9 @@ public class PckConverter
             // Print completion message
             if (_logger != null)
             {
-                _logger.Info($"Done, {convertedCount} OGG files, {failedCount} WEM files (failed to convert), {plgFiles.Length} PLG files.");
+                _logger.Info(
+                    $"Done, {convertedCount} OGG files, {failedCount} WEM files (failed to convert), {plgFiles.Length} PLG files."
+                );
             }
         }
         finally

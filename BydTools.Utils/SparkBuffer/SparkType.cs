@@ -12,7 +12,6 @@ namespace BydTools.Utils.SparkBuffer
         String,
         Bean,
         Array,
-        Map
+        Map,
     }
 }
-

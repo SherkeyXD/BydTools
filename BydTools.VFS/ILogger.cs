@@ -14,4 +14,3 @@ public interface ILogger
     void Error(string message);
     void Error(string format, params object[] args);
 }
-

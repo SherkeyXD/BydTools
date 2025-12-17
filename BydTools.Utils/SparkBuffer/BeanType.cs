@@ -59,7 +59,13 @@ namespace BydTools.Utils.SparkBuffer
 
                         break;
                     default:
-                        throw new Exception(string.Format("Unsupported bean field type {0} at position {1}", field.type, reader.BaseStream.Position));
+                        throw new Exception(
+                            string.Format(
+                                "Unsupported bean field type {0} at position {1}",
+                                field.type,
+                                reader.BaseStream.Position
+                            )
+                        );
                 }
             }
         }
@@ -91,4 +97,3 @@ namespace BydTools.Utils.SparkBuffer
         }
     }
 }
-

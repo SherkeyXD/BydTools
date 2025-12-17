@@ -32,4 +32,3 @@ public static class UInt128Extensions
         return Convert.ToHexString(bytes);
     }
 }
-

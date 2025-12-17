@@ -19,6 +19,7 @@ public class VFSDumper
     {
         _logger = logger;
     }
+
     /// <summary>
     /// Maps EVFSBlockType to groupCfgName as used in BLC files.
     /// </summary>
@@ -189,7 +190,10 @@ public class VFSDumper
         // Print found files info
         if (_logger != null)
         {
-            var typeDetails = string.Join(", ", fileTypeCounts.Select(kvp => $"{kvp.Value} {kvp.Key}"));
+            var typeDetails = string.Join(
+                ", ",
+                fileTypeCounts.Select(kvp => $"{kvp.Value} {kvp.Key}")
+            );
             _logger.Info($"Found {totalFiles} files ({typeDetails})");
         }
 
@@ -293,12 +297,17 @@ public class VFSDumper
                 }
 
                 // Check if we need to decrypt with SparkBuffer
-                if (dumpAssetType == EVFSBlockType.TableCfg && 
-                    Path.GetExtension(file.fileName).Equals(".bytes", StringComparison.OrdinalIgnoreCase))
+                if (
+                    dumpAssetType == EVFSBlockType.TableCfg
+                    && Path.GetExtension(file.fileName)
+                        .Equals(".bytes", StringComparison.OrdinalIgnoreCase)
+                )
                 {
                     if (_logger != null)
                     {
-                        _logger.Verbose($"  Attempting SparkBuffer decryption for: {file.fileName}");
+                        _logger.Verbose(
+                            $"  Attempting SparkBuffer decryption for: {file.fileName}"
+                        );
                     }
 
                     try
@@ -310,12 +319,14 @@ public class VFSDumper
                             // Change extension to .json
                             var jsonFilePath = Path.ChangeExtension(filePath, ".json");
                             File.WriteAllText(jsonFilePath, decryptedJson);
-                            
+
                             if (_logger != null)
                             {
-                                _logger.Info($"  ✓ Decrypted SparkBuffer: {file.fileName} -> {Path.GetFileName(jsonFilePath)}");
+                                _logger.Info(
+                                    $"  ✓ Decrypted SparkBuffer: {file.fileName} -> {Path.GetFileName(jsonFilePath)}"
+                                );
                             }
-                            
+
                             extractedCount++;
                             continue;
                         }
@@ -323,7 +334,9 @@ public class VFSDumper
                         {
                             if (_logger != null)
                             {
-                                _logger.Verbose($"  SparkBuffer decryption returned empty for {file.fileName}");
+                                _logger.Verbose(
+                                    $"  SparkBuffer decryption returned empty for {file.fileName}"
+                                );
                             }
                         }
                     }
@@ -331,7 +344,9 @@ public class VFSDumper
                     {
                         if (_logger != null)
                         {
-                            _logger.Error($"  ✗ SparkBuffer decryption failed for {file.fileName}: {ex.Message}");
+                            _logger.Error(
+                                $"  ✗ SparkBuffer decryption failed for {file.fileName}: {ex.Message}"
+                            );
                         }
                         // Fall through to save original file
                     }
@@ -385,7 +400,11 @@ public class VFSDumper
                 _logger.Verbose("  md5Name      : {0}", chunk.md5Name.ToHexStringLittleEndian());
                 _logger.Verbose("  contentMD5   : {0}", chunk.contentMD5.ToHexStringLittleEndian());
                 _logger.Verbose("  length       : {0}", chunk.length);
-                _logger.Verbose("  blockType    : {0} ({1})", chunk.blockType, (byte)chunk.blockType);
+                _logger.Verbose(
+                    "  blockType    : {0} ({1})",
+                    chunk.blockType,
+                    (byte)chunk.blockType
+                );
                 _logger.Verbose("  filesCount   : {0}", chunk.files.Length);
 
                 for (int j = 0; j < chunk.files.Length; j++)

@@ -4,11 +4,14 @@ namespace BydTools.Utils.SparkBuffer
 {
     public static class BinaryReaderExtensions
     {
-        public static SparkType ReadSparkType(this BinaryReader reader)
-            => (SparkType)reader.ReadByte();
+        public static SparkType ReadSparkType(this BinaryReader reader) =>
+            (SparkType)reader.ReadByte();
 
-        public static long Seek(this BinaryReader reader, long pos, SeekOrigin seekOrigin = SeekOrigin.Begin)
-            => reader.BaseStream.Seek(pos, seekOrigin);
+        public static long Seek(
+            this BinaryReader reader,
+            long pos,
+            SeekOrigin seekOrigin = SeekOrigin.Begin
+        ) => reader.BaseStream.Seek(pos, seekOrigin);
 
         public static string ReadSparkBufferString(this BinaryReader reader)
         {
@@ -42,11 +45,12 @@ namespace BydTools.Utils.SparkBuffer
         public static string ReadSparkBufferEnum(this BinaryReader reader, EnumType type)
         {
             var value = reader.ReadInt32();
-            return type.enums.FirstOrDefault(x => x.value == value, new EnumType.EnumItem
-            {
-                name = value.ToString(),
-                value = value
-            }).name;
+            return type
+                .enums.FirstOrDefault(
+                    x => x.value == value,
+                    new EnumType.EnumItem { name = value.ToString(), value = value }
+                )
+                .name;
         }
 
         public static bool ReadSparkBufferBool(this BinaryReader reader)
@@ -68,11 +72,14 @@ namespace BydTools.Utils.SparkBuffer
             return reader.ReadDouble();
         }
 
-        public static void Align4Bytes(this BinaryReader reader)
-            => reader.Seek((reader.BaseStream.Position - 1) + (4 - ((reader.BaseStream.Position - 1) % 4)));
+        public static void Align4Bytes(this BinaryReader reader) =>
+            reader.Seek(
+                (reader.BaseStream.Position - 1) + (4 - ((reader.BaseStream.Position - 1) % 4))
+            );
 
-        public static void Align8Bytes(this BinaryReader reader)
-            => reader.Seek((reader.BaseStream.Position - 1) + (8 - ((reader.BaseStream.Position - 1) % 8)));
+        public static void Align8Bytes(this BinaryReader reader) =>
+            reader.Seek(
+                (reader.BaseStream.Position - 1) + (8 - ((reader.BaseStream.Position - 1) % 8))
+            );
     }
 }
-

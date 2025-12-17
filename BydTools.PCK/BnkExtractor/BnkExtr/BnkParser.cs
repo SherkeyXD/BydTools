@@ -21,10 +21,7 @@ namespace BnkExtractor.BnkExtr
         public static string CreateOutputDirectory(string bnk_filename)
         {
             var baseDir = Path.GetDirectoryName(bnk_filename) ?? ".";
-            var directory = Path.Combine(
-                baseDir,
-                Path.GetFileNameWithoutExtension(bnk_filename)
-            );
+            var directory = Path.Combine(baseDir, Path.GetFileNameWithoutExtension(bnk_filename));
             Directory.CreateDirectory(directory);
             return directory;
         }

@@ -214,7 +214,9 @@ public class PckParser
 
                     if (actualTypeFlag == 0 || actualTypeFlag == 1)
                     {
-                        entries.Add(new PckEntry(fileId64, 1, actualSize, actualOffset, actualTypeFlag));
+                        entries.Add(
+                            new PckEntry(fileId64, 1, actualSize, actualOffset, actualTypeFlag)
+                        );
                         pos += 24;
                         continue;
                     }

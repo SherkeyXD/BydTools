@@ -1,5 +1,5 @@
-﻿using OggVorbisSharp;
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
+using OggVorbisSharp;
 using static OggVorbisSharp.Ogg;
 using static OggVorbisSharp.Vorbis;
 
