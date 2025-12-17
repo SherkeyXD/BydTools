@@ -1,6 +1,7 @@
 ﻿using BydTools.Utils.Crypto;
 using BydTools.Utils.Extensions;
 using BydTools.Utils.SparkBuffer;
+using BydTools.Utils.xLua;
 
 namespace BydTools.VFS;
 
@@ -10,14 +11,17 @@ namespace BydTools.VFS;
 public class VFSDumper
 {
     private readonly ILogger? _logger;
+    private readonly string? _luaMasterKey;
 
-    /// <summary>
-    /// Initializes a new instance of the VFSDumper class.
-    /// </summary>
-    /// <param name="logger">Optional logger for output. If null, uses Console directly.</param>
     public VFSDumper(ILogger? logger = null)
     {
         _logger = logger;
+        _luaMasterKey = LuaDecipher.GetMasterKey();
+
+        if (_logger != null && !string.IsNullOrEmpty(_luaMasterKey))
+        {
+            _logger.Verbose("Lua master key initialized successfully");
+        }
     }
 
     /// <summary>
@@ -151,11 +155,9 @@ public class VFSDumper
 
         var blockFile = File.ReadAllBytes(blockFilePath);
 
-        // Extract the nonce from the first BLOCK_HEAD_LEN bytes
         byte[] nonce = GC.AllocateUninitializedArray<byte>(VFSDefine.BLOCK_HEAD_LEN);
         Buffer.BlockCopy(blockFile, 0, nonce, 0, nonce.Length);
 
-        // Decrypt the BLC file content (starting after the header)
         using var chacha = new CSChaCha20(Convert.FromBase64String(VFSDefine.CHACHA_KEY), nonce, 1);
         var decryptedBytes = chacha.DecryptBytes(blockFile[VFSDefine.BLOCK_HEAD_LEN..]);
         Buffer.BlockCopy(
@@ -166,9 +168,6 @@ public class VFSDumper
             decryptedBytes.Length
         );
 
-        // Parse the VFBlockMainInfo structure.
-        // Note: the version field is located at the beginning of the BLC file (offset 0).
-        // XXE1 only decrypts the payload after BLOCK_HEAD_LEN, so the start offset should be 0 here.
         var vfBlockMainInfo = new VFBlockMainInfo(blockFile, 0);
 
         // Count files by type
@@ -242,22 +241,17 @@ public class VFSDumper
                 if (!string.IsNullOrEmpty(fileDir) && !Directory.Exists(fileDir))
                 {
                     Directory.CreateDirectory(fileDir);
-                    // Only log directory creation once per directory
                     if (createdDirs.Add(fileDir) && _logger != null)
                     {
                         _logger.Info($"  Created directory: {fileDir}");
                     }
                 }
 
-                // Always seek to the file offset first
                 chunkFs.Seek(file.offset, SeekOrigin.Begin);
 
                 byte[] fileData;
                 if (file.bUseEncrypt)
                 {
-                    // Build nonce for file decryption:
-                    // - First 4 bytes: VFS_PROTO_VERSION (little-endian)
-                    // - Next 8 bytes: ivSeed (little-endian)
                     byte[] fileNonce = GC.AllocateUninitializedArray<byte>(
                         VFSDefine.BLOCK_HEAD_LEN
                     );
@@ -282,77 +276,75 @@ public class VFSDumper
                         1
                     );
 
-                    // Read encrypted data
                     var encryptedData = new byte[file.len];
                     chunkFs.ReadExactly(encryptedData);
-
-                    // Decrypt
                     fileData = fileChacha.DecryptBytes(encryptedData);
                 }
                 else
                 {
-                    // Direct read without encryption
                     fileData = new byte[file.len];
                     chunkFs.ReadExactly(fileData);
                 }
 
-                // Check if we need to decrypt with SparkBuffer
                 if (
                     dumpAssetType == EVFSBlockType.TableCfg
                     && Path.GetExtension(file.fileName)
                         .Equals(".bytes", StringComparison.OrdinalIgnoreCase)
                 )
                 {
-                    if (_logger != null)
-                    {
-                        _logger.Verbose(
-                            $"  Attempting SparkBuffer decryption for: {file.fileName}"
-                        );
-                    }
-
                     try
                     {
-                        // Try to decrypt with SparkBuffer
                         var decryptedJson = SparkBufferDumper.Decrypt(fileData);
                         if (!string.IsNullOrEmpty(decryptedJson))
                         {
-                            // Change extension to .json
                             var jsonFilePath = Path.ChangeExtension(filePath, ".json");
                             File.WriteAllText(jsonFilePath, decryptedJson);
 
-                            if (_logger != null)
-                            {
-                                _logger.Info(
-                                    $"  ✓ Decrypted SparkBuffer: {file.fileName} -> {Path.GetFileName(jsonFilePath)}"
-                                );
-                            }
+                            _logger?.Verbose(
+                                $"  Decrypted SparkBuffer: {file.fileName} -> {Path.GetFileName(jsonFilePath)}"
+                            );
 
                             extractedCount++;
                             continue;
                         }
-                        else
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger?.Verbose(
+                            $"  SparkBuffer decryption failed for {file.fileName}: {ex.Message}"
+                        );
+                    }
+                }
+
+                if (dumpAssetType == EVFSBlockType.LuaScript && !string.IsNullOrEmpty(_luaMasterKey))
+                {
+                    try
+                    {
+                        var base64String = System.Text.Encoding.UTF8.GetString(fileData).Trim();
+                        var decryptedLua = LuaDecipher.DecryptLuaWithMasterKey(
+                            base64String,
+                            _luaMasterKey
+                        );
+
+                        if (decryptedLua != null && LuaDecipher.IsValidLuaBytecode(decryptedLua))
                         {
-                            if (_logger != null)
-                            {
-                                _logger.Verbose(
-                                    $"  SparkBuffer decryption returned empty for {file.fileName}"
-                                );
-                            }
+                            var luaFilePath = Path.ChangeExtension(filePath, ".lua");
+                            File.WriteAllBytes(luaFilePath, decryptedLua);
+
+                            _logger?.Verbose(
+                                $"  Decrypted Lua: {file.fileName} -> {Path.GetFileName(luaFilePath)}"
+                            );
+
+                            extractedCount++;
+                            continue;
                         }
                     }
                     catch (Exception ex)
                     {
-                        if (_logger != null)
-                        {
-                            _logger.Error(
-                                $"  ✗ SparkBuffer decryption failed for {file.fileName}: {ex.Message}"
-                            );
-                        }
-                        // Fall through to save original file
+                        _logger?.Verbose($"  Lua decryption failed for {file.fileName}: {ex.Message}");
                     }
                 }
 
-                // Save file as-is
                 File.WriteAllBytes(filePath, fileData);
 
                 extractedCount++;

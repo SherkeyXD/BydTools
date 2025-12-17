@@ -21,7 +21,7 @@
   - NonGeneratedConfigs
   - SkillData
   - SpawnerConfig
-- [x] `LuaScript` is encrypted(xxtea, key is dynamically generated)
+- [x] `LuaScript` is encrypted (XXTEA, key is dynamically generated) - **Now automatically decrypted!**
 - [ ] `Video` is usm encrypted and can be decrypted by [WannaCRI](https://github.com/donmai-me/WannaCRI)
 
 ### PCK
@@ -33,6 +33,12 @@
 ### BydTools.VFS
 
 Dump specific types of files from the game's VFS.
+
+**Features:**
+
+- Automatically decrypts TableCfg (.bytes) files using SparkBuffer and saves as .json
+- Automatically decrypts LuaScript files using XXTEA and saves as .lua (source code format)
+- Lua master key is computed once at initialization for optimal performance
 
 ```auto
 Usage:
@@ -47,6 +53,7 @@ Arguments:
 
 Examples:
   BydTools.CLI vfs --gamepath /path/to/game --blocktype Bundle --output /path/to/output
+  BydTools.CLI vfs --gamepath /path/to/game --blocktype LuaScript --output /path/to/lua
   BydTools.CLI vfs --gamepath /path/to/game --blocktype 12
   BydTools.CLI vfs --gamepath /path/to/game
 ```
@@ -80,4 +87,5 @@ Examples:
 - [rfi/BeyondTools](https://git.crepe.moe/rfi/BeyondTools) the original repo
 - [AssetRipper/BnkExtractor](https://github.com/AssetRipper/BnkExtractor) for bnk and wem processing
 - [Xiph.Org Foundation](https://www.xiph.org/) for ogg processing
+- [Campofinale/BeyondTools.LuaDecipher](https://git.teamstardust.org/Campofinale/BeyondTools.LuaDecipher) for genarating lua key
 - Friends from discord servers
