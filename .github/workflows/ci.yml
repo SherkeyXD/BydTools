@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build BydTools
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v6
+      with:
+        show-progress: false
+      
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v5
+      with:
+        dotnet-version: '10.0.x'
+        
+    - name: Restore dependencies
+      run: dotnet restore
+      
+    - name: Publish BydTools.CLI
+      run: dotnet publish BydTools.CLI/BydTools.CLI.csproj -c Release -r win-x64 -o ./publish
+
+    - name: Clean up unnecessary files
+      run: |
+        Remove-Item -Path ./publish/*.pdb -Force -ErrorAction SilentlyContinue
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v6
+      with:
+        name: BydTools-win-x64
+        path: ./publish
