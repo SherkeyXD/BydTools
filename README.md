@@ -116,6 +116,7 @@ This project is licensed under [CC BY-NC-SA 4.0](https://creativecommons.org/lic
 
 This project includes code ported from or inspired by the following open-source projects:
 
+- [AnimeStudio](https://github.com/Escartem/AnimeStudio) by Escartem — MIT
 - [AnimeWwise](https://github.com/Escartem/AnimeWwise) by Escartem — CC BY-NC-SA 4.0
 - [ww2ogg](https://github.com/hcs64/ww2ogg) by hcs — BSD-3-Clause
 - [ReVorb](https://github.com/ItsBranK/ReVorb) by ItsBranK (original by Yirkha)
