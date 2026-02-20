@@ -49,15 +49,15 @@ Dump specific types of files from the game's VFS.
 
 ```
 Usage:
-  BydTools vfs --gamepath <path> --blocktype <type>[,type2,...] [options]
+  BydTools vfs --input <path> --output <dir> --blocktype <type>[,type2,...] [options]
 
 Required:
-  --gamepath <path>         Game data directory that contains the VFS folder
-  --blocktype <type>        Block type to dump (name or numeric value)
+  -i, --input <path>        Game data directory that contains the VFS folder
+  -o, --output <dir>        Output directory
+  -t, --blocktype <type>    Block type to dump (name or numeric value)
                             Multiple types can be separated by comma, e.g. Bundle,Lua,Table
 
 Options:
-  --output <dir>            Output directory (default: ./Assets)
   --debug                   Scan subfolders and print block info (no extraction)
   -v, --verbose             Enable verbose output
   -h, --help                Show help information
@@ -75,11 +75,11 @@ Available block types:
 **Examples:**
 
 ```bash
-BydTools vfs --gamepath /path/to/game --blocktype Bundle --output /path/to/output
-BydTools vfs --gamepath /path/to/game --blocktype Lua
-BydTools vfs --gamepath /path/to/game --blocktype Bundle,Lua,Table
-BydTools vfs --gamepath /path/to/game --blocktype 12
-BydTools vfs --gamepath /path/to/game --blocktype Table --debug
+BydTools vfs --input /path/to/game --output /path/to/output --blocktype Bundle
+BydTools vfs -i /path/to/game -o /path/to/output -t Lua
+BydTools vfs -i /path/to/game -o /path/to/output -t Bundle,Lua,Table
+BydTools vfs -i /path/to/game -o /path/to/output -t 12
+BydTools vfs -i /path/to/game -o /path/to/output --blocktype Table --debug
 ```
 
 ### BydTools.PCK

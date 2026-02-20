@@ -10,15 +10,19 @@ sealed class VfsCommand : ICommand
 
     public void PrintHelp(string exeName)
     {
-        HelpFormatter.WriteUsage("vfs", "--gamepath <path> --blocktype <type>[,type2,...]");
+        HelpFormatter.WriteUsage(
+            "vfs",
+            "--input <path> --output <dir> --blocktype <type>[,type2,...]"
+        );
 
         HelpFormatter.WriteSectionHeader("Required");
         HelpFormatter.WriteEntry(
-            "--gamepath <path>",
+            "-i, --input <path>",
             "Game data directory that contains the VFS folder"
         );
+        HelpFormatter.WriteEntry("-o, --output <dir>", "Output directory");
         HelpFormatter.WriteEntry(
-            "--blocktype <type>",
+            "-t, --blocktype <type>",
             "Block type to dump (name or numeric value)"
         );
         HelpFormatter.WriteEntryContinuation(
@@ -27,7 +31,6 @@ sealed class VfsCommand : ICommand
         HelpFormatter.WriteBlankLine();
 
         HelpFormatter.WriteSectionHeader("Options");
-        HelpFormatter.WriteEntry("--output <dir>", "Output directory (default: ./Assets)");
         HelpFormatter.WriteEntry(
             "--debug",
             "Scan subfolders and print block info (no extraction)"
@@ -44,9 +47,9 @@ sealed class VfsCommand : ICommand
             .AddFlag("help", "h")
             .AddFlag("verbose", "v")
             .AddFlag("debug")
-            .AddOption("gamepath")
-            .AddOption("blocktype")
-            .AddOption("output");
+            .AddOption("input", "i")
+            .AddOption("output", "o")
+            .AddOption("blocktype", "t");
 
         if (!parser.TryParse(args))
         {
@@ -62,16 +65,21 @@ sealed class VfsCommand : ICommand
             return;
         }
 
-        var gamePath = parser.GetValue("gamepath");
+        var gamePath = parser.GetValue("input");
         if (string.IsNullOrWhiteSpace(gamePath))
         {
-            Console.Error.WriteLine("Error: --gamepath is required.");
+            Console.Error.WriteLine("Error: --input is required.");
             PrintHelp(Program.ExecutableName);
             return;
         }
 
-        var outputDir =
-            parser.GetValue("output") ?? Path.Combine(AppContext.BaseDirectory, "Assets");
+        var outputDir = parser.GetValue("output");
+        if (string.IsNullOrWhiteSpace(outputDir))
+        {
+            Console.Error.WriteLine("Error: --output is required.");
+            PrintHelp(Program.ExecutableName);
+            return;
+        }
 
         var streamingAssetsPath = Path.Combine(gamePath, VFSDefine.VFS_DIR);
         if (!Directory.Exists(streamingAssetsPath))
@@ -129,9 +137,7 @@ sealed class VfsCommand : ICommand
         foreach (var segment in segments)
         {
             var trimmed = segment.Trim();
-            if (
-                Enum.TryParse<EVFSBlockType>(trimmed, ignoreCase: true, out var parsed)
-            )
+            if (Enum.TryParse<EVFSBlockType>(trimmed, ignoreCase: true, out var parsed))
             {
                 result.Add(parsed);
             }
