@@ -42,7 +42,7 @@ class Program
             return;
         }
 
-        command.Execute(args.Skip(1).ToArray());
+        command.Execute(args[1..]);
     }
 
     static void PrintHelp()

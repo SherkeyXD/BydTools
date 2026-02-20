@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using BydTools.Utils;
 using BydTools.Utils.Crypto;
 using BydTools.Utils.Extensions;
@@ -11,9 +12,9 @@ namespace BydTools.VFS;
 public class VFSDumper : IVFSDumper
 {
     private readonly ILogger _logger;
-    private readonly Dictionary<EVFSBlockType, IPostProcessor> _postProcessors;
+    private readonly IReadOnlyDictionary<EVFSBlockType, IPostProcessor> _postProcessors;
 
-    public VFSDumper(ILogger logger, Dictionary<EVFSBlockType, IPostProcessor> postProcessors)
+    public VFSDumper(ILogger logger, IReadOnlyDictionary<EVFSBlockType, IPostProcessor> postProcessors)
     {
         _logger = logger;
         _postProcessors = postProcessors;
@@ -21,9 +22,9 @@ public class VFSDumper : IVFSDumper
 
     /// <summary>
     /// Maps EVFSBlockType to groupCfgHashName (directory name).
-    /// These are pre-computed hash values as found in the game's VFS system.
+    /// Frozen for thread-safety and optimized read performance.
     /// </summary>
-    static readonly Dictionary<EVFSBlockType, string> blockHashMap = new()
+    private static readonly FrozenDictionary<EVFSBlockType, string> blockHashMap = new Dictionary<EVFSBlockType, string>
     {
         { EVFSBlockType.InitAudio, "07A1BB91" },
         { EVFSBlockType.InitBundle, "0CE8FA57" },
@@ -44,9 +45,9 @@ public class VFSDumper : IVFSDumper
         { EVFSBlockType.AudioEnglish, "A31457D0" },
         { EVFSBlockType.AudioJapanese, "F668D4EE" },
         { EVFSBlockType.AudioKorean, "E9D31017" },
-    };
+    }.ToFrozenDictionary();
 
-    public static Dictionary<EVFSBlockType, string> BlockHashMap => blockHashMap;
+    public static IReadOnlyDictionary<EVFSBlockType, string> BlockHashMap => blockHashMap;
 
     private static VFBlockMainInfo DecryptAndParseBlc(string blcFilePath)
     {
@@ -55,11 +56,7 @@ public class VFSDumper : IVFSDumper
         byte[] nonce = GC.AllocateUninitializedArray<byte>(VFSDefine.BLOCK_HEAD_LEN);
         Buffer.BlockCopy(blockFile, 0, nonce, 0, nonce.Length);
 
-        using var chacha = new CSChaCha20(
-            Convert.FromBase64String(VFSDefine.CHACHA_KEY),
-            nonce,
-            1
-        );
+        using var chacha = new CSChaCha20(VFSDefine.ChaChaKey, nonce, 1);
         var decryptedBytes = chacha.DecryptBytes(blockFile[VFSDefine.BLOCK_HEAD_LEN..]);
         Buffer.BlockCopy(
             decryptedBytes,
@@ -96,11 +93,7 @@ public class VFSDumper : IVFSDumper
                 sizeof(long)
             );
 
-            using var fileChacha = new CSChaCha20(
-                Convert.FromBase64String(VFSDefine.CHACHA_KEY),
-                fileNonce,
-                1
-            );
+            using var fileChacha = new CSChaCha20(VFSDefine.ChaChaKey, fileNonce, 1);
 
             var encryptedData = new byte[file.len];
             chunkFs.ReadExactly(encryptedData);

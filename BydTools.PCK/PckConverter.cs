@@ -11,11 +11,16 @@ public class PckConverter
 {
     private readonly ILogger _logger;
     private readonly IWemConverter _wemConverter;
+    private readonly PckExtractor _extractor;
 
     public PckConverter(ILogger logger, IWemConverter wemConverter)
+        : this(logger, wemConverter, new PckExtractor(logger)) { }
+
+    public PckConverter(ILogger logger, IWemConverter wemConverter, PckExtractor extractor)
     {
         _logger = logger;
         _wemConverter = wemConverter;
+        _extractor = extractor;
     }
 
     /// <summary>
@@ -47,7 +52,7 @@ public class PckConverter
 
         if (normalizedMode == "raw")
         {
-            new PckExtractor(_logger).ExtractFiles(pckPath, outputDir, mapper);
+            _extractor.ExtractFiles(pckPath, outputDir, mapper);
             return;
         }
 
@@ -122,9 +127,6 @@ public class PckConverter
                 try
                 {
                     string sourceOgg = _wemConverter.ConvertWem(job.TempPath);
-
-                    GC.Collect();
-                    GC.WaitForPendingFinalizers();
 
                     try
                     {

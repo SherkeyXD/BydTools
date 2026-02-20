@@ -1,4 +1,4 @@
-﻿namespace BydTools.VFS;
+namespace BydTools.VFS;
 
 /// <summary>
 /// Constants used for VFS (Virtual File System) operations.
@@ -11,7 +11,12 @@ public static class VFSDefine
     /// Used for both BLC file decryption and CHK file outer-layer decryption.
     /// Key bytes: E9 5B 31 7A C4 F8 28 56 9D 23 A8 6B F2 71 DC B5 3E 84 6F A7 5C 92 4D 67 1D BA 8E 38 F4 CA 52 E1
     /// </summary>
-    public const string CHACHA_KEY = "6VsxesT4KFadI6hr8nHctT6Eb6dckk1nHbqOOPTKUuE=";
+    public const string CHACHA_KEY_BASE64 = "6VsxesT4KFadI6hr8nHctT6Eb6dckk1nHbqOOPTKUuE=";
+
+    /// <summary>
+    /// Pre-decoded ChaCha20 key bytes. Cached to avoid repeated Base64 decoding in hot paths.
+    /// </summary>
+    public static readonly byte[] ChaChaKey = Convert.FromBase64String(CHACHA_KEY_BASE64);
 
     /// <summary>
     /// VFS directory name within StreamingAssets.

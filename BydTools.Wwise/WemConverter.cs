@@ -50,6 +50,8 @@ public sealed class WemConverter : IWemConverter
     public void RevorbOgg(string inputPath, string? outputPath = null) =>
         Revorb.RevorbSharp.Convert(inputPath, outputPath ?? Path.ChangeExtension(inputPath, ".revorb.ogg"));
 
+    private static readonly Lazy<string> _codebooksPath = new(ExtractCodebooks);
+
     public string ConvertWem(string wemPath)
     {
         if (!File.Exists(wemPath))
@@ -57,52 +59,11 @@ public sealed class WemConverter : IWemConverter
 
         string oggPath = Path.ChangeExtension(wemPath, "ogg");
 
-        string tempDir = Path.Combine(Path.GetDirectoryName(wemPath) ?? ".", ".ww2ogg");
-        Directory.CreateDirectory(tempDir);
-
-        string codebooksPath = Path.Combine(tempDir, "packed_codebooks_aoTuV_603.bin");
-
-        if (!File.Exists(codebooksPath))
-        {
-            Assembly assembly = Assembly.GetExecutingAssembly();
-
-            string[] possibleNames =
-            [
-                "BydTools.Wwise.Resource.packed_codebooks_aoTuV_603.bin",
-                "BydTools.Wwise.Resource.packed_codebooks.bin",
-            ];
-
-            Stream? resourceStream = null;
-            foreach (string name in possibleNames)
-            {
-                resourceStream = assembly.GetManifestResourceStream(name);
-                if (resourceStream != null)
-                    break;
-            }
-
-            if (resourceStream == null)
-            {
-                string[] allResources = assembly.GetManifestResourceNames();
-                string? foundName = allResources.FirstOrDefault(n =>
-                    n.Contains("packed_codebooks") && n.EndsWith(".bin"));
-
-                if (foundName != null)
-                    resourceStream = assembly.GetManifestResourceStream(foundName);
-            }
-
-            if (resourceStream == null)
-                throw new FileNotFoundException("Embedded ww2ogg codebooks resource not found.");
-
-            using FileStream fs = File.Create(codebooksPath);
-            resourceStream.CopyTo(fs);
-            resourceStream.Dispose();
-        }
-
         Ww2oggOptions options = new()
         {
             InFilename = wemPath,
             OutFilename = oggPath,
-            CodebooksFilename = codebooksPath,
+            CodebooksFilename = _codebooksPath.Value,
         };
 
         Ww2oggConverter.Main(options);
@@ -111,5 +72,32 @@ public sealed class WemConverter : IWemConverter
             throw new FileNotFoundException($"OGG file was not created: {oggPath}");
 
         return oggPath;
+    }
+
+    /// <summary>
+    /// Extracts the embedded codebooks resource to a temp file once.
+    /// Thread-safe via Lazy&lt;T&gt;.
+    /// </summary>
+    private static string ExtractCodebooks()
+    {
+        string tempDir = Path.Combine(Path.GetTempPath(), "BydTools.Wwise");
+        Directory.CreateDirectory(tempDir);
+        string codebooksPath = Path.Combine(tempDir, "packed_codebooks_aoTuV_603.bin");
+
+        if (File.Exists(codebooksPath))
+            return codebooksPath;
+
+        Assembly assembly = Assembly.GetExecutingAssembly();
+        string[] allResources = assembly.GetManifestResourceNames();
+        string? resourceName = allResources.FirstOrDefault(n =>
+            n.Contains("packed_codebooks") && n.EndsWith(".bin"));
+
+        using Stream resourceStream = assembly.GetManifestResourceStream(resourceName!)
+            ?? throw new FileNotFoundException("Embedded ww2ogg codebooks resource not found.");
+
+        using FileStream fs = File.Create(codebooksPath);
+        resourceStream.CopyTo(fs);
+
+        return codebooksPath;
     }
 }

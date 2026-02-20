@@ -122,18 +122,8 @@ public class PckExtractor
         uint languageId = 0
     )
     {
-        if (mapper != null)
-        {
-            string key = fileId.ToString();
-            var mapped = mapper.GetMappedPath(key);
-            if (mapped.HasValue)
-            {
-                string path = mapped.Value.Path;
-                if (mapped.Value.Language != null)
-                    path = Path.Combine(mapped.Value.Language, path);
-                return Path.ChangeExtension(path, extension);
-            }
-        }
+        if (TryResolveMapped(fileId.ToString(), mapper, extension, out var resolved))
+            return resolved;
 
         if (languageId != 0 && languages != null)
         {
@@ -152,20 +142,34 @@ public class PckExtractor
         string extension
     )
     {
+        if (TryResolveMapped(wemId.ToString(), mapper, extension, out var resolved))
+            return resolved;
+
+        return Path.Combine("unmapped", $"{bankFileId}_{wemId}{extension}");
+    }
+
+    private static bool TryResolveMapped(
+        string key,
+        PckMapper? mapper,
+        string extension,
+        out string result
+    )
+    {
         if (mapper != null)
         {
-            string key = wemId.ToString();
             var mapped = mapper.GetMappedPath(key);
             if (mapped.HasValue)
             {
                 string path = mapped.Value.Path;
                 if (mapped.Value.Language != null)
                     path = Path.Combine(mapped.Value.Language, path);
-                return Path.ChangeExtension(path, extension);
+                result = Path.ChangeExtension(path, extension);
+                return true;
             }
         }
 
-        return Path.Combine("unmapped", $"{bankFileId}_{wemId}{extension}");
+        result = "";
+        return false;
     }
 
     private static void SaveFile(string baseDir, string relativePath, byte[] data)
