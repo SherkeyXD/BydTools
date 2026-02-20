@@ -1,3 +1,5 @@
+using BydTools.Utils;
+
 namespace BydTools.PCK;
 
 /// <summary>
@@ -5,13 +7,9 @@ namespace BydTools.PCK;
 /// </summary>
 public class PckExtractor
 {
-    private readonly ILogger? _logger;
+    private readonly ILogger _logger;
 
-    /// <summary>
-    /// Initializes a new instance of the PckExtractor class.
-    /// </summary>
-    /// <param name="logger">Optional logger for output. If null, uses Console directly.</param>
-    public PckExtractor(ILogger? logger = null)
+    public PckExtractor(ILogger logger)
     {
         _logger = logger;
     }
@@ -19,12 +17,6 @@ public class PckExtractor
     /// <summary>
     /// Extracts files from a PCK archive.
     /// </summary>
-    /// <param name="pckPath">Path to the PCK file.</param>
-    /// <param name="outputDir">Output directory.</param>
-    /// <param name="extractWem">Whether to extract WEM files.</param>
-    /// <param name="extractBnk">Whether to extract BNK files.</param>
-    /// <param name="extractPlg">Whether to extract PLG files.</param>
-    /// <param name="extractUnknown">Whether to extract unknown files.</param>
     public void ExtractFiles(
         string pckPath,
         string outputDir,

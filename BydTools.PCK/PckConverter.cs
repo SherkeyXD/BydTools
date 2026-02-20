@@ -1,4 +1,5 @@
 using BnkExtractor;
+using BydTools.Utils;
 
 namespace BydTools.PCK;
 
@@ -9,16 +10,12 @@ namespace BydTools.PCK;
 public class PckConverter
 {
     private readonly PckExtractor _extractor;
-    private readonly ILogger? _logger;
+    private readonly ILogger _logger;
 
-    /// <summary>
-    /// Initializes a new instance of the PckConverter class.
-    /// </summary>
-    /// <param name="logger">Optional logger for output. If null, uses Console directly.</param>
-    public PckConverter(ILogger? logger = null)
+    public PckConverter(ILogger logger)
     {
         _logger = logger;
-        _extractor = new PckExtractor(_logger);
+        _extractor = new PckExtractor(logger);
     }
 
     /// <summary>
@@ -27,9 +24,6 @@ public class PckConverter
     /// - raw 模式：直接提取 wem/bnk/plg，不做任何转换
     /// - ogg 模式：提取所有文件，将 wem 和从 bnk 解析出的 wem 转换为 ogg（如果失败则保留原格式），plg 直接保存
     /// </summary>
-    /// <param name="pckPath">PCK 文件路径</param>
-    /// <param name="outputDir">最终输出目录</param>
-    /// <param name="mode">提取模式：raw 或 ogg（默认）</param>
     public void ExtractAndConvert(string pckPath, string outputDir, string mode = "ogg")
     {
         if (!File.Exists(pckPath))
@@ -37,13 +31,9 @@ public class PckConverter
 
         Directory.CreateDirectory(outputDir);
 
-        // Print input/output info
-        if (_logger != null)
-        {
-            _logger.Info($"Input: {pckPath}");
-            _logger.Info($"Output: {outputDir}");
-            _logger.Info($"Mode: {mode}");
-        }
+        _logger.Info($"Input: {pckPath}");
+        _logger.Info($"Output: {outputDir}");
+        _logger.Info($"Mode: {mode}");
 
         string normalizedMode = mode.ToLowerInvariant();
         if (normalizedMode != "raw" && normalizedMode != "ogg")
@@ -54,14 +44,9 @@ public class PckConverter
             );
         }
 
-        // raw 模式：直接提取 wem/bnk/plg
         if (normalizedMode == "raw")
         {
-            if (_logger != null)
-            {
-                _logger.Info("Extracting files in raw mode...");
-            }
-
+            _logger.Info("Extracting files in raw mode...");
             _extractor.ExtractFiles(
                 pckPath,
                 outputDir,
@@ -70,17 +55,14 @@ public class PckConverter
                 extractPlg: true,
                 extractUnknown: false
             );
-
             return;
         }
 
-        // ogg 模式：需要转换
         string tempDir = Path.Combine(outputDir, ".pck_extract");
         Directory.CreateDirectory(tempDir);
 
         try
         {
-            // 1. 先把所有文件从 PCK 提取到临时目录
             _extractor.ExtractFiles(
                 pckPath,
                 tempDir,
@@ -90,23 +72,16 @@ public class PckConverter
                 extractUnknown: false
             );
 
-            // Count files
             var bnkFiles = Directory.GetFiles(tempDir, "*.bnk", SearchOption.AllDirectories);
             var wemFiles = Directory.GetFiles(tempDir, "*.wem", SearchOption.AllDirectories);
             var plgFiles = Directory.GetFiles(tempDir, "*.plg", SearchOption.AllDirectories);
 
-            if (_logger != null)
-            {
-                _logger.Info(
-                    $"Found {bnkFiles.Length} BNK, {wemFiles.Length} WEM, {plgFiles.Length} PLG files"
-                );
-            }
+            _logger.Info(
+                $"Found {bnkFiles.Length} BNK, {wemFiles.Length} WEM, {plgFiles.Length} PLG files"
+            );
 
-            // 2. 解析所有 BNK 为 WEM
-            if (_logger != null && bnkFiles.Length > 0)
-            {
+            if (bnkFiles.Length > 0)
                 _logger.Info("Processing BNK files...");
-            }
 
             foreach (var bnkFile in bnkFiles)
             {
@@ -116,23 +91,17 @@ public class PckConverter
                 }
                 catch (Exception ex)
                 {
-                    if (_logger != null)
-                    {
-                        _logger.Verbose(
-                            $"Error parsing BNK {Path.GetFileName(bnkFile)}: {ex.Message}"
-                        );
-                    }
+                    _logger.Verbose(
+                        $"Error parsing BNK {Path.GetFileName(bnkFile)}: {ex.Message}"
+                    );
                 }
             }
 
-            // 重新统计 WEM 文件（包括从 BNK 解析出来的）
+            // Re-scan WEM files (includes those extracted from BNK)
             wemFiles = Directory.GetFiles(tempDir, "*.wem", SearchOption.AllDirectories);
 
-            // 3. 处理 WEM 文件：尝试转换为 OGG
-            if (_logger != null && wemFiles.Length > 0)
-            {
+            if (wemFiles.Length > 0)
                 _logger.Info("Converting WEM to OGG...");
-            }
 
             int convertedCount = 0;
             int failedCount = 0;
@@ -142,7 +111,6 @@ public class PckConverter
                 string fileName = Path.GetFileNameWithoutExtension(wemFile);
                 try
                 {
-                    // 尝试转换为 OGG
                     string sourceOgg;
                     try
                     {
@@ -150,34 +118,28 @@ public class PckConverter
                     }
                     catch (BnkExtractor.Ww2ogg.Exceptions.ParseException)
                     {
-                        // WEM 文件无法转换，保留原格式
                         string finalWemPath = Path.Combine(outputDir, $"{fileName}.wem");
                         File.Copy(wemFile, finalWemPath, overwrite: true);
                         failedCount++;
                         continue;
                     }
 
-                    // 验证源 OGG 文件是否存在
                     if (!File.Exists(sourceOgg))
                     {
-                        // 转换失败，保留原 WEM
                         string finalWemPath = Path.Combine(outputDir, $"{fileName}.wem");
                         File.Copy(wemFile, finalWemPath, overwrite: true);
                         failedCount++;
                         continue;
                     }
 
-                    // 强制垃圾回收以确保文件句柄被释放
                     GC.Collect();
                     GC.WaitForPendingFinalizers();
 
-                    // 尝试 revorb OGG 格式
                     string finalOutputPath = Path.Combine(outputDir, $"{fileName}.ogg");
                     try
                     {
                         Extractor.RevorbOgg(sourceOgg, finalOutputPath);
 
-                        // 验证 revorb 后的文件是否存在且有效
                         if (
                             !File.Exists(finalOutputPath)
                             || new FileInfo(finalOutputPath).Length == 0
@@ -190,30 +152,22 @@ public class PckConverter
                     }
                     catch
                     {
-                        // Revorb 失败，使用原始 OGG
                         File.Copy(sourceOgg, finalOutputPath, overwrite: true);
                     }
                     convertedCount++;
                 }
                 catch (Exception ex)
                 {
-                    if (_logger != null)
-                    {
-                        _logger.Verbose(
-                            $"Error processing WEM {Path.GetFileName(wemFile)}: {ex.Message}"
-                        );
-                    }
+                    _logger.Verbose(
+                        $"Error processing WEM {Path.GetFileName(wemFile)}: {ex.Message}"
+                    );
                     failedCount++;
                 }
             }
 
-            // 4. 直接复制 PLG 文件
             if (plgFiles.Length > 0)
             {
-                if (_logger != null)
-                {
-                    _logger.Info("Copying PLG files...");
-                }
+                _logger.Info("Copying PLG files...");
 
                 foreach (var plgFile in plgFiles)
                 {
@@ -223,20 +177,14 @@ public class PckConverter
                 }
             }
 
-            // Print completion message
-            if (_logger != null)
-            {
-                _logger.Info(
-                    $"Done, {convertedCount} OGG files, {failedCount} WEM files (failed to convert), {plgFiles.Length} PLG files."
-                );
-            }
+            _logger.Info(
+                $"Done, {convertedCount} OGG files, {failedCount} WEM files (failed to convert), {plgFiles.Length} PLG files."
+            );
         }
         finally
         {
             if (Directory.Exists(tempDir))
-            {
                 Directory.Delete(tempDir, recursive: true);
-            }
         }
     }
 }

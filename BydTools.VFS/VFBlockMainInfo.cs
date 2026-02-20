@@ -1,4 +1,4 @@
-﻿using System.Buffers.Binary;
+using System.Buffers.Binary;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -31,12 +31,10 @@ public class VFBlockMainInfo
         groupCfgName = Encoding.UTF8.GetString(bytes.AsSpan(offset, groupCfgNameLength));
         offset += groupCfgNameLength;
 
-        // Read groupCfgHashName as big-endian 4 bytes, convert to hex string.
-        // The blog mentions: "groupCfgHashName is 8 bytes long but only the first 4 bytes are valid".
-        // We read 4 bytes in big-endian and convert to uppercase hex.
-        groupCfgHashName = Convert.ToHexString(
-            bytes.AsSpan(offset, 4).ToArray().Reverse().ToArray()
-        );
+        // groupCfgHashName is 8 bytes long but only the first 4 bytes are valid.
+        // Read as little-endian uint32, format as uppercase hex to get the big-endian representation.
+        groupCfgHashName = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(offset))
+            .ToString("X8");
         offset += sizeof(long); // Skip full 8 bytes as per the structure
 
         // Read groupFileInfoNum (4 bytes, little-endian)

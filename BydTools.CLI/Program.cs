@@ -23,7 +23,6 @@ class Program
             return;
         }
 
-        // Check for subcommand
         var subcommand = args[0].ToLowerInvariant();
 
         if (subcommand == "vfs")
@@ -47,73 +46,29 @@ class Program
 
     static void HandleVFSCommand(string[] args)
     {
-        string? gamePath = null;
-        string? blockTypeString = null;
-        string? outputDir = null;
-        bool showHelp = false;
-        bool verbose = false;
-        bool debug = false;
+        var parser = new ArgParser()
+            .AddFlag("help", "h")
+            .AddFlag("verbose", "v")
+            .AddFlag("debug")
+            .AddOption("gamepath")
+            .AddOption("blocktype")
+            .AddOption("output");
 
-        for (int i = 0; i < args.Length; i++)
+        if (!parser.TryParse(args))
         {
-            var arg = args[i];
-
-            switch (arg)
-            {
-                case "-h":
-                case "--help":
-                    showHelp = true;
-                    break;
-
-                case "--verbose":
-                case "-v":
-                    verbose = true;
-                    break;
-
-                case "--debug":
-                    debug = true;
-                    break;
-
-                case "--gamepath":
-                    if (i + 1 >= args.Length)
-                    {
-                        Console.Error.WriteLine("Error: --gamepath requires a value.");
-                        return;
-                    }
-                    gamePath = args[++i];
-                    break;
-
-                case "--blocktype":
-                    if (i + 1 >= args.Length)
-                    {
-                        Console.Error.WriteLine("Error: --blocktype requires a value.");
-                        return;
-                    }
-                    blockTypeString = args[++i];
-                    break;
-
-                case "--output":
-                    if (i + 1 >= args.Length)
-                    {
-                        Console.Error.WriteLine("Error: --output requires a value.");
-                        return;
-                    }
-                    outputDir = args[++i];
-                    break;
-
-                default:
-                    Console.Error.WriteLine("Unknown argument: {0}", arg);
-                    PrintVFSHelp();
-                    return;
-            }
+            foreach (var error in parser.Errors)
+                Console.Error.WriteLine(error);
+            PrintVFSHelp();
+            return;
         }
 
-        if (showHelp)
+        if (parser.GetFlag("help"))
         {
             PrintVFSHelp();
             return;
         }
 
+        var gamePath = parser.GetValue("gamepath");
         if (string.IsNullOrWhiteSpace(gamePath))
         {
             Console.Error.WriteLine("Error: --gamepath is required.");
@@ -121,16 +76,21 @@ class Program
             return;
         }
 
-        // Default output directory
-        outputDir ??= Path.Combine(AppContext.BaseDirectory, "Assets");
+        var outputDir = parser.GetValue("output")
+            ?? Path.Combine(AppContext.BaseDirectory, "Assets");
 
-        // Parse blocktype, support name or numeric value, default is All
         EVFSBlockType dumpAssetType = EVFSBlockType.All;
+        var blockTypeString = parser.GetValue("blocktype");
         if (!string.IsNullOrWhiteSpace(blockTypeString))
         {
-            if (!Enum.TryParse<EVFSBlockType>(blockTypeString, ignoreCase: true, out dumpAssetType))
+            if (
+                !Enum.TryParse<EVFSBlockType>(
+                    blockTypeString,
+                    ignoreCase: true,
+                    out dumpAssetType
+                )
+            )
             {
-                // Try parse as numeric value
                 if (
                     byte.TryParse(blockTypeString, out var btValue)
                     && Enum.IsDefined(typeof(EVFSBlockType), btValue)
@@ -164,10 +124,10 @@ class Program
             return;
         }
 
-        var logger = new Logger(verbose);
+        var logger = new Logger(parser.GetFlag("verbose"));
         var dumper = new VFSDumper(logger);
 
-        if (debug)
+        if (parser.GetFlag("debug"))
         {
             dumper.DebugScanBlocks(streamingAssetsPath);
             return;
@@ -176,9 +136,7 @@ class Program
         if (dumpAssetType == EVFSBlockType.All)
         {
             foreach (var type in VFSDumper.BlockHashMap.Keys)
-            {
                 dumper.DumpAssetByType(streamingAssetsPath, type, outputDir);
-            }
         }
         else
         {
@@ -188,71 +146,28 @@ class Program
 
     static void HandlePCKCommand(string[] args)
     {
-        string? inputPath = null;
-        string? outputDir = null;
-        string mode = "ogg";
-        bool showHelp = false;
-        bool verbose = false;
+        var parser = new ArgParser()
+            .AddFlag("help", "h")
+            .AddFlag("verbose", "v")
+            .AddOption("input", "i")
+            .AddOption("output", "o")
+            .AddOption("mode", "m");
 
-        for (int i = 0; i < args.Length; i++)
+        if (!parser.TryParse(args))
         {
-            var arg = args[i];
-
-            switch (arg)
-            {
-                case "-h":
-                case "--help":
-                    showHelp = true;
-                    break;
-
-                case "--verbose":
-                case "-v":
-                    verbose = true;
-                    break;
-
-                case "--input":
-                case "-i":
-                    if (i + 1 >= args.Length)
-                    {
-                        Console.Error.WriteLine("Error: --input requires a value.");
-                        return;
-                    }
-                    inputPath = args[++i];
-                    break;
-
-                case "--output":
-                case "-o":
-                    if (i + 1 >= args.Length)
-                    {
-                        Console.Error.WriteLine("Error: --output requires a value.");
-                        return;
-                    }
-                    outputDir = args[++i];
-                    break;
-
-                case "--mode":
-                case "-m":
-                    if (i + 1 >= args.Length)
-                    {
-                        Console.Error.WriteLine("Error: --mode requires a value.");
-                        return;
-                    }
-                    mode = args[++i];
-                    break;
-
-                default:
-                    Console.Error.WriteLine("Unknown argument: {0}", arg);
-                    PrintPCKHelp();
-                    return;
-            }
+            foreach (var error in parser.Errors)
+                Console.Error.WriteLine(error);
+            PrintPCKHelp();
+            return;
         }
 
-        if (showHelp)
+        if (parser.GetFlag("help"))
         {
             PrintPCKHelp();
             return;
         }
 
+        var inputPath = parser.GetValue("input");
         if (string.IsNullOrWhiteSpace(inputPath))
         {
             Console.Error.WriteLine("Error: --input is required.");
@@ -260,6 +175,7 @@ class Program
             return;
         }
 
+        var outputDir = parser.GetValue("output");
         if (string.IsNullOrWhiteSpace(outputDir))
         {
             Console.Error.WriteLine("Error: --output is required.");
@@ -267,6 +183,7 @@ class Program
             return;
         }
 
+        var mode = parser.GetValue("mode") ?? "ogg";
         if (mode != "raw" && mode != "ogg")
         {
             Console.Error.WriteLine("Error: --mode must be one of: raw, ogg");
@@ -276,7 +193,7 @@ class Program
 
         try
         {
-            var logger = new Logger(verbose);
+            var logger = new Logger(parser.GetFlag("verbose"));
             var converter = new PckConverter(logger);
             converter.ExtractAndConvert(inputPath, outputDir, mode);
         }
@@ -332,19 +249,21 @@ class Program
         );
         Console.WriteLine();
         Console.WriteLine("Arguments:");
-        Console.WriteLine("  --gamepath   Game data directory that contains the VFS folder");
+        Console.WriteLine("  --gamepath       Game data directory that contains the VFS folder");
         Console.WriteLine(
-            "  --blocktype  Block type to dump, supports name or numeric value, default is all"
+            "  --blocktype      Block type to dump, supports name or numeric value, default is all"
         );
         Console.WriteLine(
-            "               Available types: {0}",
+            "                   Available types: {0}",
             string.Join(", ", VFSDumper.BlockHashMap.Keys)
         );
         Console.WriteLine(
-            "  --output     Output directory, default is ./Assets next to the executable"
+            "  --output         Output directory, default is ./Assets next to the executable"
         );
-        Console.WriteLine("  --debug      Scan all subfolders and print groupCfgName from each BLC (no extraction)");
-        Console.WriteLine("  --verbose, -v   Enable verbose output");
-        Console.WriteLine("  -h, --help   Show help information");
+        Console.WriteLine(
+            "  --debug          Scan all subfolders and print groupCfgName from each BLC (no extraction)"
+        );
+        Console.WriteLine("  --verbose, -v    Enable verbose output");
+        Console.WriteLine("  -h, --help       Show help information");
     }
 }

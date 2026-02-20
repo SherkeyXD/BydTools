@@ -13,6 +13,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\BydTools.Utils\BydTools.Utils.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <None Remove="Resource\*.bin" />
     <EmbeddedResource Include="Resource\*.bin" />
   </ItemGroup>
