@@ -1,184 +1,174 @@
 using BnkExtractor;
+using BnkExtractor.BnkExtr;
 using BydTools.Utils;
 
 namespace BydTools.PCK;
 
 /// <summary>
-/// Provides functionality to extract audio-related files from PCK archives
-/// and convert BNK/WEM contents to OGG using BnkExtractor.
+/// Extracts audio from PCK archives and converts WEM → OGG,
+/// with optional filename mapping via <see cref="PckMapper"/>.
 /// </summary>
 public class PckConverter
 {
-    private readonly PckExtractor _extractor;
     private readonly ILogger _logger;
 
     public PckConverter(ILogger logger)
     {
         _logger = logger;
-        _extractor = new PckExtractor(logger);
     }
 
     /// <summary>
-    /// 从 PCK 中提取音频文件。
-    /// 流程：
-    /// - raw 模式：直接提取 wem/bnk/plg，不做任何转换
-    /// - ogg 模式：提取所有文件，将 wem 和从 bnk 解析出的 wem 转换为 ogg（如果失败则保留原格式），plg 直接保存
+    /// Extracts and converts audio files from a PCK archive.
+    /// <list type="bullet">
+    ///   <item><b>raw</b> — extract WEM/BNK/PLG without conversion.</item>
+    ///   <item><b>ogg</b> — convert WEM (including BNK-embedded) to OGG; copy PLG as-is.</item>
+    /// </list>
     /// </summary>
-    public void ExtractAndConvert(string pckPath, string outputDir, string mode = "ogg")
+    public void ExtractAndConvert(
+        string pckPath,
+        string outputDir,
+        string mode = "ogg",
+        PckMapper? mapper = null
+    )
     {
         if (!File.Exists(pckPath))
             throw new FileNotFoundException("PCK file not found", pckPath);
 
         Directory.CreateDirectory(outputDir);
 
-        _logger.Info($"Input: {pckPath}");
-        _logger.Info($"Output: {outputDir}");
-        _logger.Info($"Mode: {mode}");
-
         string normalizedMode = mode.ToLowerInvariant();
-        if (normalizedMode != "raw" && normalizedMode != "ogg")
-        {
-            throw new ArgumentException(
-                $"Invalid mode: {mode}. Must be 'raw' or 'ogg'",
-                nameof(mode)
-            );
-        }
+        if (normalizedMode is not ("raw" or "ogg"))
+            throw new ArgumentException($"Invalid mode '{mode}'. Must be 'raw' or 'ogg'.", nameof(mode));
+
+        _logger.Info($"Input:  {pckPath}");
+        _logger.Info($"Output: {outputDir}");
+        _logger.Info($"Mode:   {normalizedMode}");
 
         if (normalizedMode == "raw")
         {
-            _logger.Info("Extracting files in raw mode...");
-            _extractor.ExtractFiles(
-                pckPath,
-                outputDir,
-                extractWem: true,
-                extractBnk: true,
-                extractPlg: true,
-                extractUnknown: false
-            );
+            new PckExtractor(_logger).ExtractFiles(pckPath, outputDir, mapper);
             return;
         }
 
+        ConvertToOgg(pckPath, outputDir, mapper);
+    }
+
+    private void ConvertToOgg(string pckPath, string outputDir, PckMapper? mapper)
+    {
         string tempDir = Path.Combine(outputDir, ".pck_extract");
         Directory.CreateDirectory(tempDir);
 
         try
         {
-            _extractor.ExtractFiles(
-                pckPath,
-                tempDir,
-                extractWem: true,
-                extractBnk: true,
-                extractPlg: true,
-                extractUnknown: false
-            );
+            using var fileStream = File.OpenRead(pckPath);
+            var parser = new PckParser(fileStream);
+            var content = parser.Parse();
 
-            var bnkFiles = Directory.GetFiles(tempDir, "*.bnk", SearchOption.AllDirectories);
-            var wemFiles = Directory.GetFiles(tempDir, "*.wem", SearchOption.AllDirectories);
-            var plgFiles = Directory.GetFiles(tempDir, "*.plg", SearchOption.AllDirectories);
+            _logger.Info($"Parsed {content.Entries.Count} entries");
 
-            _logger.Info(
-                $"Found {bnkFiles.Length} BNK, {wemFiles.Length} WEM, {plgFiles.Length} PLG files"
-            );
+            // Phase 1: extract all WEM data to temp files, track output mappings
+            var wemJobs = new List<ConvertJob>();
+            var plgJobs = new List<CopyJob>();
 
-            if (bnkFiles.Length > 0)
-                _logger.Info("Processing BNK files...");
-
-            foreach (var bnkFile in bnkFiles)
+            foreach (var entry in content.Entries)
             {
-                try
+                byte[] fileData = parser.GetFileData(entry);
+                if (fileData.Length < 4)
+                    continue;
+
+                ReadOnlySpan<byte> magic = fileData.AsSpan(0, 4);
+
+                if (magic.SequenceEqual("BKHD"u8))
                 {
-                    Extractor.ParseBnk(bnkFile);
+                    CollectBnkWems(fileData, entry, tempDir, mapper, wemJobs);
                 }
-                catch (Exception ex)
+                else if (magic.SequenceEqual("RIFF"u8) || magic.SequenceEqual("RIFX"u8))
                 {
-                    _logger.Verbose(
-                        $"Error parsing BNK {Path.GetFileName(bnkFile)}: {ex.Message}"
+                    string key = entry.FileId.ToString();
+                    string tempPath = Path.Combine(tempDir, $"{key}.wem");
+                    File.WriteAllBytes(tempPath, fileData);
+
+                    string outName = PckExtractor.ResolveOutputName(
+                        entry.FileId, mapper, ".ogg", content.Languages, entry.LanguageId
                     );
+                    wemJobs.Add(new ConvertJob(tempPath, outName));
+                }
+                else if (magic.SequenceEqual("PLUG"u8))
+                {
+                    string key = entry.FileId.ToString();
+                    string tempPath = Path.Combine(tempDir, $"{key}.plg");
+                    File.WriteAllBytes(tempPath, fileData);
+
+                    string outName = PckExtractor.ResolveOutputName(
+                        entry.FileId, mapper, ".plg", content.Languages, entry.LanguageId
+                    );
+                    plgJobs.Add(new CopyJob(tempPath, outName));
                 }
             }
 
-            // Re-scan WEM files (includes those extracted from BNK)
-            wemFiles = Directory.GetFiles(tempDir, "*.wem", SearchOption.AllDirectories);
+            _logger.Info($"Found {wemJobs.Count} WEM, {plgJobs.Count} PLG files");
 
-            if (wemFiles.Length > 0)
+            // Phase 2: convert WEM → OGG
+            if (wemJobs.Count > 0)
                 _logger.Info("Converting WEM to OGG...");
 
             int convertedCount = 0;
             int failedCount = 0;
 
-            foreach (var wemFile in wemFiles)
+            foreach (var job in wemJobs)
             {
-                string fileName = Path.GetFileNameWithoutExtension(wemFile);
+                string finalPath = Path.Combine(outputDir, job.OutputName);
+                EnsureDirectory(finalPath);
+
                 try
                 {
-                    string sourceOgg;
-                    try
-                    {
-                        sourceOgg = Extractor.ConvertWem(wemFile);
-                    }
-                    catch (BnkExtractor.Ww2ogg.Exceptions.ParseException)
-                    {
-                        string finalWemPath = Path.Combine(outputDir, $"{fileName}.wem");
-                        File.Copy(wemFile, finalWemPath, overwrite: true);
-                        failedCount++;
-                        continue;
-                    }
-
-                    if (!File.Exists(sourceOgg))
-                    {
-                        string finalWemPath = Path.Combine(outputDir, $"{fileName}.wem");
-                        File.Copy(wemFile, finalWemPath, overwrite: true);
-                        failedCount++;
-                        continue;
-                    }
+                    string sourceOgg = Extractor.ConvertWem(job.TempPath);
 
                     GC.Collect();
                     GC.WaitForPendingFinalizers();
 
-                    string finalOutputPath = Path.Combine(outputDir, $"{fileName}.ogg");
                     try
                     {
-                        Extractor.RevorbOgg(sourceOgg, finalOutputPath);
+                        Extractor.RevorbOgg(sourceOgg, finalPath);
 
-                        if (
-                            !File.Exists(finalOutputPath)
-                            || new FileInfo(finalOutputPath).Length == 0
-                        )
-                        {
-                            throw new InvalidOperationException(
-                                "Revorb failed: output file is missing or empty"
-                            );
-                        }
+                        if (!File.Exists(finalPath) || new FileInfo(finalPath).Length == 0)
+                            throw new InvalidOperationException("Revorb output missing or empty");
                     }
                     catch
                     {
-                        File.Copy(sourceOgg, finalOutputPath, overwrite: true);
+                        File.Copy(sourceOgg, finalPath, overwrite: true);
                     }
+
                     convertedCount++;
+                }
+                catch (BnkExtractor.Ww2ogg.Exceptions.ParseException)
+                {
+                    string wemFallback = Path.ChangeExtension(finalPath, ".wem");
+                    EnsureDirectory(wemFallback);
+                    File.Copy(job.TempPath, wemFallback, overwrite: true);
+                    failedCount++;
                 }
                 catch (Exception ex)
                 {
-                    _logger.Verbose(
-                        $"Error processing WEM {Path.GetFileName(wemFile)}: {ex.Message}"
-                    );
+                    _logger.Verbose($"Error converting {Path.GetFileName(job.TempPath)}: {ex.Message}");
                     failedCount++;
                 }
             }
 
-            if (plgFiles.Length > 0)
+            // Phase 3: copy PLG files
+            if (plgJobs.Count > 0)
             {
                 _logger.Info("Copying PLG files...");
-
-                foreach (var plgFile in plgFiles)
+                foreach (var job in plgJobs)
                 {
-                    string fileName = Path.GetFileName(plgFile);
-                    string finalOutputPath = Path.Combine(outputDir, fileName);
-                    File.Copy(plgFile, finalOutputPath, overwrite: true);
+                    string finalPath = Path.Combine(outputDir, job.OutputName);
+                    EnsureDirectory(finalPath);
+                    File.Copy(job.TempPath, finalPath, overwrite: true);
                 }
             }
 
             _logger.Info(
-                $"Done, {convertedCount} OGG files, {failedCount} WEM files (failed to convert), {plgFiles.Length} PLG files."
+                $"Done: {convertedCount} OGG, {failedCount} failed (kept as WEM), {plgJobs.Count} PLG"
             );
         }
         finally
@@ -187,4 +177,39 @@ public class PckConverter
                 Directory.Delete(tempDir, recursive: true);
         }
     }
+
+    private static void CollectBnkWems(
+        byte[] bnkData,
+        PckFileEntry bankEntry,
+        string tempDir,
+        PckMapper? mapper,
+        List<ConvertJob> wemJobs
+    )
+    {
+        var wemEntries = BnkParser.Parse(bnkData);
+
+        foreach (var wem in wemEntries)
+        {
+            string key = $"{bankEntry.FileId}_{wem.Id}";
+            string tempPath = Path.Combine(tempDir, $"{key}.wem");
+
+            using var fs = File.Create(tempPath);
+            fs.Write(bnkData, (int)wem.Offset, (int)wem.Size);
+
+            string outName = PckExtractor.ResolveBnkWemName(
+                bankEntry.FileId, wem.Id, mapper, ".ogg"
+            );
+            wemJobs.Add(new ConvertJob(tempPath, outName));
+        }
+    }
+
+    private static void EnsureDirectory(string filePath)
+    {
+        string? dir = Path.GetDirectoryName(filePath);
+        if (dir != null)
+            Directory.CreateDirectory(dir);
+    }
+
+    private record ConvertJob(string TempPath, string OutputName);
+    private record CopyJob(string TempPath, string OutputName);
 }

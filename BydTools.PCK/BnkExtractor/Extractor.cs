@@ -1,4 +1,4 @@
-﻿using System.Reflection;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using BnkExtractor.Ww2ogg;
 
@@ -66,15 +66,10 @@ namespace BnkExtractor
         private static extern bool SetDllDirectory(string lpPathName);
 
         /// <summary>
-        /// 解析 BNK 文件并把内部的 WEM 文件解包出来。
+        /// 解析 BNK 文件并把内部的 WEM 文件解包到同名子目录。
         /// </summary>
         public static void ParseBnk(string filePath) =>
-            BnkExtr.BnkParser.Parse(
-                filePath,
-                swapByteOrder: false,
-                noDirectory: false,
-                dumpObjectsTxt: false
-            );
+            BnkExtr.BnkParser.ParseToFiles(filePath);
 
         /// <summary>
         /// 对 OGG 文件执行 revorb 以修正 granule 信息。

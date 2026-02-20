@@ -1,310 +1,92 @@
-﻿using System.Text;
+namespace BnkExtractor.BnkExtr;
 
-namespace BnkExtractor.BnkExtr
+/// <summary>
+/// Minimal Wwise BNK parser — extracts embedded WEM file entries
+/// by reading only the BKHD, DIDX, and DATA sections.
+/// </summary>
+public static class BnkParser
 {
-    public static class BnkParser
+    /// <summary>
+    /// A WEM file entry found inside a BNK.
+    /// <paramref name="Offset"/> is absolute within the source BNK byte array.
+    /// </summary>
+    public record BnkWemEntry(uint Id, uint Offset, uint Size);
+
+    /// <summary>
+    /// Parses a BNK byte array and returns the embedded WEM entries.
+    /// Scans sections in order; handles any section arrangement.
+    /// </summary>
+    public static List<BnkWemEntry> Parse(byte[] data)
     {
-        public static uint Swap32(uint dword)
+        using var reader = new BinaryReader(new MemoryStream(data));
+
+        long dataOffset = 0;
+        var entries = new List<BnkWemEntry>();
+
+        while (reader.BaseStream.Position + 8 <= reader.BaseStream.Length)
         {
-            return BitConverter.ToUInt32(BitConverter.GetBytes(dword).Reverse().ToArray());
+            string sign = ReadSignature(reader);
+            uint sectionSize = reader.ReadUInt32();
+            long sectionStart = reader.BaseStream.Position;
+
+            if (sign == "DIDX")
+            {
+                int wemCount = (int)(sectionSize / 12);
+                for (int i = 0; i < wemCount; i++)
+                {
+                    uint id = reader.ReadUInt32();
+                    uint offset = reader.ReadUInt32();
+                    uint size = reader.ReadUInt32();
+                    entries.Add(new BnkWemEntry(id, offset, size));
+                }
+            }
+            else if (sign == "DATA")
+            {
+                dataOffset = reader.BaseStream.Position;
+            }
+
+            reader.BaseStream.Position = sectionStart + sectionSize;
         }
 
-        public static bool ReadContent<T>(BinaryReader file, ref T structure)
-            where T : IReadable
+        if (dataOffset == 0 || entries.Count == 0)
+            return [];
+
+        for (int i = 0; i < entries.Count; i++)
+            entries[i] = entries[i] with { Offset = (uint)(entries[i].Offset + dataOffset) };
+
+        return entries;
+    }
+
+    /// <summary>
+    /// Parses a BNK file on disk and writes the embedded WEM files
+    /// to a subdirectory named after the BNK file.
+    /// </summary>
+    public static void ParseToFiles(string bnkFilePath)
+    {
+        byte[] data = File.ReadAllBytes(bnkFilePath);
+        var entries = Parse(data);
+        if (entries.Count == 0)
+            return;
+
+        string outputDir = Path.Combine(
+            Path.GetDirectoryName(bnkFilePath) ?? ".",
+            Path.GetFileNameWithoutExtension(bnkFilePath)
+        );
+        Directory.CreateDirectory(outputDir);
+
+        foreach (var entry in entries)
         {
-            if (file.BaseStream.Position + structure.GetByteSize() > file.BaseStream.Length)
-                return false;
-            structure.Read(file);
-            return true;
+            string wemPath = Path.Combine(outputDir, $"{entry.Id}.wem");
+            using var fs = File.Create(wemPath);
+            fs.Write(data, (int)entry.Offset, (int)entry.Size);
         }
+    }
 
-        public static string CreateOutputDirectory(string bnk_filename)
-        {
-            var baseDir = Path.GetDirectoryName(bnk_filename) ?? ".";
-            var directory = Path.Combine(baseDir, Path.GetFileNameWithoutExtension(bnk_filename));
-            Directory.CreateDirectory(directory);
-            return directory;
-        }
-
-        /// <summary>
-        /// Extracts a Wwise *.BNK File
-        /// </summary>
-        /// <param name="bnkFilepath">The path to the bnk file to test</param>
-        /// <param name="swapByteOrder">Swap byte order (use it for unpacking 'Army of Two')</param>
-        /// <param name="noDirectory">Create no additional directory for the *.wem files</param>
-        /// <param name="dumpObjectsTxt">Generate an objects.txt file with the extracted object data</param>
-        internal static void Parse(
-            string bnkFilepath,
-            bool swapByteOrder,
-            bool noDirectory,
-            bool dumpObjectsTxt
-        )
-        {
-            using var bnkReader = new BinaryReader(File.OpenRead(bnkFilepath));
-
-            long dataOffset = 0;
-            var files = new List<Index>();
-            var contentSection = new Section();
-            var bankHeader = new BankHeader();
-            var objects = new List<Object>();
-            var eventObjects = new SortedDictionary<uint, EventObject>();
-            var eventActionObjects = new SortedDictionary<uint, EventActionObject>();
-
-            while (ReadContent(bnkReader, ref contentSection))
-            {
-                long sectionPosition = bnkReader.BaseStream.Position;
-
-                if (swapByteOrder)
-                {
-                    contentSection.size = Swap32(contentSection.size);
-                }
-
-                if (contentSection.sign == "BKHD")
-                {
-                    ReadContent(bnkReader, ref bankHeader);
-                    bnkReader.BaseStream.Position += contentSection.size - BankHeader.GetDataSize();
-
-                    // logging removed
-                }
-                else if (contentSection.sign == "INIT")
-                {
-                    int count = bnkReader.ReadInt32();
-                    for (int i = 0; i < count; i++)
-                    {
-                        ushort value1 = bnkReader.ReadUInt16();
-                        ushort value2 = bnkReader.ReadUInt16();
-                        uint value3 = bnkReader.ReadUInt32();
-                        string parameter = bnkReader.ReadStringToNull();
-                    }
-                }
-                else if (contentSection.sign == "DIDX")
-                {
-                    // Read file indices
-                    for (var i = 0U; i < contentSection.size; i += (uint)Index.GetDataSize())
-                    {
-                        var contentIndex = new Index();
-                        ReadContent(bnkReader, ref contentIndex);
-                        files.Add(contentIndex);
-                    }
-                }
-                else if (contentSection.sign == "DATA")
-                {
-                    dataOffset = bnkReader.BaseStream.Position;
-                }
-                else if (contentSection.sign == "HIRC")
-                {
-                    uint objectCount = bnkReader.ReadUInt32();
-
-                    for (var i = 0U; i < objectCount; ++i)
-                    {
-                        var @object = new Object();
-                        ReadContent(bnkReader, ref @object);
-
-                        if (@object.type == ObjectType.Event)
-                        {
-                            var @event = new EventObject();
-
-                            if (bankHeader.version >= 134)
-                            {
-                                byte count = bnkReader.ReadByte();
-                                @event.action_count = (uint)count;
-                            }
-                            else
-                            {
-                                @event.action_count = bnkReader.ReadUInt32();
-                            }
-
-                            for (var j = 0U; j < @event.action_count; ++j)
-                            {
-                                uint actionId = bnkReader.ReadUInt32();
-                                @event.action_ids.Add(actionId);
-                            }
-
-                            eventObjects[@object.id] = @event;
-                        }
-                        else if (@object.type == ObjectType.EventAction)
-                        {
-                            var eventAction = new EventActionObject();
-
-                            eventAction.scope = (EventActionScope)bnkReader.ReadSByte();
-                            eventAction.action_type = (EventActionType)bnkReader.ReadSByte();
-                            eventAction.game_object_id = bnkReader.ReadUInt32();
-
-                            bnkReader.BaseStream.Position += 1;
-
-                            eventAction.parameter_count = bnkReader.ReadByte();
-
-                            for (int j = 0; j < eventAction.parameter_count; ++j)
-                            {
-                                EventActionParameterType parameter_type = (EventActionParameterType)
-                                    bnkReader.ReadSByte();
-                                eventAction.parameters_types.Add(parameter_type);
-                            }
-
-                            for (var j = 0U; j < (uint)eventAction.parameter_count; ++j)
-                            {
-                                sbyte parameter = bnkReader.ReadSByte();
-                                eventAction.parameters.Add(parameter);
-                            }
-
-                            bnkReader.BaseStream.Position += 1;
-                            bnkReader.BaseStream.Position +=
-                                @object.size - 13 - eventAction.parameter_count * 2;
-
-                            eventActionObjects[@object.id] = eventAction;
-                        }
-
-                        bnkReader.BaseStream.Position += @object.size - sizeof(uint);
-                        objects.Add(@object);
-                    }
-                }
-                else if (contentSection.sign == "PLAT")
-                {
-                    uint value = bnkReader.ReadUInt32();
-                    string platform = bnkReader.ReadStringToNull();
-                }
-                else if (contentSection.sign == "ENVS")
-                {
-                    // Not sure what this section is for
-                    // I found it in an Init.bnk file
-                    if (contentSection.size != 168)
-                    {
-                        // logging removed
-                    }
-                    else
-                    {
-                        for (int i = 0; i < 6; i++)
-                        {
-                            uint mainValue = bnkReader.ReadUInt32();
-
-                            for (int j = 0; j < 2; j++)
-                            {
-                                uint value1 = bnkReader.ReadUInt32();
-                                uint value2 = bnkReader.ReadUInt32();
-                                uint four = bnkReader.ReadUInt32();
-                            }
-                        }
-                    }
-                }
-                else if (contentSection.sign == "STMG")
-                {
-                    uint value1 = bnkReader.ReadUInt32();
-                    uint value2 = bnkReader.ReadUInt32();
-                    int count1 = bnkReader.ReadInt32();
-                    for (int i = 0; i < count1; i++)
-                    {
-                        uint value3a = bnkReader.ReadUInt32();
-                        uint value3b = bnkReader.ReadUInt32(); //usually a multiple of 250
-                        uint value3c = bnkReader.ReadUInt32(); //usually zero
-                    }
-                    long currentPos = bnkReader.BaseStream.Position;
-                    long bytesRead = currentPos - sectionPosition;
-                    long bytesRemaining = contentSection.size - bytesRead;
-                }
-                else
-                {
-                    //Known additional signs: STID
-                    // logging removed
-                }
-
-                // Seek to the end of the section
-                bnkReader.BaseStream.Position = sectionPosition + contentSection.size;
-            }
-
-            // Reset EOF
-            bnkReader.BaseStream.Position = 0;
-
-            string outputDirectory;
-            if (!noDirectory)
-            {
-                outputDirectory = CreateOutputDirectory(bnkFilepath);
-            }
-            else
-            {
-                outputDirectory = Path.GetDirectoryName(bnkFilepath) ?? ".";
-            }
-
-            // Dump objects information
-            if (dumpObjectsTxt)
-            {
-                StringBuilder sb = new StringBuilder();
-                foreach (var @object in objects)
-                {
-                    sb.AppendLine($"Object ID: {@object.id}");
-
-                    switch (@object.type)
-                    {
-                        case ObjectType.Event:
-                            sb.AppendLine("\tType: Event");
-                            sb.AppendLine(
-                                $"\tNumber of Actions: {eventObjects[@object.id].action_count}"
-                            );
-
-                            foreach (var action_id in eventObjects[@object.id].action_ids)
-                            {
-                                sb.AppendLine($"\tAction ID: {action_id}");
-                            }
-                            break;
-                        case ObjectType.EventAction:
-                            sb.AppendLine("\tType: EventAction");
-                            sb.AppendLine(
-                                $"\tAction Scope: {(int)(eventActionObjects[@object.id].scope)}"
-                            );
-                            sb.AppendLine(
-                                $"\tAction Type: {(int)(eventActionObjects[@object.id].action_type)}"
-                            );
-                            sb.AppendLine(
-                                $"\tGame Object ID: {(int)(eventActionObjects[@object.id].game_object_id)}"
-                            );
-                            sb.AppendLine(
-                                $"\tNumber of Parameters: {(int)(eventActionObjects[@object.id].parameter_count)}"
-                            );
-
-                            for (var j = 0; j < eventActionObjects[@object.id].parameter_count; ++j)
-                            {
-                                sb.AppendLine(
-                                    $"\tParameter Type: {(int)(eventActionObjects[@object.id].parameters_types[j])}"
-                                );
-                                sb.AppendLine(
-                                    $"\tParameter: {(int)(eventActionObjects[@object.id].parameters[j])}"
-                                );
-                            }
-                            break;
-                        default:
-                            sb.AppendLine($"\tType: {(int)@object.type}");
-                            break;
-                    }
-                }
-                string objectFilepath = Path.Combine(outputDirectory, "objects.txt");
-                File.WriteAllText(objectFilepath, sb.ToString());
-
-                // logging removed
-            }
-
-            // Extract WEM files
-            if (dataOffset == 0U || files.Count == 0)
-            {
-                // logging removed
-                return;
-            }
-
-            // logging removed
-
-            foreach (Index index in files)
-            {
-                if (swapByteOrder)
-                {
-                    index.size = Swap32(index.size);
-                    index.offset = Swap32(index.offset);
-                }
-
-                bnkReader.BaseStream.Position = dataOffset + index.offset;
-                byte[] data = bnkReader.ReadBytes((int)index.size);
-                string wemFilepath = Path.Combine(outputDirectory, $"{index.id}.wem");
-                File.WriteAllBytes(wemFilepath, data);
-            }
-
-            // logging removed
-        }
+    private static string ReadSignature(BinaryReader reader)
+    {
+        Span<char> chars = stackalloc char[4];
+        for (int i = 0; i < 4; i++)
+            chars[i] = (char)reader.ReadByte();
+        return new string(chars);
     }
 }
