@@ -13,5 +13,6 @@
   <ItemGroup>
     <ProjectReference Include="..\BydTools.VFS\BydTools.VFS.csproj" />
     <ProjectReference Include="..\BydTools.PCK\BydTools.PCK.csproj" />
+    <ProjectReference Include="..\BydTools.Wwise\BydTools.Wwise.csproj" />
   </ItemGroup>
 </Project>

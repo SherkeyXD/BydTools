@@ -3,49 +3,10 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
-    <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="OggVorbisSharp" Version="1.0.1" />
-  </ItemGroup>
-
-  <ItemGroup>
     <ProjectReference Include="..\BydTools.Utils\BydTools.Utils.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <None Remove="Resource\*.bin" />
-    <EmbeddedResource Include="Resource\*.bin" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <!-- 包含原生 DLL，直接复制到输出根目录 -->
-    <None Include="3rdParty\ogg.dll">
-      <Link>ogg.dll</Link>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
-      <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
-    </None>
-    <None Include="3rdParty\vorbis.dll">
-      <Link>vorbis.dll</Link>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
-      <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
-    </None>
-    <None Include="3rdParty\vorbisfile.dll">
-      <Link>vorbisfile.dll</Link>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
-      <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
-    </None>
-    <None Include="3rdParty\vorbisenc.dll">
-      <Link>vorbisenc.dll</Link>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
-      <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
-    </None>
+    <ProjectReference Include="..\BydTools.Wwise\BydTools.Wwise.csproj" />
   </ItemGroup>
 </Project>

@@ -1,6 +1,5 @@
-using BnkExtractor;
-using BnkExtractor.BnkExtr;
 using BydTools.Utils;
+using BydTools.Wwise;
 
 namespace BydTools.PCK;
 
@@ -11,10 +10,12 @@ namespace BydTools.PCK;
 public class PckConverter
 {
     private readonly ILogger _logger;
+    private readonly IWemConverter _wemConverter;
 
-    public PckConverter(ILogger logger)
+    public PckConverter(ILogger logger, IWemConverter wemConverter)
     {
         _logger = logger;
+        _wemConverter = wemConverter;
     }
 
     /// <summary>
@@ -66,7 +67,6 @@ public class PckConverter
 
             _logger.Info($"Parsed {content.Entries.Count} entries");
 
-            // Phase 1: extract all WEM data to temp files, track output mappings
             var wemJobs = new List<ConvertJob>();
             var plgJobs = new List<CopyJob>();
 
@@ -108,7 +108,6 @@ public class PckConverter
 
             _logger.Info($"Found {wemJobs.Count} WEM, {plgJobs.Count} PLG files");
 
-            // Phase 2: convert WEM → OGG
             if (wemJobs.Count > 0)
                 _logger.Info("Converting WEM to OGG...");
 
@@ -122,14 +121,14 @@ public class PckConverter
 
                 try
                 {
-                    string sourceOgg = Extractor.ConvertWem(job.TempPath);
+                    string sourceOgg = _wemConverter.ConvertWem(job.TempPath);
 
                     GC.Collect();
                     GC.WaitForPendingFinalizers();
 
                     try
                     {
-                        Extractor.RevorbOgg(sourceOgg, finalPath);
+                        _wemConverter.RevorbOgg(sourceOgg, finalPath);
 
                         if (!File.Exists(finalPath) || new FileInfo(finalPath).Length == 0)
                             throw new InvalidOperationException("Revorb output missing or empty");
@@ -141,7 +140,7 @@ public class PckConverter
 
                     convertedCount++;
                 }
-                catch (BnkExtractor.Ww2ogg.Exceptions.ParseException)
+                catch (BydTools.Wwise.Ww2ogg.Exceptions.ParseException)
                 {
                     string wemFallback = Path.ChangeExtension(finalPath, ".wem");
                     EnsureDirectory(wemFallback);
@@ -155,7 +154,6 @@ public class PckConverter
                 }
             }
 
-            // Phase 3: copy PLG files
             if (plgJobs.Count > 0)
             {
                 _logger.Info("Copying PLG files...");

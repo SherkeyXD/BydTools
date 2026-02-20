@@ -1,5 +1,5 @@
-using BnkExtractor.BnkExtr;
 using BydTools.Utils;
+using BydTools.Wwise;
 
 namespace BydTools.PCK;
 
@@ -114,10 +114,6 @@ public class PckExtractor
         return count;
     }
 
-    /// <summary>
-    /// Resolves the output file name/path for a standalone entry.
-    /// Uses mapper if available; falls back to "{fileId}.ext" or "unmapped/{fileId}.ext".
-    /// </summary>
     internal static string ResolveOutputName(
         ulong fileId,
         PckMapper? mapper,
@@ -139,7 +135,6 @@ public class PckExtractor
             }
         }
 
-        // Unmapped: use language folder if available
         if (languageId != 0 && languages != null)
         {
             var lang = languages.Find(l => l.Id == languageId);
