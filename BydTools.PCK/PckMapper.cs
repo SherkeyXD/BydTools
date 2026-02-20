@@ -19,6 +19,17 @@ public class PckMapper
     public string GameName { get; }
     public IReadOnlyList<string> Languages => _languages;
 
+    /// <summary>
+    /// Loads the built-in beyond.map embedded resource.
+    /// Returns <c>null</c> if the resource is not available.
+    /// </summary>
+    public static PckMapper? LoadBuiltIn()
+    {
+        var stream = typeof(PckMapper).Assembly
+            .GetManifestResourceStream("beyond.map");
+        return stream != null ? new PckMapper(stream) : null;
+    }
+
     public PckMapper(string mapFilePath)
         : this(File.OpenRead(mapFilePath))
     { }

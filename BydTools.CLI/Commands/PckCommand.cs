@@ -20,6 +20,9 @@ sealed class PckCommand : ICommand
         HelpFormatter.WriteEntry("-m, --mode <mode>", "Extract mode (default: ogg)");
         HelpFormatter.WriteEntryContinuation("raw  Extract wem/bnk/plg without conversion");
         HelpFormatter.WriteEntryContinuation("ogg  Convert to ogg, keep unconvertible as raw");
+        HelpFormatter.WriteEntry("--map <file>", "ESFM map file for ID-to-name mapping");
+        HelpFormatter.WriteEntryContinuation("Uses built-in beyond.map by default");
+        HelpFormatter.WriteEntry("--no-map", "Disable ID-to-name mapping");
         HelpFormatter.WriteCommonOptions();
     }
 
@@ -28,9 +31,11 @@ sealed class PckCommand : ICommand
         var parser = new ArgParser()
             .AddFlag("help", "h")
             .AddFlag("verbose", "v")
+            .AddFlag("no-map")
             .AddOption("input", "i")
             .AddOption("output", "o")
-            .AddOption("mode", "m");
+            .AddOption("mode", "m")
+            .AddOption("map");
 
         if (!parser.TryParse(args))
         {
@@ -75,7 +80,30 @@ sealed class PckCommand : ICommand
             var logger = new Logger(parser.GetFlag("verbose"));
             var wemConverter = new BydTools.Wwise.WemConverter();
             var converter = new PckConverter(logger, wemConverter);
-            converter.ExtractAndConvert(inputPath, outputDir, mode);
+
+            PckMapper? mapper = null;
+            if (!parser.GetFlag("no-map"))
+            {
+                var mapPath = parser.GetValue("map");
+                if (!string.IsNullOrWhiteSpace(mapPath))
+                {
+                    if (!File.Exists(mapPath))
+                    {
+                        Console.Error.WriteLine($"Error: map file not found: {mapPath}");
+                        return;
+                    }
+                    mapper = new PckMapper(mapPath);
+                    logger.Info($"Map:    {mapPath}");
+                }
+                else
+                {
+                    mapper = PckMapper.LoadBuiltIn();
+                    if (mapper != null)
+                        logger.Info($"Map:    built-in ({mapper.GameName})");
+                }
+            }
+
+            converter.ExtractAndConvert(inputPath, outputDir, mode, mapper);
         }
         catch (Exception ex)
         {
