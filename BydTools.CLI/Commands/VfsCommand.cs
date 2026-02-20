@@ -35,6 +35,10 @@ sealed class VfsCommand : ICommand
             "--debug",
             "Scan subfolders and print block info (no extraction)"
         );
+        HelpFormatter.WriteEntry(
+            "--key <base64>",
+            "Custom ChaCha20 key in Base64"
+        );
         HelpFormatter.WriteCommonOptions();
         HelpFormatter.WriteBlankLine();
 
@@ -49,7 +53,8 @@ sealed class VfsCommand : ICommand
             .AddFlag("debug")
             .AddOption("input", "i")
             .AddOption("output", "o")
-            .AddOption("blocktype", "t");
+            .AddOption("blocktype", "t")
+            .AddOption("key");
 
         if (!parser.TryParse(args))
         {
@@ -92,9 +97,34 @@ sealed class VfsCommand : ICommand
             return;
         }
 
+        byte[]? customKey = null;
+        var keyBase64 = parser.GetValue("key");
+        if (!string.IsNullOrWhiteSpace(keyBase64))
+        {
+            try
+            {
+                customKey = Convert.FromBase64String(keyBase64);
+            }
+            catch (FormatException)
+            {
+                Console.Error.WriteLine("Error: --key must be a valid Base64 string.");
+                return;
+            }
+
+            if (customKey.Length != VFSDefine.KEY_LEN)
+            {
+                Console.Error.WriteLine(
+                    "Error: --key must decode to {0} bytes (got {1}).",
+                    VFSDefine.KEY_LEN,
+                    customKey.Length
+                );
+                return;
+            }
+        }
+
         var logger = new Logger(parser.GetFlag("verbose"));
         var postProcessors = PostProcessorFactory.CreateProcessors(logger);
-        IVFSDumper dumper = new VFSDumper(logger, postProcessors);
+        IVFSDumper dumper = new VFSDumper(logger, postProcessors, customKey);
 
         if (parser.GetFlag("debug"))
         {

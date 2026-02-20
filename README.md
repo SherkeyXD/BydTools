@@ -27,14 +27,11 @@
   - NonGeneratedConfigs
   - SkillData
   - SpawnerConfig
-- [ ] `Video` (usm), can use [WannaCRI](https://github.com/donmai-me/WannaCRI)
 
 ## Prerequisites
 
-- [.NET 10 SDK](https://dotnet.microsoft.com/download)
-- [vgmstream](https://github.com/vgmstream/vgmstream/releases) — required for `pck` audio conversion
-  - **Preferred**: Place `libvgmstream.dll` (and FFmpeg DLLs) next to the BydTools executable
-  - **Fallback**: Place `vgmstream-cli` next to the executable, in a `vgmstream/` subdirectory, or add to `PATH`
+- [.NET 10 SDK](https://dotnet.microsoft.com/download) as runtime
+- [ffmpeg](https://ffmpeg.org/) must be in `PATH`
 
 ## Usage
 
@@ -69,6 +66,7 @@ Required:
 
 Options:
   --debug                   Scan subfolders and print block info (no extraction)
+  --key <base64>            Custom ChaCha20 key in Base64
   -v, --verbose             Enable verbose output
   -h, --help                Show help information
 
@@ -113,5 +111,6 @@ This project includes code ported from or inspired by the following open-source 
 - [AnimeStudio](https://github.com/Escartem/AnimeStudio) by Escartem — MIT
 - [AnimeWwise](https://github.com/Escartem/AnimeWwise) by Escartem — CC BY-NC-SA 4.0
 - [vgmstream](https://github.com/vgmstream/vgmstream) — ISC / MIT (bundled as native DLLs)
+- [VGMToolbox](https://sourceforge.net/projects/vgmtoolbox/) — MIT (CRI USM demux)
 
 See [NOTICES.md](NOTICES.md) for full details.

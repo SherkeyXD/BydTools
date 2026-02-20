@@ -7,16 +7,19 @@ namespace BydTools.VFS;
 public static class VFSDefine
 {
     /// <summary>
-    /// ChaCha20 encryption key in Base64 format.
-    /// Used for both BLC file decryption and CHK file outer-layer decryption.
-    /// Key bytes: E9 5B 31 7A C4 F8 28 56 9D 23 A8 6B F2 71 DC B5 3E 84 6F A7 5C 92 4D 67 1D BA 8E 38 F4 CA 52 E1
+    /// ChaCha20 encryption key in Base64 format (Android / default).
     /// </summary>
-    public const string CHACHA_KEY_BASE64 = "6VsxesT4KFadI6hr8nHctT6Eb6dckk1nHbqOOPTKUuE=";
+    public const string CHACHA_KEY_ANDROID_BASE64 = "6VsxesT4KFadI6hr8nHctT6Eb6dckk1nHbqOOPTKUuE=";
 
     /// <summary>
-    /// Pre-decoded ChaCha20 key bytes. Cached to avoid repeated Base64 decoding in hot paths.
+    /// ChaCha20 encryption key in Base64 format (PC).
     /// </summary>
-    public static readonly byte[] ChaChaKey = Convert.FromBase64String(CHACHA_KEY_BASE64);
+    public const string CHACHA_KEY_PC_BASE64 = "eU1cu+MYQiaYdVherRzV86pv/N/lIU/9gIk+5n5Vj4Y=";
+
+    /// <summary>
+    /// Pre-decoded default (PC) ChaCha20 key bytes.
+    /// </summary>
+    public static readonly byte[] DefaultChaChaKey = Convert.FromBase64String(CHACHA_KEY_PC_BASE64);
 
     /// <summary>
     /// VFS directory name within StreamingAssets.

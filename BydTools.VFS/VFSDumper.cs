@@ -2,6 +2,7 @@ using System.Collections.Frozen;
 using BydTools.Utils;
 using BydTools.Utils.Crypto;
 using BydTools.Utils.Extensions;
+using BydTools.VFS.CriUsm;
 using BydTools.VFS.PostProcessors;
 
 namespace BydTools.VFS;
@@ -13,11 +14,16 @@ public class VFSDumper : IVFSDumper
 {
     private readonly ILogger _logger;
     private readonly IReadOnlyDictionary<EVFSBlockType, IPostProcessor> _postProcessors;
+    private readonly byte[] _chaChaKey;
 
-    public VFSDumper(ILogger logger, IReadOnlyDictionary<EVFSBlockType, IPostProcessor> postProcessors)
+    public VFSDumper(
+        ILogger logger,
+        IReadOnlyDictionary<EVFSBlockType, IPostProcessor> postProcessors,
+        byte[]? customKey = null)
     {
         _logger = logger;
         _postProcessors = postProcessors;
+        _chaChaKey = customKey ?? VFSDefine.DefaultChaChaKey;
     }
 
     /// <summary>
@@ -49,14 +55,14 @@ public class VFSDumper : IVFSDumper
 
     public static IReadOnlyDictionary<EVFSBlockType, string> BlockHashMap => blockHashMap;
 
-    private static VFBlockMainInfo DecryptAndParseBlc(string blcFilePath)
+    private VFBlockMainInfo DecryptAndParseBlc(string blcFilePath)
     {
         var blockFile = File.ReadAllBytes(blcFilePath);
 
         byte[] nonce = GC.AllocateUninitializedArray<byte>(VFSDefine.BLOCK_HEAD_LEN);
         Buffer.BlockCopy(blockFile, 0, nonce, 0, nonce.Length);
 
-        using var chacha = new CSChaCha20(VFSDefine.ChaChaKey, nonce, 1);
+        using var chacha = new CSChaCha20(_chaChaKey, nonce, 1);
         var decryptedBytes = chacha.DecryptBytes(blockFile[VFSDefine.BLOCK_HEAD_LEN..]);
         Buffer.BlockCopy(
             decryptedBytes,
@@ -66,10 +72,20 @@ public class VFSDumper : IVFSDumper
             decryptedBytes.Length
         );
 
-        return new VFBlockMainInfo(blockFile, 0);
+        var info = new VFBlockMainInfo(blockFile, 0);
+
+        var expectedHash = Path.GetFileNameWithoutExtension(blcFilePath);
+        if (!string.Equals(info.groupCfgHashName, expectedHash, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidDataException(
+                $"BLC hash mismatch: parsed \"{info.groupCfgHashName}\", expected \"{expectedHash}\". " +
+                "The ChaCha20 key may be incorrect or outdated.");
+        }
+
+        return info;
     }
 
-    private static byte[] ReadFileData(
+    private byte[] ReadFileData(
         FileStream chunkFs,
         in FVFBlockFileInfo file,
         int version
@@ -93,7 +109,7 @@ public class VFSDumper : IVFSDumper
                 sizeof(long)
             );
 
-            using var fileChacha = new CSChaCha20(VFSDefine.ChaChaKey, fileNonce, 1);
+            using var fileChacha = new CSChaCha20(_chaChaKey, fileNonce, 1);
 
             var encryptedData = new byte[file.len];
             chunkFs.ReadExactly(encryptedData);
@@ -177,7 +193,19 @@ public class VFSDumper : IVFSDumper
 
             foreach (var file in chunk.files)
             {
-                var filePath = Path.Combine(outputDir, file.fileName);
+                chunkFs.Seek(file.offset, SeekOrigin.Begin);
+                var fileData = ReadFileData(chunkFs, file, vfBlockMainInfo.version);
+
+                var fileName = file.fileName;
+                if (string.IsNullOrEmpty(fileName) && dumpAssetType == EVFSBlockType.Video)
+                {
+                    var usmName = UsmNameReader.TryGetName(fileData)
+                        ?? $"{file.fileNameHash:X16}.usm";
+                    fileName = $"Video/{usmName}";
+                    _logger.Verbose("    Recovered USM name: {0}", fileName);
+                }
+
+                var filePath = Path.Combine(outputDir, fileName);
                 var fileDir = Path.GetDirectoryName(filePath);
 
                 if (!string.IsNullOrEmpty(fileDir) && !Directory.Exists(fileDir))
@@ -186,9 +214,6 @@ public class VFSDumper : IVFSDumper
                     if (createdDirs.Add(fileDir))
                         _logger.Info($"  Created directory: {fileDir}");
                 }
-
-                chunkFs.Seek(file.offset, SeekOrigin.Begin);
-                var fileData = ReadFileData(chunkFs, file, vfBlockMainInfo.version);
 
                 if (processor != null && processor.TryProcess(fileData, filePath))
                 {
@@ -263,6 +288,8 @@ public class VFSDumper : IVFSDumper
         }
 
         int found = 0;
+        var blockTypeMap = new Dictionary<string, string>();
+
         foreach (var dir in dirs.OrderBy(d => d))
         {
             var dirName = Path.GetFileName(dir);
@@ -291,6 +318,9 @@ public class VFSDumper : IVFSDumper
                     info.allChunks.Length,
                     info.groupFileInfoNum
                 );
+
+                blockTypeMap[info.groupCfgName] = dirName;
+                DumpBlockInfo(info);
                 found++;
             }
             catch (Exception ex)
@@ -301,5 +331,13 @@ public class VFSDumper : IVFSDumper
 
         _logger.Info("");
         _logger.Info("Debug: found {0} block declaration(s) in {1} subdirectories.", found, dirs.Length);
+
+        if (blockTypeMap.Count > 0)
+        {
+            _logger.Info("");
+            _logger.Info("Block type mapping (groupCfgName -> directory hash):");
+            foreach (var (name, hash) in blockTypeMap.OrderBy(kv => kv.Key))
+                _logger.Info("  {0} -> {1}", name, hash);
+        }
     }
 }

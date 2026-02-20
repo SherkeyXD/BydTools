@@ -13,6 +13,7 @@ public static class PostProcessorFactory
         var processors = new Dictionary<EVFSBlockType, IPostProcessor>
         {
             { EVFSBlockType.Table, new SparkBufferPostProcessor(logger) },
+            { EVFSBlockType.Video, new VideoPostProcessor(logger) },
         };
 
         var luaProcessor = LuaPostProcessor.TryCreate(logger);

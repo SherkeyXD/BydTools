@@ -6,7 +6,7 @@ namespace BydTools.PCK;
 /// Resolves Wwise numeric file IDs to human-readable paths
 /// using a JSON mapping file (e.g. AudioDialog.json).
 /// <para>
-/// Expected format: <c>{ "id": { "path": "Chinese\\Voice\\file.wem", ... }, ... }</c>
+/// Expected format: <c>{ "id": { "path": "v1d0/Narrating/CommonExtra/man_25_03/au_dlg_commvo_man_25_03_laugh_01.wem", ... }, ... }</c>
 /// </para>
 /// </summary>
 public class PckMapper
