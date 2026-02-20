@@ -100,9 +100,12 @@ public class PckMapper
         {
             // First 3 bytes = packed value (24-bit BE): 2-bit lang | 22-bit file index
             int value = (keysData[i] << 16) | (keysData[i + 1] << 8) | keysData[i + 2];
-            // Remaining bytes = key identifier
-            string hexKey = Convert.ToHexString(keysData, i + 3, keySize - 3).ToLowerInvariant();
-            _keys.TryAdd(hexKey, value);
+            // Remaining bytes = key identifier (big-endian Wwise ID)
+            int keyBytes = keySize - 3;
+            ulong numericKey = 0;
+            for (int b = 0; b < keyBytes; b++)
+                numericKey = (numericKey << 8) | keysData[i + 3 + b];
+            _keys.TryAdd(numericKey.ToString(), value);
         }
 
         // ── Music keys ──────────────────────────────────────────────
@@ -117,7 +120,7 @@ public class PckMapper
             for (int i = 0; i < nMusic; i++)
             {
                 byte[] kb = reader.ReadBytes(4);
-                int key = (kb[0] << 24) | (kb[1] << 16) | (kb[2] << 8) | kb[3]; // BE uint32
+                uint key = ((uint)kb[0] << 24) | ((uint)kb[1] << 16) | ((uint)kb[2] << 8) | kb[3];
                 int nameLen = reader.ReadByte();
                 string name = Encoding.UTF8.GetString(reader.ReadBytes(nameLen));
                 _musicKeys.TryAdd(key.ToString(), $@"{root}\{name}");

@@ -17,9 +17,9 @@ sealed class PckCommand : ICommand
         HelpFormatter.WriteBlankLine();
 
         HelpFormatter.WriteSectionHeader("Options");
-        HelpFormatter.WriteEntry("-m, --mode <mode>", "Extract mode (default: ogg)");
+        HelpFormatter.WriteEntry("-m, --mode <mode>", "Extract mode (default: wav)");
         HelpFormatter.WriteEntryContinuation("raw  Extract wem/bnk/plg without conversion");
-        HelpFormatter.WriteEntryContinuation("ogg  Convert to ogg, keep unconvertible as raw");
+        HelpFormatter.WriteEntryContinuation("wav  Convert to wav via vgmstream-cli");
         HelpFormatter.WriteEntry("--map <file>", "ESFM map file for ID-to-name mapping");
         HelpFormatter.WriteEntryContinuation("Uses built-in beyond.map by default");
         HelpFormatter.WriteEntry("--no-map", "Disable ID-to-name mapping");
@@ -67,10 +67,10 @@ sealed class PckCommand : ICommand
             return;
         }
 
-        var mode = parser.GetValue("mode") ?? "ogg";
-        if (mode != "raw" && mode != "ogg")
+        var mode = parser.GetValue("mode") ?? "wav";
+        if (mode != "raw" && mode != "wav")
         {
-            Console.Error.WriteLine("Error: --mode must be one of: raw, ogg");
+            Console.Error.WriteLine("Error: --mode must be one of: raw, wav");
             PrintHelp(Program.ExecutableName);
             return;
         }

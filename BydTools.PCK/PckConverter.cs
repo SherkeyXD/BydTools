@@ -4,7 +4,7 @@ using BydTools.Wwise;
 namespace BydTools.PCK;
 
 /// <summary>
-/// Extracts audio from PCK archives and converts WEM → OGG,
+/// Extracts audio from PCK archives and converts WEM → WAV via vgmstream-cli,
 /// with optional filename mapping via <see cref="PckMapper"/>.
 /// </summary>
 public class PckConverter
@@ -27,13 +27,13 @@ public class PckConverter
     /// Extracts and converts audio files from a PCK archive.
     /// <list type="bullet">
     ///   <item><b>raw</b> — extract WEM/BNK/PLG without conversion.</item>
-    ///   <item><b>ogg</b> — convert WEM (including BNK-embedded) to OGG; copy PLG as-is.</item>
+    ///   <item><b>wav</b> — convert WEM to WAV via vgmstream-cli; failures kept as WEM.</item>
     /// </list>
     /// </summary>
     public void ExtractAndConvert(
         string pckPath,
         string outputDir,
-        string mode = "ogg",
+        string mode = "wav",
         PckMapper? mapper = null
     )
     {
@@ -43,8 +43,8 @@ public class PckConverter
         Directory.CreateDirectory(outputDir);
 
         string normalizedMode = mode.ToLowerInvariant();
-        if (normalizedMode is not ("raw" or "ogg"))
-            throw new ArgumentException($"Invalid mode '{mode}'. Must be 'raw' or 'ogg'.", nameof(mode));
+        if (normalizedMode is not ("raw" or "wav"))
+            throw new ArgumentException($"Invalid mode '{mode}'. Must be 'raw' or 'wav'.", nameof(mode));
 
         _logger.Info($"Input:  {pckPath}");
         _logger.Info($"Output: {outputDir}");
@@ -56,10 +56,10 @@ public class PckConverter
             return;
         }
 
-        ConvertToOgg(pckPath, outputDir, mapper);
+        ConvertToWav(pckPath, outputDir, mapper);
     }
 
-    private void ConvertToOgg(string pckPath, string outputDir, PckMapper? mapper)
+    private void ConvertToWav(string pckPath, string outputDir, PckMapper? mapper)
     {
         string tempDir = Path.Combine(outputDir, ".pck_extract");
         Directory.CreateDirectory(tempDir);
@@ -93,10 +93,11 @@ public class PckConverter
                     string tempPath = Path.Combine(tempDir, $"{key}.wem");
                     File.WriteAllBytes(tempPath, fileData);
 
+                    WemCodec codec = WemFormatReader.DetectCodec(fileData);
                     string outName = PckExtractor.ResolveOutputName(
-                        entry.FileId, mapper, ".ogg", content.Languages, entry.LanguageId
+                        entry.FileId, mapper, ".wav", content.Languages, entry.LanguageId
                     );
-                    wemJobs.Add(new ConvertJob(tempPath, outName));
+                    wemJobs.Add(new ConvertJob(tempPath, outName, codec));
                 }
                 else if (magic.SequenceEqual("PLUG"u8))
                 {
@@ -111,13 +112,16 @@ public class PckConverter
                 }
             }
 
+            var codecGroups = wemJobs.GroupBy(j => j.Codec).OrderByDescending(g => g.Count());
+            foreach (var g in codecGroups)
+                _logger.Info($"  {WemFormatReader.GetCodecName(g.Key)}: {g.Count()}");
+
             _logger.Info($"Found {wemJobs.Count} WEM, {plgJobs.Count} PLG files");
 
             if (wemJobs.Count > 0)
-                _logger.Info("Converting WEM to OGG...");
+                _logger.Info("Converting WEM to WAV...");
 
-            int convertedCount = 0;
-            int failedCount = 0;
+            int converted = 0, failed = 0;
 
             foreach (var job in wemJobs)
             {
@@ -126,33 +130,19 @@ public class PckConverter
 
                 try
                 {
-                    string sourceOgg = _wemConverter.ConvertWem(job.TempPath);
-
-                    try
-                    {
-                        _wemConverter.RevorbOgg(sourceOgg, finalPath);
-
-                        if (!File.Exists(finalPath) || new FileInfo(finalPath).Length == 0)
-                            throw new InvalidOperationException("Revorb output missing or empty");
-                    }
-                    catch
-                    {
-                        File.Copy(sourceOgg, finalPath, overwrite: true);
-                    }
-
-                    convertedCount++;
-                }
-                catch (BydTools.Wwise.Ww2ogg.Exceptions.ParseException)
-                {
-                    string wemFallback = Path.ChangeExtension(finalPath, ".wem");
-                    EnsureDirectory(wemFallback);
-                    File.Copy(job.TempPath, wemFallback, overwrite: true);
-                    failedCount++;
+                    _wemConverter.Convert(job.TempPath, finalPath);
+                    converted++;
                 }
                 catch (Exception ex)
                 {
-                    _logger.Verbose($"Error converting {Path.GetFileName(job.TempPath)}: {ex.Message}");
-                    failedCount++;
+                    string wemFallback = Path.ChangeExtension(finalPath, ".wem");
+                    EnsureDirectory(wemFallback);
+                    try { File.Copy(job.TempPath, wemFallback, overwrite: true); } catch { }
+
+                    _logger.Verbose(
+                        $"[{WemFormatReader.GetCodecName(job.Codec)}] " +
+                        $"{Path.GetFileName(job.TempPath)}: {ex.Message}");
+                    failed++;
                 }
             }
 
@@ -167,14 +157,11 @@ public class PckConverter
                 }
             }
 
-            _logger.Info(
-                $"Done: {convertedCount} OGG, {failedCount} failed (kept as WEM), {plgJobs.Count} PLG"
-            );
+            _logger.Info($"Done: {converted} WAV, {failed} failed, {plgJobs.Count} PLG");
         }
         finally
         {
-            if (Directory.Exists(tempDir))
-                Directory.Delete(tempDir, recursive: true);
+            CleanupTempDir(tempDir);
         }
     }
 
@@ -196,11 +183,48 @@ public class PckConverter
             using var fs = File.Create(tempPath);
             fs.Write(bnkData, (int)wem.Offset, (int)wem.Size);
 
+            WemCodec codec = WemCodec.Unknown;
+            if (wem.Size >= 22)
+                codec = WemFormatReader.DetectCodec(bnkData.AsSpan((int)wem.Offset, (int)wem.Size));
+
             string outName = PckExtractor.ResolveBnkWemName(
-                bankEntry.FileId, wem.Id, mapper, ".ogg"
+                bankEntry.FileId, wem.Id, mapper, ".wav"
             );
-            wemJobs.Add(new ConvertJob(tempPath, outName));
+            wemJobs.Add(new ConvertJob(tempPath, outName, codec));
         }
+    }
+
+    private static void CleanupTempDir(string tempDir)
+    {
+        if (!Directory.Exists(tempDir))
+            return;
+
+        for (int attempt = 0; attempt < 3; attempt++)
+        {
+            try
+            {
+                Directory.Delete(tempDir, recursive: true);
+                return;
+            }
+            catch (IOException) when (attempt < 2)
+            {
+                Thread.Sleep(500);
+            }
+            catch
+            {
+                break;
+            }
+        }
+
+        try
+        {
+            foreach (var file in Directory.EnumerateFiles(tempDir))
+            {
+                try { File.Delete(file); } catch { }
+            }
+            Directory.Delete(tempDir, recursive: true);
+        }
+        catch { }
     }
 
     private static void EnsureDirectory(string filePath)
@@ -210,6 +234,6 @@ public class PckConverter
             Directory.CreateDirectory(dir);
     }
 
-    private record ConvertJob(string TempPath, string OutputName);
+    private record ConvertJob(string TempPath, string OutputName, WemCodec Codec);
     private record CopyJob(string TempPath, string OutputName);
 }

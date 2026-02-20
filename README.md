@@ -4,13 +4,10 @@
 > 请不要通过任何渠道宣传本项目，该项目仅供学习交流，严禁用于商业用途，下载后请于24小时内删除  
 > Please do not promote this project through any channels. This project is for learning and communication purposes only. Commercial use is strictly prohibited. Please delete it within 24 hours after downloading.
 
+---
 
 > [!WARNING]
 > AI codes are everywhere
-
-
-> [!NOTE]
-> Some features may generate a large number of small files (e.g., `BydTools.VFS` extracting `Bundle` or `BydTools.PCK`), which could affect disk performance or write endurance.
 
 ## TODO
 
@@ -32,9 +29,18 @@
   - SpawnerConfig
 - [ ] `Video` is usm encrypted and can be decrypted by [WannaCRI](https://github.com/donmai-me/WannaCRI)
 
+## Prerequisites
+
+- [.NET 10 SDK](https://dotnet.microsoft.com/download)
+- [vgmstream](https://github.com/vgmstream/vgmstream/releases) — `vgmstream-cli` required for `pck` audio conversion
+  - Place `vgmstream-cli` (and its DLLs) next to the BydTools executable, in a `vgmstream/` subdirectory, or add it to `PATH`
+
 ## Usage
 
-```
+> [!NOTE]
+> Some features may generate a large number of small files (e.g., `BydTools.VFS` extracting `Bundle` or `BydTools.PCK`), which could affect disk performance or write endurance.
+
+```help
 Usage:
   BydTools <command> [options]
 
@@ -50,7 +56,7 @@ Options:
 
 Dump specific types of files from the game's VFS.
 
-```
+```help
 Usage:
   BydTools vfs --input <path> --output <dir> --blocktype <type>[,type2,...] [options]
 
@@ -75,21 +81,11 @@ Available block types:
   AudioKorean (33)
 ```
 
-**Examples:**
-
-```bash
-BydTools vfs --input /path/to/game --output /path/to/output --blocktype Bundle
-BydTools vfs -i /path/to/game -o /path/to/output -t Lua
-BydTools vfs -i /path/to/game -o /path/to/output -t Bundle,Lua,Table
-BydTools vfs -i /path/to/game -o /path/to/output -t 12
-BydTools vfs -i /path/to/game -o /path/to/output --blocktype Table --debug
-```
-
 ### BydTools.PCK
 
-Extract files from PCK archives and convert audio files.
+Extract files from Wwise PCK archives and convert WEM audio to WAV.
 
-```
+```help
 Usage:
   BydTools pck --input <file> --output <dir> [options]
 
@@ -98,19 +94,14 @@ Required:
   -o, --output <dir>        Output directory
 
 Options:
-  -m, --mode <mode>         Extract mode (default: ogg)
+  -m, --mode <mode>         Extract mode (default: wav)
                             raw  Extract wem/bnk/plg without conversion
-                            ogg  Convert to ogg, keep unconvertible as raw
+                            wav  Convert to wav via vgmstream-cli
+  --map <file>              ESFM map file for ID-to-name mapping
+                            Uses built-in beyond.map by default
+  --no-map                  Disable ID-to-name mapping
   -v, --verbose             Enable verbose output
   -h, --help                Show help information
-```
-
-**Examples:**
-
-```bash
-BydTools pck --input /path/to/file.pck --output /path/to/output
-BydTools pck -i /path/to/file.pck -o /path/to/output --mode raw
-BydTools pck -i /path/to/file.pck -o /path/to/output -m ogg --verbose
 ```
 
 ## License
@@ -121,7 +112,5 @@ This project includes code ported from or inspired by the following open-source 
 
 - [AnimeStudio](https://github.com/Escartem/AnimeStudio) by Escartem — MIT
 - [AnimeWwise](https://github.com/Escartem/AnimeWwise) by Escartem — CC BY-NC-SA 4.0
-- [ww2ogg](https://github.com/hcs64/ww2ogg) by hcs — BSD-3-Clause
-- [ReVorb](https://github.com/ItsBranK/ReVorb) by ItsBranK (original by Yirkha)
 
 See [NOTICES.md](NOTICES.md) for full details.

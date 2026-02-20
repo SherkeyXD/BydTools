@@ -203,13 +203,16 @@ public class PckParser
             if (b1 == 0 || b2 == 0)
             {
                 byte[] raw = reader.ReadBytes(0x20);
-                name = Encoding.Unicode.GetString(raw).TrimEnd('\0');
+                name = Encoding.Unicode.GetString(raw);
             }
             else
             {
                 byte[] raw = reader.ReadBytes(0x10);
-                name = Encoding.UTF8.GetString(raw).TrimEnd('\0');
+                name = Encoding.UTF8.GetString(raw);
             }
+            int nullIdx = name.IndexOf('\0');
+            if (nullIdx >= 0)
+                name = name[..nullIdx];
 
             languages.Add(new PckLanguage(langId, name));
             reader.BaseStream.Position = savedPos;

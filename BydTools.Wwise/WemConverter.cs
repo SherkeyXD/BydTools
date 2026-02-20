@@ -1,103 +1,96 @@
-using System.Reflection;
-using System.Runtime.InteropServices;
-using BydTools.Wwise.Ww2ogg;
+using System.Diagnostics;
 
 namespace BydTools.Wwise;
 
 /// <summary>
-/// Converts Wwise WEM audio files to OGG via ww2ogg + revorb.
-/// Manages native DLL loading and embedded codebook resources.
+/// Converts Wwise WEM audio files to WAV via vgmstream-cli.
+/// Supports all codecs that vgmstream can decode: Wwise Vorbis, Opus, PCM, ADPCM, PTADPCM, etc.
 /// </summary>
 public sealed class WemConverter : IWemConverter
 {
-    static WemConverter()
-    {
-        string appDir = AppContext.BaseDirectory;
-        if (string.IsNullOrEmpty(appDir))
-            appDir = ".";
+    private static readonly Lazy<string?> _vgmstreamPath = new(FindVgmstream);
 
-        if (!Directory.Exists(appDir))
-            return;
+    /// <summary>
+    /// Path to the vgmstream-cli executable, or <c>null</c> if not found.
+    /// </summary>
+    public static string? VgmstreamPath => _vgmstreamPath.Value;
 
-        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-            return;
-
-        try
-        {
-            SetDllDirectory(appDir);
-
-            string thirdPartyDir = Path.Combine(appDir, "3rdParty");
-            if (Directory.Exists(thirdPartyDir))
-            {
-                string currentPath = Environment.GetEnvironmentVariable("PATH") ?? "";
-                if (!currentPath.Contains(thirdPartyDir))
-                    Environment.SetEnvironmentVariable("PATH", $"{thirdPartyDir};{currentPath}", EnvironmentVariableTarget.Process);
-            }
-
-            string currentPath2 = Environment.GetEnvironmentVariable("PATH") ?? "";
-            if (!currentPath2.Contains(appDir))
-                Environment.SetEnvironmentVariable("PATH", $"{appDir};{currentPath2}", EnvironmentVariableTarget.Process);
-        }
-        catch
-        {
-            // DLL should still load from application directory
-        }
-    }
-
-    [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
-    private static extern bool SetDllDirectory(string lpPathName);
-
-    public void RevorbOgg(string inputPath, string? outputPath = null) =>
-        Revorb.RevorbSharp.Convert(inputPath, outputPath ?? Path.ChangeExtension(inputPath, ".revorb.ogg"));
-
-    private static readonly Lazy<string> _codebooksPath = new(ExtractCodebooks);
-
-    public string ConvertWem(string wemPath)
+    public void Convert(string wemPath, string outputPath)
     {
         if (!File.Exists(wemPath))
             throw new FileNotFoundException("WEM file not found", wemPath);
 
-        string oggPath = Path.ChangeExtension(wemPath, "ogg");
+        string vgmstream = _vgmstreamPath.Value
+            ?? throw new FileNotFoundException(
+                "vgmstream-cli not found. Place vgmstream-cli next to the executable or add it to PATH.");
 
-        Ww2oggOptions options = new()
+        var psi = new ProcessStartInfo
         {
-            InFilename = wemPath,
-            OutFilename = oggPath,
-            CodebooksFilename = _codebooksPath.Value,
+            FileName = vgmstream,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
         };
+        psi.ArgumentList.Add("-o");
+        psi.ArgumentList.Add(outputPath);
+        psi.ArgumentList.Add(wemPath);
 
-        Ww2oggConverter.Main(options);
+        using var proc = Process.Start(psi)
+            ?? throw new InvalidOperationException("Failed to start vgmstream-cli");
 
-        if (!File.Exists(oggPath))
-            throw new FileNotFoundException($"OGG file was not created: {oggPath}");
+        proc.StandardOutput.ReadToEnd();
+        string stderr = proc.StandardError.ReadToEnd();
+        proc.WaitForExit();
 
-        return oggPath;
+        if (proc.ExitCode != 0)
+            throw new InvalidOperationException(
+                $"vgmstream-cli exited with code {proc.ExitCode}: {Truncate(stderr)}");
+
+        if (!File.Exists(outputPath) || new FileInfo(outputPath).Length == 0)
+            throw new InvalidOperationException("vgmstream-cli produced no output");
     }
 
-    /// <summary>
-    /// Extracts the embedded codebooks resource to a temp file once.
-    /// Thread-safe via Lazy&lt;T&gt;.
-    /// </summary>
-    private static string ExtractCodebooks()
+    private static string Truncate(string msg)
     {
-        string tempDir = Path.Combine(Path.GetTempPath(), "BydTools.Wwise");
-        Directory.CreateDirectory(tempDir);
-        string codebooksPath = Path.Combine(tempDir, "packed_codebooks_aoTuV_603.bin");
+        string trimmed = msg.Trim();
+        return trimmed.Length > 300 ? trimmed[..300] + "..." : trimmed;
+    }
 
-        if (File.Exists(codebooksPath))
-            return codebooksPath;
+    private static string? FindVgmstream()
+    {
+        string name = OperatingSystem.IsWindows() ? "vgmstream-cli.exe" : "vgmstream-cli";
 
-        Assembly assembly = Assembly.GetExecutingAssembly();
-        string[] allResources = assembly.GetManifestResourceNames();
-        string? resourceName = allResources.FirstOrDefault(n =>
-            n.Contains("packed_codebooks") && n.EndsWith(".bin"));
+        // 1. Next to the current executable
+        string? exeDir = Path.GetDirectoryName(Environment.ProcessPath);
+        if (exeDir != null)
+        {
+            string local = Path.Combine(exeDir, name);
+            if (File.Exists(local))
+                return local;
 
-        using Stream resourceStream = assembly.GetManifestResourceStream(resourceName!)
-            ?? throw new FileNotFoundException("Embedded ww2ogg codebooks resource not found.");
+            // Also check a vgmstream/ subdirectory
+            string sub = Path.Combine(exeDir, "vgmstream", name);
+            if (File.Exists(sub))
+                return sub;
+        }
 
-        using FileStream fs = File.Create(codebooksPath);
-        resourceStream.CopyTo(fs);
+        // 2. PATH
+        string? pathEnv = Environment.GetEnvironmentVariable("PATH");
+        if (pathEnv != null)
+        {
+            foreach (string dir in pathEnv.Split(Path.PathSeparator))
+            {
+                try
+                {
+                    string candidate = Path.Combine(dir, name);
+                    if (File.Exists(candidate))
+                        return candidate;
+                }
+                catch { }
+            }
+        }
 
-        return codebooksPath;
+        return null;
     }
 }
