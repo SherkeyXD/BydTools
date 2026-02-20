@@ -65,16 +65,29 @@ public static class EndianSpanReader
         Encoding.UTF8.GetString(data[..length]);
 
     // Span<byte> overloads that forward to ReadOnlySpan<byte>
-    public static ushort ReadUInt16LE(this Span<byte> data) => ReadUInt16LE((ReadOnlySpan<byte>)data);
-    public static ushort ReadUInt16BE(this Span<byte> data) => ReadUInt16BE((ReadOnlySpan<byte>)data);
+    public static ushort ReadUInt16LE(this Span<byte> data) =>
+        ReadUInt16LE((ReadOnlySpan<byte>)data);
+
+    public static ushort ReadUInt16BE(this Span<byte> data) =>
+        ReadUInt16BE((ReadOnlySpan<byte>)data);
+
     public static int ReadInt32LE(this Span<byte> data) => ReadInt32LE((ReadOnlySpan<byte>)data);
+
     public static int ReadInt32BE(this Span<byte> data) => ReadInt32BE((ReadOnlySpan<byte>)data);
+
     public static long ReadInt64LE(this Span<byte> data) => ReadInt64LE((ReadOnlySpan<byte>)data);
+
     public static long ReadInt64BE(this Span<byte> data) => ReadInt64BE((ReadOnlySpan<byte>)data);
-    public static UInt128 ReadUInt128LE(this Span<byte> data) => ReadUInt128LE((ReadOnlySpan<byte>)data);
-    public static UInt128 ReadUInt128BE(this Span<byte> data) => ReadUInt128BE((ReadOnlySpan<byte>)data);
+
+    public static UInt128 ReadUInt128LE(this Span<byte> data) =>
+        ReadUInt128LE((ReadOnlySpan<byte>)data);
+
+    public static UInt128 ReadUInt128BE(this Span<byte> data) =>
+        ReadUInt128BE((ReadOnlySpan<byte>)data);
+
     public static string ReadStringToNull(this Span<byte> data, int maxLength = 32767) =>
         ReadStringToNull((ReadOnlySpan<byte>)data, maxLength);
+
     public static string ReadString(this Span<byte> data, int length) =>
         ReadString((ReadOnlySpan<byte>)data, length);
 }

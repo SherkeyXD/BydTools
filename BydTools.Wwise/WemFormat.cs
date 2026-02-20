@@ -82,7 +82,8 @@ public static class WemFormatReader
             }
 
             pos += 8 + (int)chunkSize;
-            if (pos % 2 != 0) pos++; // RIFF chunks are word-aligned
+            if (pos % 2 != 0)
+                pos++; // RIFF chunks are word-aligned
         }
 
         return WemCodec.Unknown;
@@ -108,7 +109,10 @@ public static class WemFormatReader
 
             if (chunkId.SequenceEqual("fmt "u8))
             {
-                var fmt = data.Slice(pos + 8, (int)Math.Min(chunkSize, (uint)(data.Length - pos - 8)));
+                var fmt = data.Slice(
+                    pos + 8,
+                    (int)Math.Min(chunkSize, (uint)(data.Length - pos - 8))
+                );
                 if (fmt.Length < 16)
                     return null;
 
@@ -123,11 +127,19 @@ public static class WemFormatReader
                     ? (WemCodec)formatTag
                     : WemCodec.Unknown;
 
-                return new WemInfo(codec, channels, sampleRate, avgBytesPerSec, blockAlign, bitsPerSample);
+                return new WemInfo(
+                    codec,
+                    channels,
+                    sampleRate,
+                    avgBytesPerSec,
+                    blockAlign,
+                    bitsPerSample
+                );
             }
 
             pos += 8 + (int)chunkSize;
-            if (pos % 2 != 0) pos++;
+            if (pos % 2 != 0)
+                pos++;
         }
 
         return null;
@@ -136,26 +148,27 @@ public static class WemFormatReader
     /// <summary>
     /// Returns a human-readable description for a codec.
     /// </summary>
-    public static string GetCodecName(WemCodec codec) => codec switch
-    {
-        WemCodec.Pcm => "PCM",
-        WemCodec.PcmAuthoring => "PCM (Authoring)",
-        WemCodec.PcmFloat => "PCM Float",
-        WemCodec.Adpcm => "IMA ADPCM",
-        WemCodec.AdpcmOld => "IMA ADPCM (old)",
-        WemCodec.Ptadpcm => "PTADPCM",
-        WemCodec.Vorbis => "Wwise Vorbis",
-        WemCodec.Opus => "Opus",
-        WemCodec.OpusNx => "Opus NX",
-        WemCodec.OpusWw => "Wwise Opus",
-        WemCodec.Aac => "AAC",
-        WemCodec.Wma2 => "WMAv2",
-        WemCodec.WmaPro => "WMA Pro",
-        WemCodec.Xma2Chunk => "XMA2",
-        WemCodec.Xma2Fmt => "XMA2",
-        WemCodec.Dsp => "DSP",
-        WemCodec.Hevag => "HEVAG",
-        WemCodec.Atrac9 => "ATRAC9",
-        _ => $"Unknown (0x{(ushort)codec:X4})",
-    };
+    public static string GetCodecName(WemCodec codec) =>
+        codec switch
+        {
+            WemCodec.Pcm => "PCM",
+            WemCodec.PcmAuthoring => "PCM (Authoring)",
+            WemCodec.PcmFloat => "PCM Float",
+            WemCodec.Adpcm => "IMA ADPCM",
+            WemCodec.AdpcmOld => "IMA ADPCM (old)",
+            WemCodec.Ptadpcm => "PTADPCM",
+            WemCodec.Vorbis => "Wwise Vorbis",
+            WemCodec.Opus => "Opus",
+            WemCodec.OpusNx => "Opus NX",
+            WemCodec.OpusWw => "Wwise Opus",
+            WemCodec.Aac => "AAC",
+            WemCodec.Wma2 => "WMAv2",
+            WemCodec.WmaPro => "WMA Pro",
+            WemCodec.Xma2Chunk => "XMA2",
+            WemCodec.Xma2Fmt => "XMA2",
+            WemCodec.Dsp => "DSP",
+            WemCodec.Hevag => "HEVAG",
+            WemCodec.Atrac9 => "ATRAC9",
+            _ => $"Unknown (0x{(ushort)codec:X4})",
+        };
 }

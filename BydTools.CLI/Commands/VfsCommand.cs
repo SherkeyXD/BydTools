@@ -31,14 +31,8 @@ sealed class VfsCommand : ICommand
         HelpFormatter.WriteBlankLine();
 
         HelpFormatter.WriteSectionHeader("Options");
-        HelpFormatter.WriteEntry(
-            "--debug",
-            "Scan subfolders and print block info (no extraction)"
-        );
-        HelpFormatter.WriteEntry(
-            "--key <base64>",
-            "Custom ChaCha20 key in Base64"
-        );
+        HelpFormatter.WriteEntry("--debug", "Scan subfolders and print block info (no extraction)");
+        HelpFormatter.WriteEntry("--key <base64>", "Custom ChaCha20 key in Base64");
         HelpFormatter.WriteCommonOptions();
         HelpFormatter.WriteBlankLine();
 
@@ -137,10 +131,7 @@ sealed class VfsCommand : ICommand
         {
             Console.Error.WriteLine("Error: --blocktype is required.");
             HelpFormatter.WriteBlankLine();
-            HelpFormatter.WriteEnumValues(
-                "Available block types",
-                VFSDumper.BlockHashMap.Keys
-            );
+            HelpFormatter.WriteEnumValues("Available block types", VFSDumper.BlockHashMap.Keys);
             return;
         }
 
@@ -180,15 +171,9 @@ sealed class VfsCommand : ICommand
             }
             else
             {
-                Console.Error.WriteLine(
-                    "Error: failed to parse blocktype \"{0}\".",
-                    trimmed
-                );
+                Console.Error.WriteLine("Error: failed to parse blocktype \"{0}\".", trimmed);
                 HelpFormatter.WriteBlankLine();
-                HelpFormatter.WriteEnumValues(
-                    "Available block types",
-                    VFSDumper.BlockHashMap.Keys
-                );
+                HelpFormatter.WriteEnumValues("Available block types", VFSDumper.BlockHashMap.Keys);
                 return null;
             }
         }

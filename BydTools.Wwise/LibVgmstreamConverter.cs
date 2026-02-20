@@ -47,7 +47,9 @@ public sealed class LibVgmstreamConverter : IWemConverter
         {
             int result = handle.OpenStream(sf);
             if (result < 0)
-                throw new InvalidOperationException($"libvgmstream failed to open stream (error {result})");
+                throw new InvalidOperationException(
+                    $"libvgmstream failed to open stream (error {result})"
+                );
         }
         finally
         {

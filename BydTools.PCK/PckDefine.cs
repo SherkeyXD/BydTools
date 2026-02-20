@@ -7,7 +7,7 @@ public enum PckSectorType
 {
     Bank,
     Sound,
-    External
+    External,
 }
 
 /// <summary>
@@ -34,7 +34,4 @@ public record PckFileEntry(
 /// <summary>
 /// Complete parsed result of a PCK archive header.
 /// </summary>
-public record PckContent(
-    List<PckLanguage> Languages,
-    List<PckFileEntry> Entries
-);
+public record PckContent(List<PckLanguage> Languages, List<PckFileEntry> Entries);

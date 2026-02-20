@@ -44,7 +44,10 @@ public class PckConverter
 
         string normalizedMode = mode.ToLowerInvariant();
         if (normalizedMode is not ("raw" or "wav"))
-            throw new ArgumentException($"Invalid mode '{mode}'. Must be 'raw' or 'wav'.", nameof(mode));
+            throw new ArgumentException(
+                $"Invalid mode '{mode}'. Must be 'raw' or 'wav'.",
+                nameof(mode)
+            );
 
         _logger.Info($"Input:  {pckPath}");
         _logger.Info($"Output: {outputDir}");
@@ -95,7 +98,11 @@ public class PckConverter
 
                     WemCodec codec = WemFormatReader.DetectCodec(fileData);
                     string outName = PckExtractor.ResolveOutputName(
-                        entry.FileId, mapper, ".wav", content.Languages, entry.LanguageId
+                        entry.FileId,
+                        mapper,
+                        ".wav",
+                        content.Languages,
+                        entry.LanguageId
                     );
                     wemJobs.Add(new ConvertJob(tempPath, outName, codec));
                 }
@@ -106,7 +113,11 @@ public class PckConverter
                     File.WriteAllBytes(tempPath, fileData);
 
                     string outName = PckExtractor.ResolveOutputName(
-                        entry.FileId, mapper, ".plg", content.Languages, entry.LanguageId
+                        entry.FileId,
+                        mapper,
+                        ".plg",
+                        content.Languages,
+                        entry.LanguageId
                     );
                     plgJobs.Add(new CopyJob(tempPath, outName));
                 }
@@ -121,45 +132,54 @@ public class PckConverter
             if (wemJobs.Count > 0)
                 _logger.Verbose("Converting WEM to WAV...");
 
-            int converted = 0, failed = 0;
+            int converted = 0,
+                failed = 0;
             int done = 0;
             int total = wemJobs.Count;
             int lastPercent = -1;
 
-            Parallel.ForEach(wemJobs, new ParallelOptions
-            {
-                MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount)
-            },
-            job =>
-            {
-                string finalPath = Path.Combine(outputDir, job.OutputName);
-                EnsureDirectory(finalPath);
-
-                try
+            Parallel.ForEach(
+                wemJobs,
+                new ParallelOptions
                 {
-                    _wemConverter.Convert(job.TempPath, finalPath);
-                    Interlocked.Increment(ref converted);
-                }
-                catch (Exception ex)
+                    MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount),
+                },
+                job =>
                 {
-                    string wemFallback = Path.ChangeExtension(finalPath, ".wem");
-                    EnsureDirectory(wemFallback);
-                    try { File.Copy(job.TempPath, wemFallback, overwrite: true); } catch { }
+                    string finalPath = Path.Combine(outputDir, job.OutputName);
+                    EnsureDirectory(finalPath);
 
-                    _logger.Verbose(
-                        $"[{WemFormatReader.GetCodecName(job.Codec)}] " +
-                        $"{Path.GetFileName(job.TempPath)}: {ex.Message}");
-                    Interlocked.Increment(ref failed);
-                }
+                    try
+                    {
+                        _wemConverter.Convert(job.TempPath, finalPath);
+                        Interlocked.Increment(ref converted);
+                    }
+                    catch (Exception ex)
+                    {
+                        string wemFallback = Path.ChangeExtension(finalPath, ".wem");
+                        EnsureDirectory(wemFallback);
+                        try
+                        {
+                            File.Copy(job.TempPath, wemFallback, overwrite: true);
+                        }
+                        catch { }
 
-                int current = Interlocked.Increment(ref done);
-                int percent = current * 100 / total;
-                if (percent != lastPercent && percent % 10 == 0)
-                {
-                    lastPercent = percent;
-                    _logger.Verbose($"  Progress: {current}/{total} ({percent}%)");
+                        _logger.Verbose(
+                            $"[{WemFormatReader.GetCodecName(job.Codec)}] "
+                                + $"{Path.GetFileName(job.TempPath)}: {ex.Message}"
+                        );
+                        Interlocked.Increment(ref failed);
+                    }
+
+                    int current = Interlocked.Increment(ref done);
+                    int percent = current * 100 / total;
+                    if (percent != lastPercent && percent % 10 == 0)
+                    {
+                        lastPercent = percent;
+                        _logger.Verbose($"  Progress: {current}/{total} ({percent}%)");
+                    }
                 }
-            });
+            );
 
             if (plgJobs.Count > 0)
             {
@@ -203,7 +223,10 @@ public class PckConverter
                 codec = WemFormatReader.DetectCodec(bnkData.AsSpan((int)wem.Offset, (int)wem.Size));
 
             string outName = PckExtractor.ResolveBnkWemName(
-                bankEntry.FileId, wem.Id, mapper, ".wav"
+                bankEntry.FileId,
+                wem.Id,
+                mapper,
+                ".wav"
             );
             wemJobs.Add(new ConvertJob(tempPath, outName, codec));
         }
@@ -235,7 +258,11 @@ public class PckConverter
         {
             foreach (var file in Directory.EnumerateFiles(tempDir))
             {
-                try { File.Delete(file); } catch { }
+                try
+                {
+                    File.Delete(file);
+                }
+                catch { }
             }
             Directory.Delete(tempDir, recursive: true);
         }
@@ -250,5 +277,6 @@ public class PckConverter
     }
 
     private record ConvertJob(string TempPath, string OutputName, WemCodec Codec);
+
     private record CopyJob(string TempPath, string OutputName);
 }

@@ -121,8 +121,9 @@ sealed class PckCommand : ICommand
         }
 
         Console.Error.WriteLine(
-            "Error: vgmstream not found. Place libvgmstream.dll (preferred) " +
-            "or vgmstream-cli next to the executable, or add to PATH.");
+            "Error: vgmstream not found. Place libvgmstream.dll (preferred) "
+                + "or vgmstream-cli next to the executable, or add to PATH."
+        );
         return null;
     }
 }

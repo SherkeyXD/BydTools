@@ -10,8 +10,8 @@ internal sealed class VgmstreamHandle : IDisposable
 {
     private nint _handle;
 
-    public nint Ptr => _handle != 0 ? _handle
-        : throw new ObjectDisposedException(nameof(VgmstreamHandle));
+    public nint Ptr =>
+        _handle != 0 ? _handle : throw new ObjectDisposedException(nameof(VgmstreamHandle));
 
     public bool IsValid => _handle != 0;
 
@@ -28,7 +28,7 @@ internal sealed class VgmstreamHandle : IDisposable
     // ── format access ────────────────────────────────────────────
 
     /// <summary>Pointer to the libvgmstream_format_t struct.</summary>
-    private nint FormatPtr => Marshal.ReadIntPtr(_handle, nint.Size);      // offset 8 on x64
+    private nint FormatPtr => Marshal.ReadIntPtr(_handle, nint.Size); // offset 8 on x64
 
     /// <summary>Pointer to the libvgmstream_decoder_t struct.</summary>
     private nint DecoderPtr => Marshal.ReadIntPtr(_handle, nint.Size * 2); // offset 16 on x64
@@ -56,17 +56,14 @@ internal sealed class VgmstreamHandle : IDisposable
 
     // ── operations ───────────────────────────────────────────────
 
-    public void Setup(LibVgmstream.NativeConfig cfg) =>
-        LibVgmstream.Setup(_handle, ref cfg);
+    public void Setup(LibVgmstream.NativeConfig cfg) => LibVgmstream.Setup(_handle, ref cfg);
 
     public int OpenStream(nint streamfile, int subsong = 0) =>
         LibVgmstream.OpenStream(_handle, streamfile, subsong);
 
-    public void CloseStream() =>
-        LibVgmstream.CloseStream(_handle);
+    public void CloseStream() => LibVgmstream.CloseStream(_handle);
 
-    public int Render() =>
-        LibVgmstream.Render(_handle);
+    public int Render() => LibVgmstream.Render(_handle);
 
     // ── dispose ──────────────────────────────────────────────────
 

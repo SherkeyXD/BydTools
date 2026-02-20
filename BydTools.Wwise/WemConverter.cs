@@ -20,9 +20,11 @@ public sealed class WemConverter : IWemConverter
         if (!File.Exists(wemPath))
             throw new FileNotFoundException("WEM file not found", wemPath);
 
-        string vgmstream = _vgmstreamPath.Value
+        string vgmstream =
+            _vgmstreamPath.Value
             ?? throw new FileNotFoundException(
-                "vgmstream-cli not found. Place vgmstream-cli next to the executable or add it to PATH.");
+                "vgmstream-cli not found. Place vgmstream-cli next to the executable or add it to PATH."
+            );
 
         var psi = new ProcessStartInfo
         {
@@ -36,7 +38,8 @@ public sealed class WemConverter : IWemConverter
         psi.ArgumentList.Add(outputPath);
         psi.ArgumentList.Add(wemPath);
 
-        using var proc = Process.Start(psi)
+        using var proc =
+            Process.Start(psi)
             ?? throw new InvalidOperationException("Failed to start vgmstream-cli");
 
         proc.StandardOutput.ReadToEnd();
@@ -45,7 +48,8 @@ public sealed class WemConverter : IWemConverter
 
         if (proc.ExitCode != 0)
             throw new InvalidOperationException(
-                $"vgmstream-cli exited with code {proc.ExitCode}: {Truncate(stderr)}");
+                $"vgmstream-cli exited with code {proc.ExitCode}: {Truncate(stderr)}"
+            );
 
         if (!File.Exists(outputPath) || new FileInfo(outputPath).Length == 0)
             throw new InvalidOperationException("vgmstream-cli produced no output");

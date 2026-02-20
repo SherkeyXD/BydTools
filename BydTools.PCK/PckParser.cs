@@ -107,7 +107,10 @@ public class PckParser
         // Externals sector exists when the three known sectors + overhead don't fill the header
         uint externalsSectorSize = 0;
         uint overhead = 4u + 4u + 4u + 4u; // flag + 3 sector-size fields
-        if (languagesSectorSize + banksSectorSize + soundsSectorSize + overhead < (uint)header.Length)
+        if (
+            languagesSectorSize + banksSectorSize + soundsSectorSize + overhead
+            < (uint)header.Length
+        )
             externalsSectorSize = reader.ReadUInt32();
 
         var languages = ParseLanguages(reader, languagesSectorSize);

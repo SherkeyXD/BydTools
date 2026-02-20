@@ -33,7 +33,8 @@ public class VFBlockMainInfo
 
         // groupCfgHashName is 8 bytes long but only the first 4 bytes are valid.
         // Read as little-endian uint32, format as uppercase hex to get the big-endian representation.
-        groupCfgHashName = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(offset))
+        groupCfgHashName = BinaryPrimitives
+            .ReadUInt32LittleEndian(bytes.AsSpan(offset))
             .ToString("X8");
         offset += sizeof(long); // Skip full 8 bytes as per the structure
 

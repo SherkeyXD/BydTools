@@ -17,26 +17,110 @@ public static class CriUsmDemuxer
 
     private static readonly byte[] HEADER_END_MARKER =
     [
-        0x23, 0x48, 0x45, 0x41, 0x44, 0x45, 0x52, 0x20,
-        0x45, 0x4E, 0x44, 0x20, 0x20, 0x20, 0x20, 0x20,
-        0x3D, 0x3D, 0x3D, 0x3D, 0x3D, 0x3D, 0x3D, 0x3D,
-        0x3D, 0x3D, 0x3D, 0x3D, 0x3D, 0x3D, 0x3D, 0x00
+        0x23,
+        0x48,
+        0x45,
+        0x41,
+        0x44,
+        0x45,
+        0x52,
+        0x20,
+        0x45,
+        0x4E,
+        0x44,
+        0x20,
+        0x20,
+        0x20,
+        0x20,
+        0x20,
+        0x3D,
+        0x3D,
+        0x3D,
+        0x3D,
+        0x3D,
+        0x3D,
+        0x3D,
+        0x3D,
+        0x3D,
+        0x3D,
+        0x3D,
+        0x3D,
+        0x3D,
+        0x3D,
+        0x3D,
+        0x00,
     ];
 
     private static readonly byte[] METADATA_END_MARKER =
     [
-        0x23, 0x4D, 0x45, 0x54, 0x41, 0x44, 0x41, 0x54,
-        0x41, 0x20, 0x45, 0x4E, 0x44, 0x20, 0x20, 0x20,
-        0x3D, 0x3D, 0x3D, 0x3D, 0x3D, 0x3D, 0x3D, 0x3D,
-        0x3D, 0x3D, 0x3D, 0x3D, 0x3D, 0x3D, 0x3D, 0x00
+        0x23,
+        0x4D,
+        0x45,
+        0x54,
+        0x41,
+        0x44,
+        0x41,
+        0x54,
+        0x41,
+        0x20,
+        0x45,
+        0x4E,
+        0x44,
+        0x20,
+        0x20,
+        0x20,
+        0x3D,
+        0x3D,
+        0x3D,
+        0x3D,
+        0x3D,
+        0x3D,
+        0x3D,
+        0x3D,
+        0x3D,
+        0x3D,
+        0x3D,
+        0x3D,
+        0x3D,
+        0x3D,
+        0x3D,
+        0x00,
     ];
 
     private static readonly byte[] CONTENTS_END_MARKER =
     [
-        0x23, 0x43, 0x4F, 0x4E, 0x54, 0x45, 0x4E, 0x54,
-        0x53, 0x20, 0x45, 0x4E, 0x44, 0x20, 0x20, 0x20,
-        0x3D, 0x3D, 0x3D, 0x3D, 0x3D, 0x3D, 0x3D, 0x3D,
-        0x3D, 0x3D, 0x3D, 0x3D, 0x3D, 0x3D, 0x3D, 0x00
+        0x23,
+        0x43,
+        0x4F,
+        0x4E,
+        0x54,
+        0x45,
+        0x4E,
+        0x54,
+        0x53,
+        0x20,
+        0x45,
+        0x4E,
+        0x44,
+        0x20,
+        0x20,
+        0x20,
+        0x3D,
+        0x3D,
+        0x3D,
+        0x3D,
+        0x3D,
+        0x3D,
+        0x3D,
+        0x3D,
+        0x3D,
+        0x3D,
+        0x3D,
+        0x3D,
+        0x3D,
+        0x3D,
+        0x3D,
+        0x00,
     ];
 
     private static readonly byte[] AIXF_SIG = "AIXF"u8.ToArray();
@@ -128,7 +212,8 @@ public static class CriUsmDemuxer
 
     private static string[] FinalizeStreams(
         Dictionary<uint, MemoryStream> streams,
-        string outputBasePath)
+        string outputBasePath
+    )
     {
         var outputFiles = new List<string>(streams.Count);
         var outputDir = Path.GetDirectoryName(outputBasePath);
@@ -154,9 +239,8 @@ public static class CriUsmDemuxer
             }
 
             long contentEndOff = FindPattern(ms, dataStart, CONTENTS_END_MARKER);
-            long dataLength = contentEndOff > dataStart
-                ? contentEndOff - dataStart
-                : ms.Length - dataStart;
+            long dataLength =
+                contentEndOff > dataStart ? contentEndOff - dataStart : ms.Length - dataStart;
 
             if (dataLength <= 0)
                 continue;
@@ -185,7 +269,8 @@ public static class CriUsmDemuxer
             {
                 int toRead = (int)Math.Min(remaining, buffer.Length);
                 int read = ms.Read(buffer, 0, toRead);
-                if (read == 0) break;
+                if (read == 0)
+                    break;
                 fs.Write(buffer, 0, read);
                 remaining -= read;
             }
@@ -197,12 +282,12 @@ public static class CriUsmDemuxer
     }
 
     private static bool IsKnownPacket(ReadOnlySpan<byte> sig) =>
-        sig.SequenceEqual(CRID_SIG) ||
-        sig.SequenceEqual(SFV_SIG) ||
-        sig.SequenceEqual(SFA_SIG) ||
-        sig.SequenceEqual(SBT_SIG) ||
-        sig.SequenceEqual(CUE_SIG) ||
-        sig.SequenceEqual(ALP_SIG);
+        sig.SequenceEqual(CRID_SIG)
+        || sig.SequenceEqual(SFV_SIG)
+        || sig.SequenceEqual(SFA_SIG)
+        || sig.SequenceEqual(SBT_SIG)
+        || sig.SequenceEqual(CUE_SIG)
+        || sig.SequenceEqual(ALP_SIG);
 
     private static bool IsAudioStreamKey(uint streamKey)
     {

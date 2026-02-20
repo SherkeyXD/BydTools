@@ -46,7 +46,11 @@ internal static partial class LibVgmstream
 
     // ── streamfile ───────────────────────────────────────────────
 
-    [LibraryImport(DllName, EntryPoint = "libstreamfile_open_from_stdio", StringMarshalling = StringMarshalling.Utf8)]
+    [LibraryImport(
+        DllName,
+        EntryPoint = "libstreamfile_open_from_stdio",
+        StringMarshalling = StringMarshalling.Utf8
+    )]
     public static partial nint OpenStreamfileFromStdio(string filename);
 
     [LibraryImport(DllName, EntryPoint = "libstreamfile_open_buffered")]

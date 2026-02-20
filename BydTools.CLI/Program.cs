@@ -5,11 +5,7 @@ namespace BydTools.CLI;
 
 class Program
 {
-    private static readonly ICommand[] Commands =
-    [
-        new VfsCommand(),
-        new PckCommand(),
-    ];
+    private static readonly ICommand[] Commands = [new VfsCommand(), new PckCommand()];
 
     internal static string ExecutableName { get; } =
         Path.GetFileNameWithoutExtension(

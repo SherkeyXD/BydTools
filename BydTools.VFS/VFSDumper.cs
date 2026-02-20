@@ -19,7 +19,8 @@ public class VFSDumper : IVFSDumper
     public VFSDumper(
         ILogger logger,
         IReadOnlyDictionary<EVFSBlockType, IPostProcessor> postProcessors,
-        byte[]? customKey = null)
+        byte[]? customKey = null
+    )
     {
         _logger = logger;
         _postProcessors = postProcessors;
@@ -30,7 +31,10 @@ public class VFSDumper : IVFSDumper
     /// Maps EVFSBlockType to groupCfgHashName (directory name).
     /// Frozen for thread-safety and optimized read performance.
     /// </summary>
-    private static readonly FrozenDictionary<EVFSBlockType, string> blockHashMap = new Dictionary<EVFSBlockType, string>
+    private static readonly FrozenDictionary<EVFSBlockType, string> blockHashMap = new Dictionary<
+        EVFSBlockType,
+        string
+    >
     {
         { EVFSBlockType.InitAudio, "07A1BB91" },
         { EVFSBlockType.InitBundle, "0CE8FA57" },
@@ -78,29 +82,20 @@ public class VFSDumper : IVFSDumper
         if (!string.Equals(info.groupCfgHashName, expectedHash, StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidDataException(
-                $"BLC hash mismatch: parsed \"{info.groupCfgHashName}\", expected \"{expectedHash}\". " +
-                "The ChaCha20 key may be incorrect or outdated.");
+                $"BLC hash mismatch: parsed \"{info.groupCfgHashName}\", expected \"{expectedHash}\". "
+                    + "The ChaCha20 key may be incorrect or outdated."
+            );
         }
 
         return info;
     }
 
-    private byte[] ReadFileData(
-        FileStream chunkFs,
-        in FVFBlockFileInfo file,
-        int version
-    )
+    private byte[] ReadFileData(FileStream chunkFs, in FVFBlockFileInfo file, int version)
     {
         if (file.bUseEncrypt)
         {
             byte[] fileNonce = GC.AllocateUninitializedArray<byte>(VFSDefine.BLOCK_HEAD_LEN);
-            Buffer.BlockCopy(
-                BitConverter.GetBytes(version),
-                0,
-                fileNonce,
-                0,
-                sizeof(int)
-            );
+            Buffer.BlockCopy(BitConverter.GetBytes(version), 0, fileNonce, 0, sizeof(int));
             Buffer.BlockCopy(
                 BitConverter.GetBytes(file.ivSeed),
                 0,
@@ -136,7 +131,11 @@ public class VFSDumper : IVFSDumper
         var blockDir = Path.Combine(streamingAssetsPath, hashName);
         if (!Directory.Exists(blockDir))
         {
-            _logger.Error("Block directory {0} not found for type {1}!", hashName, dumpAssetType.ToString());
+            _logger.Error(
+                "Block directory {0} not found for type {1}!",
+                hashName,
+                dumpAssetType.ToString()
+            );
             return;
         }
 
@@ -199,8 +198,8 @@ public class VFSDumper : IVFSDumper
                 var fileName = file.fileName;
                 if (string.IsNullOrEmpty(fileName) && dumpAssetType == EVFSBlockType.Video)
                 {
-                    var usmName = UsmNameReader.TryGetName(fileData)
-                        ?? $"{file.fileNameHash:X16}.usm";
+                    var usmName =
+                        UsmNameReader.TryGetName(fileData) ?? $"{file.fileNameHash:X16}.usm";
                     fileName = $"Video/{usmName}";
                     _logger.Verbose("    Recovered USM name: {0}", fileName);
                 }
@@ -225,7 +224,11 @@ public class VFSDumper : IVFSDumper
                 extractedCount++;
             }
 
-            _logger.Verbose("  Dumped {0} file(s) from chunk {1}", chunk.files.Length, chunkMd5Name);
+            _logger.Verbose(
+                "  Dumped {0} file(s) from chunk {1}",
+                chunk.files.Length,
+                chunkMd5Name
+            );
         }
 
         _logger.Info($"Done, {extractedCount} files extracted.");
@@ -259,11 +262,21 @@ public class VFSDumper : IVFSDumper
                 _logger.Verbose("    File #{0}:", j);
                 _logger.Verbose("      name        : {0}", file.fileName);
                 _logger.Verbose("      nameHash    : 0x{0:X16}", file.fileNameHash);
-                _logger.Verbose("      chunkMD5    : {0}", file.fileChunkMD5Name.ToHexStringLittleEndian());
-                _logger.Verbose("      dataMD5     : {0}", file.fileDataMD5.ToHexStringLittleEndian());
+                _logger.Verbose(
+                    "      chunkMD5    : {0}",
+                    file.fileChunkMD5Name.ToHexStringLittleEndian()
+                );
+                _logger.Verbose(
+                    "      dataMD5     : {0}",
+                    file.fileDataMD5.ToHexStringLittleEndian()
+                );
                 _logger.Verbose("      offset      : {0}", file.offset);
                 _logger.Verbose("      len         : {0}", file.len);
-                _logger.Verbose("      blockType   : {0} ({1})", file.blockType, (byte)file.blockType);
+                _logger.Verbose(
+                    "      blockType   : {0} ({1})",
+                    file.blockType,
+                    (byte)file.blockType
+                );
                 _logger.Verbose("      useEncrypt  : {0}", file.bUseEncrypt);
                 if (file.bUseEncrypt)
                     _logger.Verbose("      ivSeed      : {0}", file.ivSeed);
@@ -330,7 +343,11 @@ public class VFSDumper : IVFSDumper
         }
 
         _logger.Info("");
-        _logger.Info("Debug: found {0} block declaration(s) in {1} subdirectories.", found, dirs.Length);
+        _logger.Info(
+            "Debug: found {0} block declaration(s) in {1} subdirectories.",
+            found,
+            dirs.Length
+        );
 
         if (blockTypeMap.Count > 0)
         {

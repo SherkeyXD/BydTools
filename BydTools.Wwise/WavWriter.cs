@@ -5,20 +5,26 @@ namespace BydTools.Wwise;
 /// </summary>
 internal static class WavWriter
 {
-    public static void WriteHeader(BinaryWriter w, int channels, int sampleRate, int bitsPerSample, int dataBytes)
+    public static void WriteHeader(
+        BinaryWriter w,
+        int channels,
+        int sampleRate,
+        int bitsPerSample,
+        int dataBytes
+    )
     {
         int blockAlign = channels * (bitsPerSample / 8);
         int avgBytesPerSec = sampleRate * blockAlign;
 
         // RIFF header
         w.Write("RIFF"u8);
-        w.Write(36 + dataBytes);    // file size - 8
+        w.Write(36 + dataBytes); // file size - 8
         w.Write("WAVE"u8);
 
         // fmt chunk
         w.Write("fmt "u8);
-        w.Write(16);                // chunk size
-        w.Write((short)1);          // PCM format
+        w.Write(16); // chunk size
+        w.Write((short)1); // PCM format
         w.Write((short)channels);
         w.Write(sampleRate);
         w.Write(avgBytesPerSec);
@@ -33,7 +39,13 @@ internal static class WavWriter
     /// <summary>
     /// Creates a complete WAV file from raw PCM data.
     /// </summary>
-    public static void Write(string path, int channels, int sampleRate, int bitsPerSample, byte[] pcmData)
+    public static void Write(
+        string path,
+        int channels,
+        int sampleRate,
+        int bitsPerSample,
+        byte[] pcmData
+    )
     {
         using var fs = File.Create(path);
         using var w = new BinaryWriter(fs);

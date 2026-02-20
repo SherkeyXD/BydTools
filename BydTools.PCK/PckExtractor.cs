@@ -57,20 +57,20 @@ public class PckExtractor
                 if (!extractBnk)
                     continue;
 
-                savedCount += ExtractBnkWems(
-                    fileData,
-                    entry,
-                    outputDir,
-                    mapper,
-                    content.Languages
-                );
+                savedCount += ExtractBnkWems(fileData, entry, outputDir, mapper, content.Languages);
             }
             else if (magic.SequenceEqual("RIFF"u8) || magic.SequenceEqual("RIFX"u8))
             {
                 if (!extractWem)
                     continue;
 
-                string name = ResolveOutputName(entry.FileId, mapper, ".wem", content.Languages, entry.LanguageId);
+                string name = ResolveOutputName(
+                    entry.FileId,
+                    mapper,
+                    ".wem",
+                    content.Languages,
+                    entry.LanguageId
+                );
                 SaveFile(outputDir, name, fileData);
                 savedCount++;
             }
@@ -79,7 +79,13 @@ public class PckExtractor
                 if (!extractPlg)
                     continue;
 
-                string name = ResolveOutputName(entry.FileId, mapper, ".plg", content.Languages, entry.LanguageId);
+                string name = ResolveOutputName(
+                    entry.FileId,
+                    mapper,
+                    ".plg",
+                    content.Languages,
+                    entry.LanguageId
+                );
                 SaveFile(outputDir, name, fileData);
                 savedCount++;
             }
