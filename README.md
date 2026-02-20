@@ -4,6 +4,8 @@
 > 请不要通过任何渠道宣传本项目，该项目仅供学习交流，严禁用于商业用途，下载后请于24小时内删除  
 > Please do not promote this project through any channels. This project is for learning and communication purposes only. Commercial use is strictly prohibited. Please delete it within 24 hours after downloading.
 
+---
+
 > [!WARNING]
 > AI codes are everywhere
 
@@ -26,10 +28,6 @@
   - SkillData
   - SpawnerConfig
 - [ ] `Video` is usm encrypted and can be decrypted by [WannaCRI](https://github.com/donmai-me/WannaCRI)
-
-### PCK
-
-- [ ] find a way to restore filename and filepath(maybe AudioDialog.json and AudioCueTable.json)
 
 ## Usage
 
@@ -77,3 +75,15 @@ Examples:
   BydTools.CLI pck --input /path/to/file.pck --output /path/to/output --mode raw
   BydTools.CLI pck --input /path/to/file.pck --output /path/to/output --mode ogg --verbose
 ```
+
+## License
+
+This project is licensed under [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/).
+
+This project includes code ported from or inspired by the following open-source projects:
+
+- [AnimeWwise](https://github.com/Escartem/AnimeWwise) by Escartem — CC BY-NC-SA 4.0
+- [ww2ogg](https://github.com/hcs64/ww2ogg) by hcs — BSD-3-Clause
+- [ReVorb](https://github.com/ItsBranK/ReVorb) by ItsBranK (original by Yirkha)
+
+See [NOTICES.md](NOTICES.md) for full details.
