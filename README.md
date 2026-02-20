@@ -1,13 +1,17 @@
 # BydTools
 
+> [!CAUTION]
+> 请不要通过任何渠道宣传本项目，该项目仅供学习交流，严禁用于商业用途，下载后请于24小时内删除  
+> Please do not promote this project through any channels. This project is for learning and communication purposes only. Commercial use is strictly prohibited. Please delete it within 24 hours after downloading.
+
 > [!WARNING]
-> This project was completed with AI assistance, low quality code may be everywhere.
+> AI codes are everywhere
 
 ## TODO
 
 ### VFS
 
-- [ ] `Json` got some files that is not json (MemoryPack format, hard to unpack):
+- [ ] `JsonData` got some files that is not json (MemoryPack):
   - AnimationConfig
   - AtmosphericNpcData
   - Interactive
@@ -21,7 +25,6 @@
   - NonGeneratedConfigs
   - SkillData
   - SpawnerConfig
-- [x] `LuaScript` is encrypted (XXTEA, key is dynamically generated) - **Now automatically decrypted!**
 - [ ] `Video` is usm encrypted and can be decrypted by [WannaCRI](https://github.com/donmai-me/WannaCRI)
 
 ### PCK
@@ -34,12 +37,6 @@
 
 Dump specific types of files from the game's VFS.
 
-**Features:**
-
-- Automatically decrypts TableCfg (.bytes) files using SparkBuffer and saves as .json
-- Automatically decrypts LuaScript files using XXTEA and saves as .lua (source code format)
-- Lua master key is computed once at initialization for optimal performance
-
 ```auto
 Usage:
   BydTools.CLI.exe vfs --gamepath <game_path> [--blocktype <type>] [--output <output_dir>] [-h|--help]
@@ -47,13 +44,13 @@ Usage:
 Arguments:
   --gamepath   Game data directory that contains the VFS folder
   --blocktype  Block type to dump, supports name or numeric value, default is all
-               Available types: InitialAudio, InitialBundle, BundleManifest, InitialExtendData, Audio, Bundle, DynamicStreaming, TableCfg, Video, IV, Streaming, Json, LuaScript, IFixPatch, ExtendData, AudioChinese, AudioEnglish, AudioJapanese, AudioKorean
+               Available types: InitAudio, InitBundle, BundleManifest, InitialExtendData, Audio, Bundle, DynamicStreaming, Table, Video, IV, Streaming, JsonData, Lua, IFixPatchOut, ExtendData, AudioChinese, AudioEnglish, AudioJapanese, AudioKorean
   --output     Output directory, default is ./Assets next to the executable
   -h, --help   Show help information
 
 Examples:
   BydTools.CLI vfs --gamepath /path/to/game --blocktype Bundle --output /path/to/output
-  BydTools.CLI vfs --gamepath /path/to/game --blocktype LuaScript --output /path/to/lua
+  BydTools.CLI vfs --gamepath /path/to/game --blocktype Lua --output /path/to/lua
   BydTools.CLI vfs --gamepath /path/to/game --blocktype 12
   BydTools.CLI vfs --gamepath /path/to/game
 ```
@@ -80,12 +77,3 @@ Examples:
   BydTools.CLI pck --input /path/to/file.pck --output /path/to/output --mode raw
   BydTools.CLI pck --input /path/to/file.pck --output /path/to/output --mode ogg --verbose
 ```
-
-## Acknowledgements
-
-- [isHarryh](https://github.com/isHarryh) for unpacking strategy and pck processing
-- [rfi/BeyondTools](https://git.crepe.moe/rfi/BeyondTools) the original repo
-- [AssetRipper/BnkExtractor](https://github.com/AssetRipper/BnkExtractor) for bnk and wem processing
-- [Xiph.Org Foundation](https://www.xiph.org/) for ogg processing
-- [Campofinale/BeyondTools.LuaDecipher](https://git.teamstardust.org/Campofinale/BeyondTools.LuaDecipher) for genarating lua key
-- Friends from discord servers
