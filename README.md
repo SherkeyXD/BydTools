@@ -13,7 +13,7 @@
 
 ### VFS
 
-- [ ] `JsonData` got some files that is not json (MemoryPack):
+- [ ] `JsonData` (MemoryPack):
   - AnimationConfig
   - AtmosphericNpcData
   - Interactive
@@ -27,7 +27,7 @@
   - NonGeneratedConfigs
   - SkillData
   - SpawnerConfig
-- [ ] `Video` is usm encrypted and can be decrypted by [WannaCRI](https://github.com/donmai-me/WannaCRI)
+- [ ] `Video` (usm), can use [WannaCRI](https://github.com/donmai-me/WannaCRI)
 
 ## Prerequisites
 
