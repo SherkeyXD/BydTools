@@ -6,10 +6,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="Resources\beyond.map" LogicalName="beyond.map" />
-  </ItemGroup>
-
-  <ItemGroup>
     <ProjectReference Include="..\BydTools.Utils\BydTools.Utils.csproj" />
     <ProjectReference Include="..\BydTools.Wwise\BydTools.Wwise.csproj" />
   </ItemGroup>

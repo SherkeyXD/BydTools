@@ -19,10 +19,9 @@ sealed class PckCommand : ICommand
         HelpFormatter.WriteSectionHeader("Options");
         HelpFormatter.WriteEntry("-m, --mode <mode>", "Extract mode (default: wav)");
         HelpFormatter.WriteEntryContinuation("raw  Extract wem/bnk/plg without conversion");
-        HelpFormatter.WriteEntryContinuation("wav  Convert to wav via vgmstream-cli");
-        HelpFormatter.WriteEntry("--map <file>", "ESFM map file for ID-to-name mapping");
-        HelpFormatter.WriteEntryContinuation("Uses built-in beyond.map by default");
-        HelpFormatter.WriteEntry("--no-map", "Disable ID-to-name mapping");
+        HelpFormatter.WriteEntryContinuation("wav  Convert to wav via vgmstream");
+        HelpFormatter.WriteEntry("--json <file>", "JSON mapping file for ID-to-path naming");
+        HelpFormatter.WriteEntryContinuation("Format: { \"id\": { \"path\": \"...\", ... }, ... }");
         HelpFormatter.WriteCommonOptions();
     }
 
@@ -31,11 +30,10 @@ sealed class PckCommand : ICommand
         var parser = new ArgParser()
             .AddFlag("help", "h")
             .AddFlag("verbose", "v")
-            .AddFlag("no-map")
             .AddOption("input", "i")
             .AddOption("output", "o")
             .AddOption("mode", "m")
-            .AddOption("map");
+            .AddOption("json");
 
         if (!parser.TryParse(args))
         {
@@ -78,29 +76,39 @@ sealed class PckCommand : ICommand
         try
         {
             var logger = new Logger(parser.GetFlag("verbose"));
-            var wemConverter = new BydTools.Wwise.WemConverter();
+
+            BydTools.Wwise.IWemConverter wemConverter;
+            if (BydTools.Wwise.LibVgmstreamConverter.IsAvailable)
+            {
+                wemConverter = new BydTools.Wwise.LibVgmstreamConverter();
+                logger.Info("Engine: libvgmstream (DLL)");
+            }
+            else if (BydTools.Wwise.WemConverter.VgmstreamPath != null)
+            {
+                wemConverter = new BydTools.Wwise.WemConverter();
+                logger.Info("Engine: vgmstream-cli");
+            }
+            else
+            {
+                Console.Error.WriteLine(
+                    "Error: vgmstream not found. Place libvgmstream.dll (preferred) " +
+                    "or vgmstream-cli next to the executable, or add to PATH.");
+                return;
+            }
+
             var converter = new PckConverter(logger, wemConverter);
 
             PckMapper? mapper = null;
-            if (!parser.GetFlag("no-map"))
+            var jsonPath = parser.GetValue("json");
+            if (!string.IsNullOrWhiteSpace(jsonPath))
             {
-                var mapPath = parser.GetValue("map");
-                if (!string.IsNullOrWhiteSpace(mapPath))
+                if (!File.Exists(jsonPath))
                 {
-                    if (!File.Exists(mapPath))
-                    {
-                        Console.Error.WriteLine($"Error: map file not found: {mapPath}");
-                        return;
-                    }
-                    mapper = new PckMapper(mapPath);
-                    logger.Info($"Map:    {mapPath}");
+                    Console.Error.WriteLine($"Error: JSON file not found: {jsonPath}");
+                    return;
                 }
-                else
-                {
-                    mapper = PckMapper.LoadBuiltIn();
-                    if (mapper != null)
-                        logger.Info($"Map:    built-in ({mapper.GameName})");
-                }
+                mapper = new PckMapper(jsonPath);
+                logger.Info($"JSON:   {jsonPath} ({mapper.Count} entries)");
             }
 
             converter.ExtractAndConvert(inputPath, outputDir, mode, mapper);

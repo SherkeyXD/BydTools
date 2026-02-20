@@ -157,13 +157,10 @@ public class PckExtractor
     {
         if (mapper != null)
         {
-            var mapped = mapper.GetMappedPath(key);
-            if (mapped.HasValue)
+            string? mapped = mapper.GetMappedPath(key);
+            if (mapped != null)
             {
-                string path = mapped.Value.Path;
-                if (mapped.Value.Language != null)
-                    path = Path.Combine(mapped.Value.Language, path);
-                result = Path.ChangeExtension(path, extension);
+                result = Path.ChangeExtension(mapped, extension);
                 return true;
             }
         }

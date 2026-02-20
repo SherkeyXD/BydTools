@@ -122,8 +122,15 @@ public class PckConverter
                 _logger.Info("Converting WEM to WAV...");
 
             int converted = 0, failed = 0;
+            int done = 0;
+            int total = wemJobs.Count;
+            int lastPercent = -1;
 
-            foreach (var job in wemJobs)
+            Parallel.ForEach(wemJobs, new ParallelOptions
+            {
+                MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount)
+            },
+            job =>
             {
                 string finalPath = Path.Combine(outputDir, job.OutputName);
                 EnsureDirectory(finalPath);
@@ -131,7 +138,7 @@ public class PckConverter
                 try
                 {
                     _wemConverter.Convert(job.TempPath, finalPath);
-                    converted++;
+                    Interlocked.Increment(ref converted);
                 }
                 catch (Exception ex)
                 {
@@ -142,9 +149,17 @@ public class PckConverter
                     _logger.Verbose(
                         $"[{WemFormatReader.GetCodecName(job.Codec)}] " +
                         $"{Path.GetFileName(job.TempPath)}: {ex.Message}");
-                    failed++;
+                    Interlocked.Increment(ref failed);
                 }
-            }
+
+                int current = Interlocked.Increment(ref done);
+                int percent = current * 100 / total;
+                if (percent != lastPercent && percent % 10 == 0)
+                {
+                    lastPercent = percent;
+                    _logger.Info($"  Progress: {current}/{total} ({percent}%)");
+                }
+            });
 
             if (plgJobs.Count > 0)
             {
