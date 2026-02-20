@@ -10,29 +10,32 @@ sealed class VfsCommand : ICommand
 
     public void PrintHelp(string exeName)
     {
-        Console.WriteLine("Usage:");
-        Console.WriteLine(
-            "  {0} vfs --gamepath <game_path> [--blocktype <type>] [--output <output_dir>] [--debug] [-h|--help]",
-            exeName
+        HelpFormatter.WriteUsage("vfs", "--gamepath <path> --blocktype <type>[,type2,...]");
+
+        HelpFormatter.WriteSectionHeader("Required");
+        HelpFormatter.WriteEntry(
+            "--gamepath <path>",
+            "Game data directory that contains the VFS folder"
         );
-        Console.WriteLine();
-        Console.WriteLine("Arguments:");
-        Console.WriteLine("  --gamepath       Game data directory that contains the VFS folder");
-        Console.WriteLine(
-            "  --blocktype      Block type to dump, supports name or numeric value, default is all"
+        HelpFormatter.WriteEntry(
+            "--blocktype <type>",
+            "Block type to dump (name or numeric value)"
         );
-        Console.WriteLine(
-            "                   Available types: {0}",
-            string.Join(", ", VFSDumper.BlockHashMap.Keys)
+        HelpFormatter.WriteEntryContinuation(
+            "Multiple types can be separated by comma, e.g. Bundle,Lua,Table"
         );
-        Console.WriteLine(
-            "  --output         Output directory, default is ./Assets next to the executable"
+        HelpFormatter.WriteBlankLine();
+
+        HelpFormatter.WriteSectionHeader("Options");
+        HelpFormatter.WriteEntry("--output <dir>", "Output directory (default: ./Assets)");
+        HelpFormatter.WriteEntry(
+            "--debug",
+            "Scan subfolders and print block info (no extraction)"
         );
-        Console.WriteLine(
-            "  --debug          Scan all subfolders and print groupCfgName from each BLC (no extraction)"
-        );
-        Console.WriteLine("  --verbose, -v    Enable verbose output");
-        Console.WriteLine("  -h, --help       Show help information");
+        HelpFormatter.WriteCommonOptions();
+        HelpFormatter.WriteBlankLine();
+
+        HelpFormatter.WriteEnumValues("Available block types", VFSDumper.BlockHashMap.Keys);
     }
 
     public void Execute(string[] args)
@@ -67,28 +70,8 @@ sealed class VfsCommand : ICommand
             return;
         }
 
-        var outputDir = parser.GetValue("output")
-            ?? Path.Combine(AppContext.BaseDirectory, "Assets");
-
-        EVFSBlockType dumpAssetType = EVFSBlockType.All;
-        var blockTypeString = parser.GetValue("blocktype");
-        if (!string.IsNullOrWhiteSpace(blockTypeString))
-        {
-            if (!Enum.TryParse<EVFSBlockType>(blockTypeString, ignoreCase: true, out dumpAssetType))
-            {
-                if (byte.TryParse(blockTypeString, out var btValue)
-                    && Enum.IsDefined(typeof(EVFSBlockType), btValue))
-                {
-                    dumpAssetType = (EVFSBlockType)btValue;
-                }
-                else
-                {
-                    Console.Error.WriteLine("Error: failed to parse blocktype \"{0}\".", blockTypeString);
-                    Console.Error.WriteLine("Available types: {0}", string.Join(", ", VFSDumper.BlockHashMap.Keys));
-                    return;
-                }
-            }
-        }
+        var outputDir =
+            parser.GetValue("output") ?? Path.Combine(AppContext.BaseDirectory, "Assets");
 
         var streamingAssetsPath = Path.Combine(gamePath, VFSDefine.VFS_DIR);
         if (!Directory.Exists(streamingAssetsPath))
@@ -111,14 +94,69 @@ sealed class VfsCommand : ICommand
             return;
         }
 
-        if (dumpAssetType == EVFSBlockType.All)
+        var blockTypeString = parser.GetValue("blocktype");
+        if (string.IsNullOrWhiteSpace(blockTypeString))
         {
-            foreach (var type in VFSDumper.BlockHashMap.Keys)
-                dumper.DumpAssetByType(streamingAssetsPath, type, outputDir);
+            Console.Error.WriteLine("Error: --blocktype is required.");
+            HelpFormatter.WriteBlankLine();
+            HelpFormatter.WriteEnumValues(
+                "Available block types",
+                VFSDumper.BlockHashMap.Keys
+            );
+            return;
         }
-        else
+
+        var blockTypes = ParseBlockTypes(blockTypeString);
+        if (blockTypes == null)
+            return;
+
+        Console.WriteLine("Input:  {0}", streamingAssetsPath);
+        Console.WriteLine("Output: {0}", outputDir);
+
+        for (int i = 0; i < blockTypes.Count; i++)
         {
-            dumper.DumpAssetByType(streamingAssetsPath, dumpAssetType, outputDir);
+            if (i > 0)
+                Console.WriteLine();
+            dumper.DumpAssetByType(streamingAssetsPath, blockTypes[i], outputDir);
         }
+    }
+
+    private static List<EVFSBlockType>? ParseBlockTypes(string raw)
+    {
+        var segments = raw.Split(',', StringSplitOptions.RemoveEmptyEntries);
+        var result = new List<EVFSBlockType>(segments.Length);
+
+        foreach (var segment in segments)
+        {
+            var trimmed = segment.Trim();
+            if (
+                Enum.TryParse<EVFSBlockType>(trimmed, ignoreCase: true, out var parsed)
+            )
+            {
+                result.Add(parsed);
+            }
+            else if (
+                byte.TryParse(trimmed, out var btValue)
+                && Enum.IsDefined(typeof(EVFSBlockType), btValue)
+            )
+            {
+                result.Add((EVFSBlockType)btValue);
+            }
+            else
+            {
+                Console.Error.WriteLine(
+                    "Error: failed to parse blocktype \"{0}\".",
+                    trimmed
+                );
+                HelpFormatter.WriteBlankLine();
+                HelpFormatter.WriteEnumValues(
+                    "Available block types",
+                    VFSDumper.BlockHashMap.Keys
+                );
+                return null;
+            }
+        }
+
+        return result;
     }
 }

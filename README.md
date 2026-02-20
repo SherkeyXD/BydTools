@@ -31,49 +31,83 @@
 
 ## Usage
 
+```
+Usage:
+  BydTools <command> [options]
+
+Commands:
+  vfs                       Dump files from VFS
+  pck                       Extract files from PCK
+
+Options:
+  -h, --help                Show help information
+```
+
 ### BydTools.VFS
 
 Dump specific types of files from the game's VFS.
 
-```auto
+```
 Usage:
-  BydTools.CLI.exe vfs --gamepath <game_path> [--blocktype <type>] [--output <output_dir>] [-h|--help]
+  BydTools vfs --gamepath <path> --blocktype <type>[,type2,...] [options]
 
-Arguments:
-  --gamepath   Game data directory that contains the VFS folder
-  --blocktype  Block type to dump, supports name or numeric value, default is all
-               Available types: InitAudio, InitBundle, BundleManifest, InitialExtendData, Audio, Bundle, DynamicStreaming, Table, Video, IV, Streaming, JsonData, Lua, IFixPatchOut, ExtendData, AudioChinese, AudioEnglish, AudioJapanese, AudioKorean
-  --output     Output directory, default is ./Assets next to the executable
-  -h, --help   Show help information
+Required:
+  --gamepath <path>         Game data directory that contains the VFS folder
+  --blocktype <type>        Block type to dump (name or numeric value)
+                            Multiple types can be separated by comma, e.g. Bundle,Lua,Table
 
-Examples:
-  BydTools.CLI vfs --gamepath /path/to/game --blocktype Bundle --output /path/to/output
-  BydTools.CLI vfs --gamepath /path/to/game --blocktype Lua --output /path/to/lua
-  BydTools.CLI vfs --gamepath /path/to/game --blocktype 12
-  BydTools.CLI vfs --gamepath /path/to/game
+Options:
+  --output <dir>            Output directory (default: ./Assets)
+  --debug                   Scan subfolders and print block info (no extraction)
+  -v, --verbose             Enable verbose output
+  -h, --help                Show help information
+
+Available block types:
+  InitAudio (1)             InitBundle (2)            BundleManifest (3)
+  InitialExtendData (5)     Audio (11)                Bundle (12)
+  DynamicStreaming (13)     Table (14)                Video (15)
+  IV (16)                   Streaming (17)            JsonData (18)
+  Lua (19)                  IFixPatchOut (21)         ExtendData (22)
+  AudioChinese (30)         AudioEnglish (31)         AudioJapanese (32)
+  AudioKorean (33)
+```
+
+**Examples:**
+
+```bash
+BydTools vfs --gamepath /path/to/game --blocktype Bundle --output /path/to/output
+BydTools vfs --gamepath /path/to/game --blocktype Lua
+BydTools vfs --gamepath /path/to/game --blocktype Bundle,Lua,Table
+BydTools vfs --gamepath /path/to/game --blocktype 12
+BydTools vfs --gamepath /path/to/game --blocktype Table --debug
 ```
 
 ### BydTools.PCK
 
 Extract files from PCK archives and convert audio files.
 
-```auto
+```
 Usage:
-  BydTools.CLI.exe pck --input <pck_file> --output <output_dir> [--mode <mode>] [-h|--help]
+  BydTools pck --input <file> --output <dir> [options]
 
-Arguments:
-  --input, -i      Input PCK file path
-  --output, -o     Output directory
-  --mode, -m       Extract mode: raw, ogg (default: ogg)
-                   raw: Extract wem/bnk/plg files without conversion
-                   ogg: Convert files to ogg, keep unconvertible files raw
-  --verbose, -v    Enable verbose output
-  -h, --help       Show help information
+Required:
+  -i, --input <file>        Input PCK file path
+  -o, --output <dir>        Output directory
 
-Examples:
-  BydTools.CLI pck --input /path/to/file.pck --output /path/to/output
-  BydTools.CLI pck --input /path/to/file.pck --output /path/to/output --mode raw
-  BydTools.CLI pck --input /path/to/file.pck --output /path/to/output --mode ogg --verbose
+Options:
+  -m, --mode <mode>         Extract mode (default: ogg)
+                            raw  Extract wem/bnk/plg without conversion
+                            ogg  Convert to ogg, keep unconvertible as raw
+  -v, --verbose             Enable verbose output
+  -h, --help                Show help information
+```
+
+**Examples:**
+
+```bash
+BydTools pck --input /path/to/file.pck --output /path/to/output
+BydTools pck -i /path/to/file.pck -o /path/to/output --mode raw
+BydTools pck -i /path/to/file.pck -o /path/to/output -m ogg --verbose
 ```
 
 ## License

@@ -131,8 +131,7 @@ public class VFSDumper : IVFSDumper
             return;
         }
 
-        _logger.Info($"Input: {streamingAssetsPath}");
-        _logger.Info($"Output: {outputDir}");
+        _logger.Info("--- {0} ({1}) ---", dumpAssetType, (byte)dumpAssetType);
 
         var vfBlockMainInfo = DecryptAndParseBlc(blockFilePath);
 

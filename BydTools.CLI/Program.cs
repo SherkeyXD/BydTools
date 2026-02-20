@@ -47,14 +47,14 @@ class Program
 
     static void PrintHelp()
     {
-        Console.WriteLine("Usage:");
-        Console.WriteLine("  {0} <command> [options]", ExecutableName);
-        Console.WriteLine();
-        Console.WriteLine("Commands:");
+        HelpFormatter.WriteUsage("<command>", "[options]", null);
+
+        HelpFormatter.WriteSectionHeader("Commands");
         foreach (var cmd in Commands)
-            Console.WriteLine("  {0,-8} {1}", cmd.Name, cmd.Description);
-        Console.WriteLine();
-        Console.WriteLine("Options:");
-        Console.WriteLine("  -h, --help    Show help information");
+            HelpFormatter.WriteEntry(cmd.Name, cmd.Description);
+        HelpFormatter.WriteBlankLine();
+
+        HelpFormatter.WriteSectionHeader("Options");
+        HelpFormatter.WriteEntry("-h, --help", "Show help information");
     }
 }

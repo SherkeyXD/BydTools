@@ -9,20 +9,18 @@ sealed class PckCommand : ICommand
 
     public void PrintHelp(string exeName)
     {
-        Console.WriteLine("Usage:");
-        Console.WriteLine(
-            "  {0} pck --input <pck_file> --output <output_dir> [--mode <mode>] [-h|--help]",
-            exeName
-        );
-        Console.WriteLine();
-        Console.WriteLine("Arguments:");
-        Console.WriteLine("  --input, -i      Input PCK file path");
-        Console.WriteLine("  --output, -o     Output directory");
-        Console.WriteLine("  --mode, -m       Extract mode: raw, ogg (default: ogg)");
-        Console.WriteLine("                   raw: Extract wem/bnk/plg files without conversion");
-        Console.WriteLine("                   ogg: Convert files to ogg, keep unconvertible files raw");
-        Console.WriteLine("  --verbose, -v    Enable verbose output");
-        Console.WriteLine("  -h, --help       Show help information");
+        HelpFormatter.WriteUsage("pck", "--input <file> --output <dir>");
+
+        HelpFormatter.WriteSectionHeader("Required");
+        HelpFormatter.WriteEntry("-i, --input <file>", "Input PCK file path");
+        HelpFormatter.WriteEntry("-o, --output <dir>", "Output directory");
+        HelpFormatter.WriteBlankLine();
+
+        HelpFormatter.WriteSectionHeader("Options");
+        HelpFormatter.WriteEntry("-m, --mode <mode>", "Extract mode (default: ogg)");
+        HelpFormatter.WriteEntryContinuation("raw  Extract wem/bnk/plg without conversion");
+        HelpFormatter.WriteEntryContinuation("ogg  Convert to ogg, keep unconvertible as raw");
+        HelpFormatter.WriteCommonOptions();
     }
 
     public void Execute(string[] args)
