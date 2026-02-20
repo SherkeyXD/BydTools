@@ -1,4 +1,4 @@
-﻿using BydTools.Utils.Crypto;
+using BydTools.Utils.Crypto;
 using BydTools.Utils.Extensions;
 using BydTools.Utils.SparkBuffer;
 using BydTools.Utils.xLua;
@@ -29,21 +29,20 @@ public class VFSDumper
     /// </summary>
     static readonly Dictionary<EVFSBlockType, string> blockTypeNameMap = new()
     {
-        { EVFSBlockType.InitialAudio, "InitAudio" },
-        { EVFSBlockType.InitialBundle, "InitBundle" },
+        { EVFSBlockType.InitAudio, "InitAudio" },
+        { EVFSBlockType.InitBundle, "InitBundle" },
         { EVFSBlockType.BundleManifest, "BundleManifest" },
-        { EVFSBlockType.LowShader, "LowShader" },
         { EVFSBlockType.InitialExtendData, "InitialExtendData" },
         { EVFSBlockType.Audio, "Audio" },
         { EVFSBlockType.Bundle, "Bundle" },
         { EVFSBlockType.DynamicStreaming, "DynamicStreaming" },
-        { EVFSBlockType.TableCfg, "TableCfg" },
+        { EVFSBlockType.Table, "Table" },
         { EVFSBlockType.Video, "Video" },
         { EVFSBlockType.IV, "IV" },
         { EVFSBlockType.Streaming, "Streaming" },
-        { EVFSBlockType.Json, "Json" },
-        { EVFSBlockType.LuaScript, "LuaScript" },
-        { EVFSBlockType.IFixPatch, "IFixPatchOut" },
+        { EVFSBlockType.JsonData, "JsonData" },
+        { EVFSBlockType.Lua, "Lua" },
+        { EVFSBlockType.IFixPatchOut, "IFixPatchOut" },
         { EVFSBlockType.ExtendData, "ExtendData" },
         { EVFSBlockType.AudioChinese, "AudioChinese" },
         { EVFSBlockType.AudioEnglish, "AudioEnglish" },
@@ -57,20 +56,20 @@ public class VFSDumper
     /// </summary>
     static readonly Dictionary<EVFSBlockType, string> blockHashMap = new()
     {
-        { EVFSBlockType.InitialAudio, "07A1BB91" },
-        { EVFSBlockType.InitialBundle, "0CE8FA57" },
+        { EVFSBlockType.InitAudio, "07A1BB91" },
+        { EVFSBlockType.InitBundle, "0CE8FA57" },
         { EVFSBlockType.BundleManifest, "1CDDBF1F" },
         { EVFSBlockType.InitialExtendData, "3C9D9D2D" },
         { EVFSBlockType.Audio, "24ED34CF" },
         { EVFSBlockType.Bundle, "7064D8E2" },
         { EVFSBlockType.DynamicStreaming, "23D53F5D" },
-        { EVFSBlockType.TableCfg, "42A8FCA6" },
+        { EVFSBlockType.Table, "42A8FCA6" },
         { EVFSBlockType.Video, "55FC21C6" },
         { EVFSBlockType.IV, "A63D7E6A" },
         { EVFSBlockType.Streaming, "C3442D43" },
-        { EVFSBlockType.Json, "775A31D1" },
-        { EVFSBlockType.LuaScript, "19E3AE45" },
-        { EVFSBlockType.IFixPatch, "DAFE52C9" },
+        { EVFSBlockType.JsonData, "775A31D1" },
+        { EVFSBlockType.Lua, "19E3AE45" },
+        { EVFSBlockType.IFixPatchOut, "DAFE52C9" },
         { EVFSBlockType.ExtendData, "D6E622F7" },
         { EVFSBlockType.AudioChinese, "E1E7D7CE" },
         { EVFSBlockType.AudioEnglish, "A31457D0" },
@@ -287,7 +286,7 @@ public class VFSDumper
                 }
 
                 if (
-                    dumpAssetType == EVFSBlockType.TableCfg
+                    dumpAssetType == EVFSBlockType.Table
                     && Path.GetExtension(file.fileName)
                         .Equals(".bytes", StringComparison.OrdinalIgnoreCase)
                 )
@@ -316,7 +315,7 @@ public class VFSDumper
                     }
                 }
 
-                if (dumpAssetType == EVFSBlockType.LuaScript && !string.IsNullOrEmpty(_luaMasterKey))
+                if (dumpAssetType == EVFSBlockType.Lua && !string.IsNullOrEmpty(_luaMasterKey))
                 {
                     try
                     {
@@ -432,6 +431,83 @@ public class VFSDumper
 
             _logger.Verbose("======== END BLC INFO ========");
         }
+    }
+
+    /// <summary>
+    /// Scans all subdirectories under the VFS path, decrypts each BLC file,
+    /// and prints the groupCfgName found in each block declaration.
+    /// </summary>
+    /// <param name="streamingAssetsPath">Path to the VFS directory.</param>
+    public void DebugScanBlocks(string streamingAssetsPath)
+    {
+        _logger?.Info("Debug: scanning all block declarations under {0}", streamingAssetsPath);
+        _logger?.Info("");
+
+        var dirs = Directory.GetDirectories(streamingAssetsPath);
+        if (dirs.Length == 0)
+        {
+            _logger?.Info("No subdirectories found.");
+            return;
+        }
+
+        int found = 0;
+        foreach (var dir in dirs.OrderBy(d => d))
+        {
+            var dirName = Path.GetFileName(dir);
+            var blcPath = Path.Combine(dir, dirName + ".blc");
+
+            if (!File.Exists(blcPath))
+            {
+                _logger?.Verbose("  [{0}] No BLC file found, skipping.", dirName);
+                continue;
+            }
+
+            try
+            {
+                var blockFile = File.ReadAllBytes(blcPath);
+
+                byte[] nonce = GC.AllocateUninitializedArray<byte>(VFSDefine.BLOCK_HEAD_LEN);
+                Buffer.BlockCopy(blockFile, 0, nonce, 0, nonce.Length);
+
+                using var chacha = new CSChaCha20(
+                    Convert.FromBase64String(VFSDefine.CHACHA_KEY),
+                    nonce,
+                    1
+                );
+                var decryptedBytes = chacha.DecryptBytes(blockFile[VFSDefine.BLOCK_HEAD_LEN..]);
+                Buffer.BlockCopy(
+                    decryptedBytes,
+                    0,
+                    blockFile,
+                    VFSDefine.BLOCK_HEAD_LEN,
+                    decryptedBytes.Length
+                );
+
+                var info = new VFBlockMainInfo(blockFile, 0);
+
+                var blockTypeByte = (byte)info.blockType;
+                var typeLabel = Enum.IsDefined(info.blockType)
+                    ? $"{info.blockType} ({blockTypeByte})"
+                    : $"Unknown ({blockTypeByte})";
+
+                _logger?.Info(
+                    "  [{0}] groupCfgName = {1}  |  blockType = {2}  |  chunks = {3}  |  files = {4}",
+                    dirName,
+                    info.groupCfgName,
+                    typeLabel,
+                    info.allChunks.Length,
+                    info.groupFileInfoNum
+                );
+                found++;
+            }
+            catch (Exception ex)
+            {
+                _logger?.Error("  [{0}] Failed to parse BLC: {1}", dirName, ex.Message);
+            }
+        }
+
+        _logger?.Info("");
+        _logger?.Info("Debug: found {0} block declaration(s) in {1} subdirectories.", found, dirs.Length);
     }
 
     /// <summary>

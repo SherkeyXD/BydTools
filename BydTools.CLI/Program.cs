@@ -52,6 +52,7 @@ class Program
         string? outputDir = null;
         bool showHelp = false;
         bool verbose = false;
+        bool debug = false;
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -67,6 +68,10 @@ class Program
                 case "--verbose":
                 case "-v":
                     verbose = true;
+                    break;
+
+                case "--debug":
+                    debug = true;
                     break;
 
                 case "--gamepath":
@@ -161,6 +166,13 @@ class Program
 
         var logger = new Logger(verbose);
         var dumper = new VFSDumper(logger);
+
+        if (debug)
+        {
+            dumper.DebugScanBlocks(streamingAssetsPath);
+            return;
+        }
+
         if (dumpAssetType == EVFSBlockType.All)
         {
             foreach (var type in VFSDumper.BlockHashMap.Keys)
@@ -315,7 +327,7 @@ class Program
         var exeName = GetExecutableName();
         Console.WriteLine("Usage:");
         Console.WriteLine(
-            "  {0} vfs --gamepath <game_path> [--blocktype <type>] [--output <output_dir>] [-h|--help]",
+            "  {0} vfs --gamepath <game_path> [--blocktype <type>] [--output <output_dir>] [--debug] [-h|--help]",
             exeName
         );
         Console.WriteLine();
@@ -331,6 +343,7 @@ class Program
         Console.WriteLine(
             "  --output     Output directory, default is ./Assets next to the executable"
         );
+        Console.WriteLine("  --debug      Scan all subfolders and print groupCfgName from each BLC (no extraction)");
         Console.WriteLine("  --verbose, -v   Enable verbose output");
         Console.WriteLine("  -h, --help   Show help information");
     }
