@@ -67,42 +67,6 @@ internal static partial class LibVgmstream
         Float = 4,
     }
 
-    /// <remarks>
-    /// Mirrors libvgmstream_format_t. Only the fields we need are mapped;
-    /// total struct size must match native for pointer arithmetic to work.
-    /// We read fields via Marshal.Read* from the raw pointer instead.
-    /// </remarks>
-    public static class Format
-    {
-        // Offsets within libvgmstream_format_t (x64, assumes standard packing)
-        public const int OffsetChannels = 0;        // int
-        public const int OffsetSampleRate = 4;      // int
-        public const int OffsetSampleFormat = 8;    // int (enum)
-        public const int OffsetSampleSize = 12;     // int
-        public const int OffsetStreamSamples = 24;  // int64 (after channel_layout u32 + subsong_index int + subsong_count int + input_channels int = 16 bytes from offset 16 → 24? let me recalc)
-    }
-
-    /// <remarks>
-    /// Mirrors libvgmstream_decoder_t.
-    /// </remarks>
-    public static class Decoder
-    {
-        public const int OffsetBuf = 0;             // void*
-        public const int OffsetBufSamples = 8;      // int (after pointer on x64)
-        public const int OffsetBufBytes = 12;       // int
-        public const int OffsetDone = 16;           // bool (C99 _Bool = 1 byte, but may be aligned)
-    }
-
-    /// <remarks>
-    /// Mirrors libvgmstream_t — the handle struct.
-    /// </remarks>
-    public static class Handle
-    {
-        public const int OffsetPriv = 0;            // void*
-        public const int OffsetFormat = 8;          // const libvgmstream_format_t*
-        public const int OffsetDecoder = 16;        // libvgmstream_decoder_t*
-    }
-
     [StructLayout(LayoutKind.Sequential)]
     public struct NativeConfig
     {

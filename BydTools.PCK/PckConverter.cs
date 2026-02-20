@@ -4,7 +4,7 @@ using BydTools.Wwise;
 namespace BydTools.PCK;
 
 /// <summary>
-/// Extracts audio from PCK archives and converts WEM → WAV via vgmstream-cli,
+/// Extracts audio from PCK archives and converts WEM to WAV via vgmstream,
 /// with optional filename mapping via <see cref="PckMapper"/>.
 /// </summary>
 public class PckConverter
@@ -27,7 +27,7 @@ public class PckConverter
     /// Extracts and converts audio files from a PCK archive.
     /// <list type="bullet">
     ///   <item><b>raw</b> — extract WEM/BNK/PLG without conversion.</item>
-    ///   <item><b>wav</b> — convert WEM to WAV via vgmstream-cli; failures kept as WEM.</item>
+    ///   <item><b>wav</b> — convert WEM to WAV via vgmstream; failures kept as WEM.</item>
     /// </list>
     /// </summary>
     public void ExtractAndConvert(
@@ -112,14 +112,14 @@ public class PckConverter
                 }
             }
 
-            var codecGroups = wemJobs.GroupBy(j => j.Codec).OrderByDescending(g => g.Count());
-            foreach (var g in codecGroups)
-                _logger.Info($"  {WemFormatReader.GetCodecName(g.Key)}: {g.Count()}");
-
             _logger.Info($"Found {wemJobs.Count} WEM, {plgJobs.Count} PLG files");
 
+            var codecGroups = wemJobs.GroupBy(j => j.Codec).OrderByDescending(g => g.Count());
+            foreach (var g in codecGroups)
+                _logger.Verbose($"  {WemFormatReader.GetCodecName(g.Key)}: {g.Count()}");
+
             if (wemJobs.Count > 0)
-                _logger.Info("Converting WEM to WAV...");
+                _logger.Verbose("Converting WEM to WAV...");
 
             int converted = 0, failed = 0;
             int done = 0;
@@ -157,7 +157,7 @@ public class PckConverter
                 if (percent != lastPercent && percent % 10 == 0)
                 {
                     lastPercent = percent;
-                    _logger.Info($"  Progress: {current}/{total} ({percent}%)");
+                    _logger.Verbose($"  Progress: {current}/{total} ({percent}%)");
                 }
             });
 

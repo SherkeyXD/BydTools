@@ -32,8 +32,9 @@
 ## Prerequisites
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download)
-- [vgmstream](https://github.com/vgmstream/vgmstream/releases) — `vgmstream-cli` required for `pck` audio conversion
-  - Place `vgmstream-cli` (and its DLLs) next to the BydTools executable, in a `vgmstream/` subdirectory, or add it to `PATH`
+- [vgmstream](https://github.com/vgmstream/vgmstream/releases) — required for `pck` audio conversion
+  - **Preferred**: Place `libvgmstream.dll` (and FFmpeg DLLs) next to the BydTools executable
+  - **Fallback**: Place `vgmstream-cli` next to the executable, in a `vgmstream/` subdirectory, or add to `PATH`
 
 ## Usage
 
@@ -96,10 +97,9 @@ Required:
 Options:
   -m, --mode <mode>         Extract mode (default: wav)
                             raw  Extract wem/bnk/plg without conversion
-                            wav  Convert to wav via vgmstream-cli
-  --map <file>              ESFM map file for ID-to-name mapping
-                            Uses built-in beyond.map by default
-  --no-map                  Disable ID-to-name mapping
+                            wav  Convert to wav via vgmstream
+  --json <file>             JSON mapping file for ID-to-path naming
+                            Format: { "id": { "path": "...", ... }, ... }
   -v, --verbose             Enable verbose output
   -h, --help                Show help information
 ```
@@ -112,5 +112,6 @@ This project includes code ported from or inspired by the following open-source 
 
 - [AnimeStudio](https://github.com/Escartem/AnimeStudio) by Escartem — MIT
 - [AnimeWwise](https://github.com/Escartem/AnimeWwise) by Escartem — CC BY-NC-SA 4.0
+- [vgmstream](https://github.com/vgmstream/vgmstream) — ISC / MIT (bundled as native DLLs)
 
 See [NOTICES.md](NOTICES.md) for full details.

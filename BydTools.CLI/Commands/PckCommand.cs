@@ -1,4 +1,6 @@
 using BydTools.PCK;
+using BydTools.Utils;
+using BydTools.Wwise;
 
 namespace BydTools.CLI.Commands;
 
@@ -77,26 +79,9 @@ sealed class PckCommand : ICommand
         {
             var logger = new Logger(parser.GetFlag("verbose"));
 
-            BydTools.Wwise.IWemConverter wemConverter;
-            if (BydTools.Wwise.LibVgmstreamConverter.IsAvailable)
-            {
-                wemConverter = new BydTools.Wwise.LibVgmstreamConverter();
-                logger.Info("Engine: libvgmstream (DLL)");
-            }
-            else if (BydTools.Wwise.WemConverter.VgmstreamPath != null)
-            {
-                wemConverter = new BydTools.Wwise.WemConverter();
-                logger.Info("Engine: vgmstream-cli");
-            }
-            else
-            {
-                Console.Error.WriteLine(
-                    "Error: vgmstream not found. Place libvgmstream.dll (preferred) " +
-                    "or vgmstream-cli next to the executable, or add to PATH.");
+            var wemConverter = ResolveConverter(logger);
+            if (wemConverter == null)
                 return;
-            }
-
-            var converter = new PckConverter(logger, wemConverter);
 
             PckMapper? mapper = null;
             var jsonPath = parser.GetValue("json");
@@ -108,15 +93,36 @@ sealed class PckCommand : ICommand
                     return;
                 }
                 mapper = new PckMapper(jsonPath);
-                logger.Info($"JSON:   {jsonPath} ({mapper.Count} entries)");
+                logger.Info($"Map:    {jsonPath} ({mapper.Count} entries)");
             }
 
+            var converter = new PckConverter(logger, wemConverter);
             converter.ExtractAndConvert(inputPath, outputDir, mode, mapper);
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine("Error: {0}", ex.Message);
+            Console.Error.WriteLine($"Error: {ex.Message}");
             Environment.Exit(1);
         }
+    }
+
+    private static IWemConverter? ResolveConverter(ILogger logger)
+    {
+        if (LibVgmstreamConverter.IsAvailable)
+        {
+            logger.Verbose("Engine: libvgmstream (DLL)");
+            return new LibVgmstreamConverter();
+        }
+
+        if (WemConverter.VgmstreamPath != null)
+        {
+            logger.Verbose($"Engine: vgmstream-cli ({WemConverter.VgmstreamPath})");
+            return new WemConverter();
+        }
+
+        Console.Error.WriteLine(
+            "Error: vgmstream not found. Place libvgmstream.dll (preferred) " +
+            "or vgmstream-cli next to the executable, or add to PATH.");
+        return null;
     }
 }

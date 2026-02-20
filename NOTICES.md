@@ -54,9 +54,23 @@ SOFTWARE.
 
 ---
 
-## vgmstream (runtime dependency)
+## vgmstream
 
 - **Source**: https://github.com/vgmstream/vgmstream
 - **License**: ISC / MIT (depending on component)
-- **Usage**: Used as an external tool (`vgmstream-cli`) for WEM → WAV conversion.
-  Not bundled with this project; must be placed alongside the executable or in PATH.
+- **Copyright**: vgmstream contributors
+- **Usage**: `libvgmstream.dll` is used via P/Invoke for WEM → WAV decoding in `BydTools.Wwise`.
+  Falls back to `vgmstream-cli` when the DLL is unavailable.
+- **Bundled files** (in `BydTools.Wwise/3rdParty/`):
+  - `libvgmstream.dll` — core decoding library
+  - `avcodec-vgmstream-59.dll` — FFmpeg avcodec (Wwise Opus support)
+  - `avformat-vgmstream-59.dll` — FFmpeg avformat
+  - `avutil-vgmstream-57.dll` — FFmpeg avutil
+  - `swresample-vgmstream-4.dll` — FFmpeg swresample
+  - `libatrac9.dll` — ATRAC9 decoder
+  - `libcelt-0061.dll` — CELT 0.6.1 decoder
+  - `libcelt-0110.dll` — CELT 0.11.0 decoder
+  - `libg719_decode.dll` — G.719 decoder
+  - `libmpg123-0.dll` — MPEG audio decoder
+  - `libspeex-1.dll` — Speex decoder
+  - `libvorbis.dll` — Vorbis decoder
