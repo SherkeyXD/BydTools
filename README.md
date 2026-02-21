@@ -106,9 +106,8 @@ This project is licensed under [CC BY-NC-SA 4.0](https://creativecommons.org/lic
 
 This project includes code ported from or inspired by the following open-source projects:
 
-- [AnimeStudio](https://github.com/Escartem/AnimeStudio) by Escartem — MIT
-- [AnimeWwise](https://github.com/Escartem/AnimeWwise) by Escartem — CC BY-NC-SA 4.0
-- [vgmstream](https://github.com/vgmstream/vgmstream) — ISC / MIT (bundled as native DLLs)
-- [VGMToolbox](https://sourceforge.net/projects/vgmtoolbox/) — MIT (CRI USM demux)
+- [AnimeStudio](https://github.com/Escartem/AnimeStudio)
+- [AnimeWwise](https://github.com/Escartem/AnimeWwise)
+- [vgmstream](https://github.com/vgmstream/vgmstream)
 
 See [NOTICES.md](NOTICES.md) for full details.
