@@ -1,6 +1,5 @@
 using System.Collections.Frozen;
 using BydTools.Utils;
-using BydTools.Utils.Crypto;
 using BydTools.Utils.Extensions;
 using BydTools.VFS.CriUsm;
 using BydTools.VFS.PostProcessors;
@@ -59,62 +58,11 @@ public class VFSDumper : IVFSDumper
 
     public static IReadOnlyDictionary<EVFSBlockType, string> BlockHashMap => blockHashMap;
 
-    private VFBlockMainInfo DecryptAndParseBlc(string blcFilePath)
-    {
-        var blockFile = File.ReadAllBytes(blcFilePath);
+    private VFBlockMainInfo ReadBlockInfo(string streamingAssetsPath, EVFSBlockType blockType) =>
+        VfsReader.ReadBlockInfo(streamingAssetsPath, blockType, _chaChaKey);
 
-        byte[] nonce = GC.AllocateUninitializedArray<byte>(VFSDefine.BLOCK_HEAD_LEN);
-        Buffer.BlockCopy(blockFile, 0, nonce, 0, nonce.Length);
-
-        using var chacha = new CSChaCha20(_chaChaKey, nonce, 1);
-        var decryptedBytes = chacha.DecryptBytes(blockFile[VFSDefine.BLOCK_HEAD_LEN..]);
-        Buffer.BlockCopy(
-            decryptedBytes,
-            0,
-            blockFile,
-            VFSDefine.BLOCK_HEAD_LEN,
-            decryptedBytes.Length
-        );
-
-        var info = new VFBlockMainInfo(blockFile, 0);
-
-        var expectedHash = Path.GetFileNameWithoutExtension(blcFilePath);
-        if (!string.Equals(info.groupCfgHashName, expectedHash, StringComparison.OrdinalIgnoreCase))
-        {
-            throw new InvalidDataException(
-                $"BLC hash mismatch: parsed \"{info.groupCfgHashName}\", expected \"{expectedHash}\". "
-                    + "The ChaCha20 key may be incorrect or outdated."
-            );
-        }
-
-        return info;
-    }
-
-    private byte[] ReadFileData(FileStream chunkFs, in FVFBlockFileInfo file, int version)
-    {
-        if (file.bUseEncrypt)
-        {
-            byte[] fileNonce = GC.AllocateUninitializedArray<byte>(VFSDefine.BLOCK_HEAD_LEN);
-            Buffer.BlockCopy(BitConverter.GetBytes(version), 0, fileNonce, 0, sizeof(int));
-            Buffer.BlockCopy(
-                BitConverter.GetBytes(file.ivSeed),
-                0,
-                fileNonce,
-                sizeof(int),
-                sizeof(long)
-            );
-
-            using var fileChacha = new CSChaCha20(_chaChaKey, fileNonce, 1);
-
-            var encryptedData = new byte[file.len];
-            chunkFs.ReadExactly(encryptedData);
-            return fileChacha.DecryptBytes(encryptedData);
-        }
-
-        var data = new byte[file.len];
-        chunkFs.ReadExactly(data);
-        return data;
-    }
+    private byte[] ReadFileData(FileStream chunkFs, in FVFBlockFileInfo file, int version) =>
+        VfsReader.ReadFileData(chunkFs, file, version, _chaChaKey);
 
     public void DumpAssetByType(
         string streamingAssetsPath,
@@ -122,33 +70,11 @@ public class VFSDumper : IVFSDumper
         string outputDir
     )
     {
-        if (!blockHashMap.TryGetValue(dumpAssetType, out var hashName))
-        {
-            _logger.Error("Block type {0} has no known hash mapping!", dumpAssetType.ToString());
-            return;
-        }
-
-        var blockDir = Path.Combine(streamingAssetsPath, hashName);
-        if (!Directory.Exists(blockDir))
-        {
-            _logger.Error(
-                "Block directory {0} not found for type {1}!",
-                hashName,
-                dumpAssetType.ToString()
-            );
-            return;
-        }
-
-        var blockFilePath = Path.Combine(blockDir, hashName + ".blc");
-        if (!File.Exists(blockFilePath))
-        {
-            _logger.Error("BLC file not found: {0}", blockFilePath);
-            return;
-        }
-
         _logger.Info("--- {0} ({1}) ---", dumpAssetType, (byte)dumpAssetType);
 
-        var vfBlockMainInfo = DecryptAndParseBlc(blockFilePath);
+        var vfBlockMainInfo = ReadBlockInfo(streamingAssetsPath, dumpAssetType);
+        var hashName = blockHashMap[dumpAssetType];
+        var blockDir = Path.Combine(streamingAssetsPath, hashName);
 
         var fileTypeCounts = new Dictionary<string, int>();
         int totalFiles = 0;
@@ -316,7 +242,7 @@ public class VFSDumper : IVFSDumper
 
             try
             {
-                var info = DecryptAndParseBlc(blcPath);
+                var info = VfsReader.DecryptBlc(blcPath, _chaChaKey);
 
                 var blockTypeByte = (byte)info.blockType;
                 var typeLabel = Enum.IsDefined(info.blockType)

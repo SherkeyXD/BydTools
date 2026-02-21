@@ -44,7 +44,7 @@ Usage:
 
 Commands:
   vfs                       Dump files from VFS
-  pck                       Extract files from PCK
+  pck                       Extract audio from VFS
 
 Options:
   -h, --help                Show help information

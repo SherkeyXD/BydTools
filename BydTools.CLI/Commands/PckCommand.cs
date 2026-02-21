@@ -1,8 +1,5 @@
-using System.Text.Json;
 using BydTools.PCK;
 using BydTools.Utils;
-using BydTools.Utils.Crypto;
-using BydTools.Utils.Extensions;
 using BydTools.VFS;
 using BydTools.VFS.SparkBuffer;
 using BydTools.Wwise;
@@ -224,11 +221,11 @@ sealed class PckCommand : ICommand
     {
         logger.Info("Loading AudioDialog from Table block...");
 
-        var tableInfo = ReadBlockInfo(vfsPath, EVFSBlockType.Table, key);
+        var tableInfo = VfsReader.ReadBlockInfo(vfsPath, EVFSBlockType.Table, key);
 
         foreach (var chunk in tableInfo.allChunks)
         {
-            var chunkFile = ResolveChunkPath(vfsPath, EVFSBlockType.Table, chunk);
+            var chunkFile = VfsReader.ResolveChunkPath(vfsPath, EVFSBlockType.Table, chunk);
             if (chunkFile == null)
                 continue;
 
@@ -239,7 +236,7 @@ sealed class PckCommand : ICommand
                     continue;
 
                 chunkFs.Seek(file.offset, SeekOrigin.Begin);
-                var data = ReadFileData(chunkFs, file, tableInfo.version, key);
+                var data = VfsReader.ReadFileData(chunkFs, file, tableInfo.version, key);
 
                 using var ms = new MemoryStream(data);
                 using var br = new BinaryReader(ms);
@@ -281,13 +278,13 @@ sealed class PckCommand : ICommand
         ILogger logger
     )
     {
-        var blockInfo = ReadBlockInfo(vfsPath, blockType, key);
+        var blockInfo = VfsReader.ReadBlockInfo(vfsPath, blockType, key);
         logger.Info($"--- {blockType} ---");
 
         var pckFiles = new List<(string Name, byte[] Data)>();
         foreach (var chunk in blockInfo.allChunks)
         {
-            var chunkFile = ResolveChunkPath(vfsPath, blockType, chunk);
+            var chunkFile = VfsReader.ResolveChunkPath(vfsPath, blockType, chunk);
             if (chunkFile == null)
             {
                 logger.Verbose($"  Chunk not found, skipping");
@@ -301,7 +298,7 @@ sealed class PckCommand : ICommand
                     continue;
 
                 chunkFs.Seek(file.offset, SeekOrigin.Begin);
-                var data = ReadFileData(chunkFs, file, blockInfo.version, key);
+                var data = VfsReader.ReadFileData(chunkFs, file, blockInfo.version, key);
                 pckFiles.Add((file.fileName, data));
             }
         }
@@ -314,12 +311,12 @@ sealed class PckCommand : ICommand
 
         logger.Info($"Found {pckFiles.Count} PCK file(s)");
 
-        int totalSaved = 0;
-        int totalFailed = 0;
+        string ext = mode == "wav" ? ".wav" : ".wem";
+        var jobs = new List<AudioJob>();
 
         foreach (var (pckName, pckData) in pckFiles)
         {
-            logger.Info($"Processing {pckName}...");
+            logger.Info($"Parsing {pckName}...");
 
             using var pckStream = new MemoryStream(pckData);
             var pckParser = new PckParser(pckStream);
@@ -329,9 +326,6 @@ sealed class PckCommand : ICommand
                 $"  {content.Entries.Count} entries, {content.Languages.Count} languages"
             );
 
-            int saved = 0;
-            int failed = 0;
-
             foreach (var entry in content.Entries)
             {
                 byte[] fileData = pckParser.GetFileData(entry);
@@ -339,78 +333,106 @@ sealed class PckCommand : ICommand
                     continue;
 
                 ReadOnlySpan<byte> magic = fileData.AsSpan(0, 4);
-                if (!magic.SequenceEqual("RIFF"u8) && !magic.SequenceEqual("RIFX"u8))
-                {
-                    if (magic.SequenceEqual("BKHD"u8))
-                        ExtractBnkWems(fileData, entry, outputDir, mapper, mode, wemConverter);
-                    continue;
-                }
 
-                string outName = ResolveOutputName(
-                    entry.FileId,
-                    mapper,
-                    mode == "wav" ? ".wav" : ".wem",
-                    content.Languages,
-                    entry.LanguageId
+                if (magic.SequenceEqual("BKHD"u8))
+                {
+                    CollectBnkJobs(fileData, entry, outputDir, mapper, ext, jobs);
+                }
+                else if (magic.SequenceEqual("RIFF"u8) || magic.SequenceEqual("RIFX"u8))
+                {
+                    string outName = ResolveOutputName(
+                        entry.FileId,
+                        mapper,
+                        ext,
+                        content.Languages,
+                        entry.LanguageId
+                    );
+                    jobs.Add(new AudioJob(fileData, Path.Combine(outputDir, outName)));
+                }
+            }
+        }
+
+        logger.Info($"Collected {jobs.Count} audio files, processing ({mode})...");
+
+        if (mode == "raw" || wemConverter == null)
+        {
+            int saved = 0;
+            foreach (var job in jobs)
+            {
+                EnsureDirectory(job.OutputPath);
+                File.WriteAllBytes(job.OutputPath, job.Data);
+                saved++;
+            }
+            logger.Info($"Done: {saved} files extracted.");
+            return;
+        }
+
+        int converted = 0;
+        int failed = 0;
+        int done = 0;
+        int total = jobs.Count;
+        int lastPercent = -1;
+
+        Parallel.ForEach(
+            jobs,
+            new ParallelOptions
+            {
+                MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount),
+            },
+            job =>
+            {
+                EnsureDirectory(job.OutputPath);
+
+                string tempWem = Path.Combine(
+                    Path.GetTempPath(),
+                    $"byd_{Environment.CurrentManagedThreadId}_{Path.GetFileNameWithoutExtension(job.OutputPath)}.wem"
                 );
-                string outPath = Path.Combine(outputDir, outName);
-                EnsureDirectory(outPath);
 
                 try
                 {
-                    if (mode == "wav" && wemConverter != null)
-                    {
-                        string tempWem = Path.Combine(
-                            Path.GetTempPath(),
-                            $"{entry.FileId}.wem"
-                        );
-                        try
-                        {
-                            File.WriteAllBytes(tempWem, fileData);
-                            wemConverter.Convert(tempWem, outPath);
-                        }
-                        finally
-                        {
-                            try { File.Delete(tempWem); } catch { }
-                        }
-                    }
-                    else
-                    {
-                        File.WriteAllBytes(outPath, fileData);
-                    }
-                    saved++;
+                    File.WriteAllBytes(tempWem, job.Data);
+                    wemConverter.Convert(tempWem, job.OutputPath);
+                    Interlocked.Increment(ref converted);
                 }
                 catch (Exception ex)
                 {
-                    logger.Verbose($"  Failed {entry.FileId}: {ex.Message}");
-                    if (mode == "wav")
-                    {
-                        string fallback = Path.ChangeExtension(outPath, ".wem");
-                        EnsureDirectory(fallback);
-                        try { File.WriteAllBytes(fallback, fileData); } catch { }
-                    }
-                    failed++;
+                    string fallback = Path.ChangeExtension(job.OutputPath, ".wem");
+                    EnsureDirectory(fallback);
+                    try { File.WriteAllBytes(fallback, job.Data); }
+                    catch { }
+
+                    logger.Verbose($"  Failed: {ex.Message}");
+                    Interlocked.Increment(ref failed);
+                }
+                finally
+                {
+                    try { File.Delete(tempWem); }
+                    catch { }
+                }
+
+                int current = Interlocked.Increment(ref done);
+                int percent = current * 100 / total;
+                if (percent != lastPercent && percent % 10 == 0)
+                {
+                    lastPercent = percent;
+                    logger.Info($"  Progress: {current}/{total} ({percent}%)");
                 }
             }
-
-            logger.Info($"  Extracted {saved} files" + (failed > 0 ? $", {failed} failed" : ""));
-            totalSaved += saved;
-            totalFailed += failed;
-        }
+        );
 
         logger.Info(
-            $"Done: {totalSaved} files extracted"
-                + (totalFailed > 0 ? $", {totalFailed} failed" : "")
+            $"Done: {converted} converted"
+                + (failed > 0 ? $", {failed} failed (saved as .wem)" : "")
         );
     }
 
-    private static void ExtractBnkWems(
+    private static void CollectBnkJobs(
         byte[] bnkData,
         PckFileEntry bankEntry,
         string outputDir,
         PckMapper? mapper,
-        string mode,
-        IWemConverter? wemConverter
+        string extension,
+        List<AudioJob> jobs
     )
     {
         var wemEntries = BnkParser.Parse(bnkData);
@@ -419,102 +441,12 @@ sealed class PckCommand : ICommand
             byte[] wemData = new byte[wem.Size];
             Array.Copy(bnkData, wem.Offset, wemData, 0, wem.Size);
 
-            string ext = mode == "wav" ? ".wav" : ".wem";
-            string outName = ResolveBnkWemName(bankEntry.FileId, wem.Id, mapper, ext);
-            string outPath = Path.Combine(outputDir, outName);
-            EnsureDirectory(outPath);
-
-            if (mode == "wav" && wemConverter != null)
-            {
-                string tempWem = Path.Combine(Path.GetTempPath(), $"{wem.Id}.wem");
-                try
-                {
-                    File.WriteAllBytes(tempWem, wemData);
-                    wemConverter.Convert(tempWem, outPath);
-                }
-                catch
-                {
-                    string fallback = Path.ChangeExtension(outPath, ".wem");
-                    EnsureDirectory(fallback);
-                    try { File.WriteAllBytes(fallback, wemData); } catch { }
-                }
-                finally
-                {
-                    try { File.Delete(tempWem); } catch { }
-                }
-            }
-            else
-            {
-                File.WriteAllBytes(outPath, wemData);
-            }
+            string outName = ResolveBnkWemName(bankEntry.FileId, wem.Id, mapper, extension);
+            jobs.Add(new AudioJob(wemData, Path.Combine(outputDir, outName)));
         }
     }
 
-    // ── VFS reading helpers ─────────────────────────────────────────
-
-    private static VFBlockMainInfo ReadBlockInfo(
-        string vfsPath,
-        EVFSBlockType blockType,
-        byte[] key
-    )
-    {
-        if (!VFSDumper.BlockHashMap.TryGetValue(blockType, out var hashName))
-            throw new InvalidOperationException($"No hash mapping for block type {blockType}");
-
-        var blcPath = Path.Combine(vfsPath, hashName, hashName + ".blc");
-        if (!File.Exists(blcPath))
-            throw new FileNotFoundException($"BLC file not found for {blockType}", blcPath);
-
-        var blockFile = File.ReadAllBytes(blcPath);
-
-        byte[] nonce = new byte[VFSDefine.BLOCK_HEAD_LEN];
-        Buffer.BlockCopy(blockFile, 0, nonce, 0, nonce.Length);
-
-        using var chacha = new CSChaCha20(key, nonce, 1);
-        var decrypted = chacha.DecryptBytes(blockFile[VFSDefine.BLOCK_HEAD_LEN..]);
-        Buffer.BlockCopy(decrypted, 0, blockFile, VFSDefine.BLOCK_HEAD_LEN, decrypted.Length);
-
-        return new VFBlockMainInfo(blockFile, 0);
-    }
-
-    private static string? ResolveChunkPath(
-        string vfsPath,
-        EVFSBlockType blockType,
-        in FVFBlockChunkInfo chunk
-    )
-    {
-        if (!VFSDumper.BlockHashMap.TryGetValue(blockType, out var hashName))
-            return null;
-
-        var chunkFileName =
-            chunk.md5Name.ToHexStringLittleEndian() + FVFBlockChunkInfo.FILE_EXTENSION;
-        var path = Path.Combine(vfsPath, hashName, chunkFileName);
-        return File.Exists(path) ? path : null;
-    }
-
-    private static byte[] ReadFileData(
-        FileStream chunkFs,
-        in FVFBlockFileInfo file,
-        int version,
-        byte[] key
-    )
-    {
-        if (file.bUseEncrypt)
-        {
-            byte[] nonce = new byte[VFSDefine.BLOCK_HEAD_LEN];
-            Buffer.BlockCopy(BitConverter.GetBytes(version), 0, nonce, 0, sizeof(int));
-            Buffer.BlockCopy(BitConverter.GetBytes(file.ivSeed), 0, nonce, sizeof(int), sizeof(long));
-
-            using var chacha = new CSChaCha20(key, nonce, 1);
-            var encrypted = new byte[file.len];
-            chunkFs.ReadExactly(encrypted);
-            return chacha.DecryptBytes(encrypted);
-        }
-
-        var data = new byte[file.len];
-        chunkFs.ReadExactly(data);
-        return data;
-    }
+    private record AudioJob(byte[] Data, string OutputPath);
 
     // ── Output name resolution ──────────────────────────────────────
 

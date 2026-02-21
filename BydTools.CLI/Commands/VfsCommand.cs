@@ -71,14 +71,6 @@ sealed class VfsCommand : ICommand
             return;
         }
 
-        var outputDir = parser.GetValue("output");
-        if (string.IsNullOrWhiteSpace(outputDir))
-        {
-            Console.Error.WriteLine("Error: --output is required.");
-            PrintHelp(Program.ExecutableName);
-            return;
-        }
-
         var streamingAssetsPath = Path.Combine(gamePath, VFSDefine.VFS_DIR);
         if (!Directory.Exists(streamingAssetsPath))
         {
@@ -121,7 +113,23 @@ sealed class VfsCommand : ICommand
 
         if (parser.GetFlag("debug"))
         {
-            dumper.DebugScanBlocks(streamingAssetsPath);
+            try
+            {
+                dumper.DebugScanBlocks(streamingAssetsPath);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Error: {ex.Message}");
+                Environment.Exit(1);
+            }
+            return;
+        }
+
+        var outputDir = parser.GetValue("output");
+        if (string.IsNullOrWhiteSpace(outputDir))
+        {
+            Console.Error.WriteLine("Error: --output is required.");
+            PrintHelp(Program.ExecutableName);
             return;
         }
 
@@ -138,14 +146,22 @@ sealed class VfsCommand : ICommand
         if (blockTypes == null)
             return;
 
-        Console.WriteLine("Input:  {0}", streamingAssetsPath);
-        Console.WriteLine("Output: {0}", outputDir);
-
-        for (int i = 0; i < blockTypes.Count; i++)
+        try
         {
-            if (i > 0)
-                Console.WriteLine();
-            dumper.DumpAssetByType(streamingAssetsPath, blockTypes[i], outputDir);
+            Console.WriteLine("Input:  {0}", streamingAssetsPath);
+            Console.WriteLine("Output: {0}", outputDir);
+
+            for (int i = 0; i < blockTypes.Count; i++)
+            {
+                if (i > 0)
+                    Console.WriteLine();
+                dumper.DumpAssetByType(streamingAssetsPath, blockTypes[i], outputDir);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error: {ex.Message}");
+            Environment.Exit(1);
         }
     }
 
