@@ -7,14 +7,14 @@ namespace BydTools.VFS;
 public static class VFSDefine
 {
     /// <summary>
-    /// ChaCha20 encryption key in Base64 format (Android / default).
+    /// ChaCha20 encryption key in Base64 format (PC / default).
     /// </summary>
-    public const string CHACHA_KEY_ANDROID_BASE64 = "6VsxesT4KFadI6hr8nHctT6Eb6dckk1nHbqOOPTKUuE=";
+    public const string CHACHA_KEY_PC_BASE64 = "6VsxesT4KFadI6hr8nHctT6Eb6dckk1nHbqOOPTKUuE=";
 
     /// <summary>
-    /// ChaCha20 encryption key in Base64 format (PC).
+    /// ChaCha20 encryption key in Base64 format (Android).
     /// </summary>
-    public const string CHACHA_KEY_PC_BASE64 = "eU1cu+MYQiaYdVherRzV86pv/N/lIU/9gIk+5n5Vj4Y=";
+    public const string CHACHA_KEY_ANDROID_BASE64 = "eU1cu+MYQiaYdVherRzV86pv/N/lIU/9gIk+5n5Vj4Y=";
 
     /// <summary>
     /// Pre-decoded default (PC) ChaCha20 key bytes.

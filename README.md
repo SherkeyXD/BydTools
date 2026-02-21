@@ -66,40 +66,38 @@ Required:
 
 Options:
   --debug                   Scan subfolders and print block info (no extraction)
-  --key <base64>            Custom ChaCha20 key in Base64
   -v, --verbose             Enable verbose output
   -h, --help                Show help information
 
 Available block types:
-  InitAudio (1)             InitBundle (2)            BundleManifest (3)
-  InitialExtendData (5)     Audio (11)                Bundle (12)
-  DynamicStreaming (13)     Table (14)                Video (15)
-  IV (16)                   Streaming (17)            JsonData (18)
-  Lua (19)                  IFixPatchOut (21)         ExtendData (22)
-  AudioChinese (30)         AudioEnglish (31)         AudioJapanese (32)
-  AudioKorean (33)
+  InitAudio, InitBundle, BundleManifest, InitialExtendData, Audio, Bundle,
+  DynamicStreaming, Table, Video, IV, Streaming, JsonData, Lua, IFixPatchOut,
+  ExtendData, AudioChinese, AudioEnglish, AudioJapanese, AudioKorean
 ```
 
 ### BydTools.PCK
 
-Extract files from Wwise PCK archives and convert WEM audio to WAV.
+Extract audio from VFS and convert WEM to WAV. Automatically maps filenames via AudioDialog.
 
 ```help
 Usage:
-  BydTools pck --input <file> --output <dir> [options]
+  BydTools pck --input <path> --output <dir> --type <type> [options]
 
 Required:
-  -i, --input <file>        Input PCK file path
+  -i, --input <path>        Game data directory that contains the VFS folder
   -o, --output <dir>        Output directory
+  -t, --type <type>         Audio block type to extract
 
 Options:
   -m, --mode <mode>         Extract mode (default: wav)
-                            raw  Extract wem/bnk/plg without conversion
+                            raw  Extract wem without conversion
                             wav  Convert to wav via vgmstream
-  --json <file>             JSON mapping file for ID-to-path naming
-                            Format: { "id": { "path": "...", ... }, ... }
+  --no-map                  Disable automatic AudioDialog filename mapping
   -v, --verbose             Enable verbose output
   -h, --help                Show help information
+
+Audio block types:
+  InitAudio, Audio, AudioChinese, AudioEnglish, AudioJapanese, AudioKorean
 ```
 
 ## License

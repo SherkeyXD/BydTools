@@ -32,7 +32,6 @@ sealed class VfsCommand : ICommand
 
         HelpFormatter.WriteSectionHeader("Options");
         HelpFormatter.WriteEntry("--debug", "Scan subfolders and print block info (no extraction)");
-        HelpFormatter.WriteEntry("--key <base64>", "Custom ChaCha20 key in Base64");
         HelpFormatter.WriteCommonOptions();
         HelpFormatter.WriteBlankLine();
 

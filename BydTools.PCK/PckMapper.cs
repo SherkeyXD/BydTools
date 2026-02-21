@@ -1,32 +1,41 @@
+using System.Text;
 using System.Text.Json;
 
 namespace BydTools.PCK;
 
 /// <summary>
-/// Resolves Wwise numeric file IDs to human-readable paths
-/// using a JSON mapping file (e.g. AudioDialog.json).
+/// Resolves Wwise file IDs to human-readable paths
+/// using an AudioDialog JSON file.
 /// <para>
-/// Expected format: <c>{ "id": { "path": "v1d0/Narrating/CommonExtra/man_25_03/au_dlg_commvo_man_25_03_laugh_01.wem", ... }, ... }</c>
+/// Expected format: <c>{ "id": { "path": "v1d0/.../file.wem", ... }, ... }</c>
+/// </para>
+/// <para>
+/// PCK file IDs are FNV-1a 64-bit hashes of <c>voice/{language}/{path}</c> (lowercased).
+/// When <paramref name="language"/> is provided to the constructor, the mapper computes
+/// these hashes and uses them as lookup keys.
 /// </para>
 /// </summary>
 public class PckMapper
 {
+    private const ulong FnvOffset = 0xcbf29ce484222325;
+    private const ulong FnvPrime = 0x100000001b3;
+
     private readonly Dictionary<string, string> _idToPath;
 
     public int Count => _idToPath.Count;
 
-    public PckMapper(string jsonPath)
+    public PckMapper(string jsonPath, string language)
     {
         if (!File.Exists(jsonPath))
             throw new FileNotFoundException("JSON mapping file not found", jsonPath);
 
         using var stream = File.OpenRead(jsonPath);
-        _idToPath = ParseJson(stream);
+        _idToPath = ParseAudioDialog(stream, language);
     }
 
-    public PckMapper(Stream stream)
+    public PckMapper(Stream stream, string language)
     {
-        _idToPath = ParseJson(stream);
+        _idToPath = ParseAudioDialog(stream, language);
     }
 
     /// <summary>
@@ -38,7 +47,6 @@ public class PckMapper
         if (_idToPath.TryGetValue(fileId, out string? path))
             return path;
 
-        // Also try uint32 truncation for 64-bit IDs
         if (ulong.TryParse(fileId, out ulong id64))
         {
             uint id32 = (uint)(id64 & 0xFFFFFFFF);
@@ -49,7 +57,18 @@ public class PckMapper
         return null;
     }
 
-    private static Dictionary<string, string> ParseJson(Stream stream)
+    internal static ulong Fnv1a64(ReadOnlySpan<byte> data)
+    {
+        ulong hash = FnvOffset;
+        foreach (byte b in data)
+        {
+            hash = unchecked(hash * FnvPrime);
+            hash ^= b;
+        }
+        return hash;
+    }
+
+    private static Dictionary<string, string> ParseAudioDialog(Stream stream, string language)
     {
         using var doc = JsonDocument.Parse(stream);
         var root = doc.RootElement;
@@ -57,12 +76,11 @@ public class PckMapper
         if (root.ValueKind != JsonValueKind.Object)
             throw new InvalidDataException("JSON root must be an object (id -> row)");
 
+        string lang = language.ToLowerInvariant();
         var map = new Dictionary<string, string>(root.GetPropertyCount());
 
         foreach (var entry in root.EnumerateObject())
         {
-            string id = entry.Name;
-
             if (entry.Value.ValueKind != JsonValueKind.Object)
                 continue;
 
@@ -73,11 +91,18 @@ public class PckMapper
             if (string.IsNullOrWhiteSpace(rawPath))
                 continue;
 
-            string normalized = rawPath.Replace('/', '\\').Trim();
-            if (normalized.EndsWith(".wem", StringComparison.OrdinalIgnoreCase))
-                normalized = normalized[..^4];
+            string voicePath = $"voice/{lang}/{rawPath}"
+                .Replace('\\', '/')
+                .ToLowerInvariant();
 
-            map.TryAdd(id, normalized);
+            ulong hash = Fnv1a64(Encoding.UTF8.GetBytes(voicePath));
+            string hashKey = hash.ToString();
+
+            string outputPath = Path.Combine("voice", lang, rawPath.Replace('/', '\\').Trim());
+            if (outputPath.EndsWith(".wem", StringComparison.OrdinalIgnoreCase))
+                outputPath = outputPath[..^4];
+
+            map.TryAdd(hashKey, outputPath);
         }
 
         return map;
