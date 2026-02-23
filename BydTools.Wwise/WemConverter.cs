@@ -55,6 +55,27 @@ public sealed class WemConverter : IWemConverter
             throw new InvalidOperationException("vgmstream-cli produced no output");
     }
 
+    public void Convert(byte[] wemData, string wemName, string outputPath)
+    {
+        string tempPath = Path.Combine(
+            Path.GetTempPath(),
+            $"byd_{Environment.CurrentManagedThreadId}_{wemName}"
+        );
+        try
+        {
+            File.WriteAllBytes(tempPath, wemData);
+            Convert(tempPath, outputPath);
+        }
+        finally
+        {
+            try
+            {
+                File.Delete(tempPath);
+            }
+            catch { }
+        }
+    }
+
     private static string Truncate(string msg)
     {
         string trimmed = msg.Trim();

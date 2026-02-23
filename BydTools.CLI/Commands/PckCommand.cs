@@ -415,15 +415,12 @@ sealed class PckCommand : ICommand
                     {
                         EnsureDirectory(job.OutputPath);
 
-                        string tempWem = Path.Combine(
-                            Path.GetTempPath(),
-                            $"byd_{Environment.CurrentManagedThreadId}_{Path.GetFileNameWithoutExtension(job.OutputPath)}.wem"
-                        );
+                        string wemName =
+                            Path.GetFileNameWithoutExtension(job.OutputPath) + ".wem";
 
                         try
                         {
-                            File.WriteAllBytes(tempWem, job.Data);
-                            wemConverter.Convert(tempWem, job.OutputPath);
+                            wemConverter.Convert(job.Data, wemName, job.OutputPath);
                             Interlocked.Increment(ref converted);
                         }
                         catch (Exception ex)
@@ -438,14 +435,6 @@ sealed class PckCommand : ICommand
 
                             failMessages.Add(ex.Message);
                             Interlocked.Increment(ref failed);
-                        }
-                        finally
-                        {
-                            try
-                            {
-                                File.Delete(tempWem);
-                            }
-                            catch { }
                         }
 
                         task.Increment(1);
