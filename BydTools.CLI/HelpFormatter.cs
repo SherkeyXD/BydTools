@@ -1,3 +1,5 @@
+using Spectre.Console;
+
 namespace BydTools.CLI;
 
 /// <summary>
@@ -15,27 +17,35 @@ static class HelpFormatter
         string? optionalHint = "[options]"
     )
     {
-        Console.WriteLine("Usage:");
-        var parts = new List<string> { $"  {Program.ExecutableName}", command, requiredArgs };
+        AnsiConsole.MarkupLine("[bold yellow]Usage:[/]");
+        var parts = new List<string>
+        {
+            $"[bold]{Markup.Escape(Program.ExecutableName)}[/]",
+            $"[green]{Markup.Escape(command)}[/]",
+            Markup.Escape(requiredArgs),
+        };
         if (optionalHint != null)
-            parts.Add(optionalHint);
-        Console.WriteLine(string.Join(" ", parts));
-        Console.WriteLine();
+            parts.Add($"[grey]{Markup.Escape(optionalHint)}[/]");
+        AnsiConsole.MarkupLine($"  {string.Join(" ", parts)}");
+        AnsiConsole.WriteLine();
     }
 
     public static void WriteSectionHeader(string title)
     {
-        Console.WriteLine($"{title}:");
+        AnsiConsole.MarkupLine($"[bold yellow]{Markup.Escape(title)}:[/]");
     }
 
     public static void WriteEntry(string flags, string description)
     {
-        Console.WriteLine($"  {flags.PadRight(FlagColumnWidth)}{description}");
+        AnsiConsole.MarkupLine(
+            $"  [green]{Markup.Escape(flags.PadRight(FlagColumnWidth))}[/]"
+                + Markup.Escape(description)
+        );
     }
 
     public static void WriteEntryContinuation(string text)
     {
-        Console.WriteLine($"  {"".PadRight(FlagColumnWidth)}{text}");
+        AnsiConsole.MarkupLine($"  {"".PadRight(FlagColumnWidth)}{Markup.Escape(text)}");
     }
 
     public static void WriteCommonOptions()
@@ -44,7 +54,7 @@ static class HelpFormatter
         WriteEntry("-h, --help", "Show help information");
     }
 
-    public static void WriteBlankLine() => Console.WriteLine();
+    public static void WriteBlankLine() => AnsiConsole.WriteLine();
 
     /// <summary>
     /// Formats enum values as a multi-column display: "Name (Value)" padded into columns.
@@ -62,7 +72,7 @@ static class HelpFormatter
                 .Skip(i)
                 .Take(TypeColumnsPerRow)
                 .Select(item => item.PadRight(TypeColumnWidth));
-            Console.WriteLine($"  {string.Join("", row)}");
+            AnsiConsole.MarkupLine($"  [grey]{Markup.Escape(string.Join("", row))}[/]");
         }
     }
 }

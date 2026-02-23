@@ -33,7 +33,7 @@ class Program
         var command = Array.Find(Commands, c => c.Name == subcommand);
         if (command == null)
         {
-            Console.Error.WriteLine("Unknown command: {0}", subcommand);
+            Logger.WriteError($"unknown command: {subcommand}");
             PrintHelp();
             return;
         }

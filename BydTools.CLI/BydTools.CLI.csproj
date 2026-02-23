@@ -15,4 +15,8 @@
     <ProjectReference Include="..\BydTools.PCK\BydTools.PCK.csproj" />
     <ProjectReference Include="..\BydTools.Wwise\BydTools.Wwise.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Spectre.Console" Version="0.54.0" />
+  </ItemGroup>
 </Project>

@@ -56,7 +56,7 @@ class ArgParser
             {
                 if (i + 1 >= args.Length)
                 {
-                    _errors.Add($"Error: --{def.LongName} requires a value.");
+                    _errors.Add($"--{def.LongName} requires a value.");
                     continue;
                 }
                 _values[def.LongName] = args[++i];
