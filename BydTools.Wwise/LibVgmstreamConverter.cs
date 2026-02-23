@@ -48,41 +48,6 @@ public sealed class LibVgmstreamConverter : IWemConverter
         DecodeAndWriteWav(handle, outputPath);
     }
 
-    /// <summary>
-    /// Converts WEM data from a byte array directly (no temp file needed).
-    /// Uses a native-buffered memory streamfile to minimize managed callback overhead.
-    /// </summary>
-    public void Convert(byte[] wemData, string wemName, string outputPath)
-    {
-        // memSf declared first so GCHandles outlive the vgmstream handle (LIFO dispose)
-        using var memSf = MemoryStreamfile.Create(wemData, wemName);
-
-        nint bufferedSf = LibVgmstream.OpenStreamfileBuffered(memSf.Ptr);
-        if (bufferedSf == 0)
-            throw new InvalidOperationException("Failed to create buffered streamfile");
-
-        // Buffered wrapper now owns the underlying struct; prevent double-free in Dispose
-        memSf.DetachStruct();
-
-        using var handle = VgmstreamHandle.Create();
-        SetupHandle(handle);
-
-        try
-        {
-            int result = handle.OpenStream(bufferedSf);
-            if (result < 0)
-                throw new InvalidOperationException(
-                    $"libvgmstream failed to open stream (error {result})"
-                );
-        }
-        finally
-        {
-            CloseStreamfile(bufferedSf);
-        }
-
-        DecodeAndWriteWav(handle, outputPath);
-    }
-
     private static void SetupHandle(VgmstreamHandle handle)
     {
         var cfg = new LibVgmstream.NativeConfig

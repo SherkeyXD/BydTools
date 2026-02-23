@@ -62,7 +62,7 @@ sealed class PckCommand : ICommand
         if (!parser.TryParse(args))
         {
             foreach (var error in parser.Errors)
-                Logger.WriteError(error);
+                Console.Error.WriteLine(error);
             PrintHelp(Program.ExecutableName);
             return;
         }
@@ -76,7 +76,7 @@ sealed class PckCommand : ICommand
         var gamePath = parser.GetValue("input");
         if (string.IsNullOrWhiteSpace(gamePath))
         {
-            Logger.WriteError("--input is required.");
+            Console.Error.WriteLine("Error: --input is required.");
             PrintHelp(Program.ExecutableName);
             return;
         }
@@ -84,7 +84,7 @@ sealed class PckCommand : ICommand
         var outputDir = parser.GetValue("output");
         if (string.IsNullOrWhiteSpace(outputDir))
         {
-            Logger.WriteError("--output is required.");
+            Console.Error.WriteLine("Error: --output is required.");
             PrintHelp(Program.ExecutableName);
             return;
         }
@@ -92,7 +92,7 @@ sealed class PckCommand : ICommand
         var typeStr = parser.GetValue("type");
         if (string.IsNullOrWhiteSpace(typeStr))
         {
-            Logger.WriteError("--type is required.");
+            Console.Error.WriteLine("Error: --type is required.");
             HelpFormatter.WriteBlankLine();
             WriteAudioBlockTypes();
             return;
@@ -103,7 +103,7 @@ sealed class PckCommand : ICommand
             || !AudioBlockTypeNames.Contains(blockType.ToString())
         )
         {
-            Logger.WriteError($"'{typeStr}' is not a valid audio block type.");
+            Console.Error.WriteLine($"Error: '{typeStr}' is not a valid audio block type.");
             HelpFormatter.WriteBlankLine();
             WriteAudioBlockTypes();
             return;
@@ -112,7 +112,7 @@ sealed class PckCommand : ICommand
         var mode = parser.GetValue("mode") ?? "wav";
         if (mode is not ("raw" or "wav"))
         {
-            Logger.WriteError("--mode must be one of: raw, wav");
+            Console.Error.WriteLine("Error: --mode must be one of: raw, wav");
             PrintHelp(Program.ExecutableName);
             return;
         }
@@ -120,8 +120,8 @@ sealed class PckCommand : ICommand
         var vfsPath = Path.Combine(gamePath, VFSDefine.VFS_DIR);
         if (!Directory.Exists(vfsPath))
         {
-            Logger.WriteError(
-                $"VFS directory ({VFSDefine.VFS_DIR}) not found under \"{gamePath}\"."
+            Console.Error.WriteLine(
+                $"Error: VFS directory ({VFSDefine.VFS_DIR}) not found under \"{gamePath}\"."
             );
             return;
         }
@@ -136,13 +136,13 @@ sealed class PckCommand : ICommand
             }
             catch (FormatException)
             {
-                Logger.WriteError("--key must be a valid Base64 string.");
+                Console.Error.WriteLine("Error: --key must be a valid Base64 string.");
                 return;
             }
             if (chaChaKey.Length != VFSDefine.KEY_LEN)
             {
-                Logger.WriteError(
-                    $"--key must decode to {VFSDefine.KEY_LEN} bytes (got {chaChaKey.Length})."
+                Console.Error.WriteLine(
+                    $"Error: --key must decode to {VFSDefine.KEY_LEN} bytes (got {chaChaKey.Length})."
                 );
                 return;
             }
@@ -162,10 +162,10 @@ sealed class PckCommand : ICommand
                     return;
             }
 
-            AnsiConsole.MarkupLine($"[bold]Input:[/]  {Markup.Escape(vfsPath)}");
-            AnsiConsole.MarkupLine($"[bold]Output:[/] {Markup.Escape(outputDir)}");
-            AnsiConsole.MarkupLine($"[bold]Type:[/]   {Markup.Escape(blockType.ToString())}");
-            AnsiConsole.MarkupLine($"[bold]Mode:[/]   {Markup.Escape(mode)}");
+            Console.WriteLine($"Input:  {vfsPath}");
+            Console.WriteLine($"Output: {outputDir}");
+            Console.WriteLine($"Type:   {blockType}");
+            Console.WriteLine($"Mode:   {mode}");
 
             PckMapper? mapper = null;
             if (autoMap && language != null)
@@ -193,7 +193,7 @@ sealed class PckCommand : ICommand
         }
         catch (Exception ex)
         {
-            Logger.WriteError(ex.Message);
+            Console.Error.WriteLine($"Error: {ex.Message}");
             Environment.Exit(1);
         }
     }
@@ -201,9 +201,7 @@ sealed class PckCommand : ICommand
     private static void WriteAudioBlockTypes()
     {
         HelpFormatter.WriteSectionHeader("Audio block types");
-        AnsiConsole.MarkupLine(
-            $"  [grey]{Markup.Escape(string.Join(", ", AudioBlockTypeNames))}[/]"
-        );
+        Console.WriteLine($"  {string.Join(", ", AudioBlockTypeNames)}");
     }
 
     private static string? GetLanguageForBlockType(EVFSBlockType type) =>
@@ -283,9 +281,7 @@ sealed class PckCommand : ICommand
     )
     {
         var blockInfo = VfsReader.ReadBlockInfo(vfsPath, blockType, key);
-        AnsiConsole.Write(
-            new Rule($"[blue]{Markup.Escape(blockType.ToString())}[/]").LeftJustified()
-        );
+        logger.Info($"--- {blockType} ---");
 
         var pckFiles = new List<(string Name, byte[] Data)>();
         foreach (var chunk in blockInfo.allChunks)
@@ -415,12 +411,16 @@ sealed class PckCommand : ICommand
                     {
                         EnsureDirectory(job.OutputPath);
 
-                        string wemName =
-                            Path.GetFileNameWithoutExtension(job.OutputPath) + ".wem";
+                        string tempWem = Path.Combine(
+                            Path.GetTempPath(),
+                            $"byd_{Environment.CurrentManagedThreadId}_{Path.GetFileNameWithoutExtension(job.OutputPath)}.wem"
+                        );
 
                         try
                         {
-                            wemConverter.Convert(job.Data, wemName, job.OutputPath);
+                            File.WriteAllBytes(tempWem, job.Data);
+                            job.Data = null!;
+                            wemConverter.Convert(tempWem, job.OutputPath);
                             Interlocked.Increment(ref converted);
                         }
                         catch (Exception ex)
@@ -429,7 +429,8 @@ sealed class PckCommand : ICommand
                             EnsureDirectory(fallback);
                             try
                             {
-                                File.WriteAllBytes(fallback, job.Data);
+                                if (File.Exists(tempWem))
+                                    File.Copy(tempWem, fallback, true);
                             }
                             catch { }
 
@@ -438,7 +439,8 @@ sealed class PckCommand : ICommand
                         }
                         finally
                         {
-                            job.Data = null!;
+                            try { File.Delete(tempWem); }
+                            catch { }
                         }
 
                         task.Increment(1);
@@ -540,8 +542,8 @@ sealed class PckCommand : ICommand
             return new WemConverter();
         }
 
-        Logger.WriteError(
-            "vgmstream not found. Place libvgmstream.dll (preferred) "
+        Console.Error.WriteLine(
+            "Error: vgmstream not found. Place libvgmstream.dll (preferred) "
                 + "or vgmstream-cli next to the executable, or add to PATH."
         );
         return null;

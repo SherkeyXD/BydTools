@@ -1,6 +1,5 @@
 using BydTools.VFS;
 using BydTools.VFS.PostProcessors;
-using Spectre.Console;
 
 namespace BydTools.CLI.Commands;
 
@@ -53,7 +52,7 @@ sealed class VfsCommand : ICommand
         if (!parser.TryParse(args))
         {
             foreach (var error in parser.Errors)
-                Logger.WriteError(error);
+                Console.Error.WriteLine(error);
             PrintHelp(Program.ExecutableName);
             return;
         }
@@ -67,7 +66,7 @@ sealed class VfsCommand : ICommand
         var gamePath = parser.GetValue("input");
         if (string.IsNullOrWhiteSpace(gamePath))
         {
-            Logger.WriteError("--input is required.");
+            Console.Error.WriteLine("Error: --input is required.");
             PrintHelp(Program.ExecutableName);
             return;
         }
@@ -75,8 +74,10 @@ sealed class VfsCommand : ICommand
         var streamingAssetsPath = Path.Combine(gamePath, VFSDefine.VFS_DIR);
         if (!Directory.Exists(streamingAssetsPath))
         {
-            Logger.WriteError(
-                $"VFS directory ({VFSDefine.VFS_DIR}) not found under \"{gamePath}\"."
+            Console.Error.WriteLine(
+                "Error: VFS directory ({1}) not found under \"{0}\".",
+                gamePath,
+                VFSDefine.VFS_DIR
             );
             return;
         }
@@ -91,14 +92,16 @@ sealed class VfsCommand : ICommand
             }
             catch (FormatException)
             {
-                Logger.WriteError("--key must be a valid Base64 string.");
+                Console.Error.WriteLine("Error: --key must be a valid Base64 string.");
                 return;
             }
 
             if (customKey.Length != VFSDefine.KEY_LEN)
             {
-                Logger.WriteError(
-                    $"--key must decode to {VFSDefine.KEY_LEN} bytes (got {customKey.Length})."
+                Console.Error.WriteLine(
+                    "Error: --key must decode to {0} bytes (got {1}).",
+                    VFSDefine.KEY_LEN,
+                    customKey.Length
                 );
                 return;
             }
@@ -116,7 +119,7 @@ sealed class VfsCommand : ICommand
             }
             catch (Exception ex)
             {
-                Logger.WriteError(ex.Message);
+                Console.Error.WriteLine($"Error: {ex.Message}");
                 Environment.Exit(1);
             }
             return;
@@ -125,7 +128,7 @@ sealed class VfsCommand : ICommand
         var outputDir = parser.GetValue("output");
         if (string.IsNullOrWhiteSpace(outputDir))
         {
-            Logger.WriteError("--output is required.");
+            Console.Error.WriteLine("Error: --output is required.");
             PrintHelp(Program.ExecutableName);
             return;
         }
@@ -133,7 +136,7 @@ sealed class VfsCommand : ICommand
         var blockTypeString = parser.GetValue("blocktype");
         if (string.IsNullOrWhiteSpace(blockTypeString))
         {
-            Logger.WriteError("--blocktype is required.");
+            Console.Error.WriteLine("Error: --blocktype is required.");
             HelpFormatter.WriteBlankLine();
             HelpFormatter.WriteEnumValues("Available block types", VFSDumper.BlockHashMap.Keys);
             return;
@@ -145,19 +148,19 @@ sealed class VfsCommand : ICommand
 
         try
         {
-            AnsiConsole.MarkupLine($"[bold]Input:[/]  {Markup.Escape(streamingAssetsPath)}");
-            AnsiConsole.MarkupLine($"[bold]Output:[/] {Markup.Escape(outputDir)}");
+            Console.WriteLine("Input:  {0}", streamingAssetsPath);
+            Console.WriteLine("Output: {0}", outputDir);
 
             for (int i = 0; i < blockTypes.Count; i++)
             {
                 if (i > 0)
-                    AnsiConsole.WriteLine();
+                    Console.WriteLine();
                 dumper.DumpAssetByType(streamingAssetsPath, blockTypes[i], outputDir);
             }
         }
         catch (Exception ex)
         {
-            Logger.WriteError(ex.Message);
+            Console.Error.WriteLine($"Error: {ex.Message}");
             Environment.Exit(1);
         }
     }
@@ -183,7 +186,7 @@ sealed class VfsCommand : ICommand
             }
             else
             {
-                Logger.WriteError($"failed to parse blocktype \"{trimmed}\".");
+                Console.Error.WriteLine("Error: failed to parse blocktype \"{0}\".", trimmed);
                 HelpFormatter.WriteBlankLine();
                 HelpFormatter.WriteEnumValues("Available block types", VFSDumper.BlockHashMap.Keys);
                 return null;
