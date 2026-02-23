@@ -436,6 +436,10 @@ sealed class PckCommand : ICommand
                             failMessages.Add(ex.Message);
                             Interlocked.Increment(ref failed);
                         }
+                        finally
+                        {
+                            job.Data = null!;
+                        }
 
                         task.Increment(1);
                     }
@@ -471,7 +475,11 @@ sealed class PckCommand : ICommand
         }
     }
 
-    private record AudioJob(byte[] Data, string OutputPath);
+    private sealed class AudioJob(byte[] data, string outputPath)
+    {
+        public byte[] Data = data;
+        public readonly string OutputPath = outputPath;
+    }
 
     // ── Output name resolution ──────────────────────────────────────
 

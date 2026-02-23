@@ -58,6 +58,16 @@ internal sealed class MemoryStreamfile : IDisposable
         }
     }
 
+    /// <summary>
+    /// Releases ownership of the native struct pointer without freeing it.
+    /// Use when handing the struct to <c>libstreamfile_open_buffered</c>,
+    /// which takes ownership and will call <c>close</c> itself.
+    /// </summary>
+    public void DetachStruct()
+    {
+        _ptr = 0;
+    }
+
     public void Dispose()
     {
         ReleaseStruct();

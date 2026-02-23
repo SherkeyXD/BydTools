@@ -11,9 +11,6 @@ public sealed class LibVgmstreamConverter : IWemConverter
 {
     private static bool? _available;
 
-    /// <summary>
-    /// Whether libvgmstream.dll is loadable on this system.
-    /// </summary>
     public static bool IsAvailable
     {
         get
@@ -51,20 +48,37 @@ public sealed class LibVgmstreamConverter : IWemConverter
         DecodeAndWriteWav(handle, outputPath);
     }
 
+    /// <summary>
+    /// Converts WEM data from a byte array directly (no temp file needed).
+    /// Uses a native-buffered memory streamfile to minimize managed callback overhead.
+    /// </summary>
     public void Convert(byte[] wemData, string wemName, string outputPath)
     {
+        // memSf declared first so GCHandles outlive the vgmstream handle (LIFO dispose)
+        using var memSf = MemoryStreamfile.Create(wemData, wemName);
+
+        nint bufferedSf = LibVgmstream.OpenStreamfileBuffered(memSf.Ptr);
+        if (bufferedSf == 0)
+            throw new InvalidOperationException("Failed to create buffered streamfile");
+
+        // Buffered wrapper now owns the underlying struct; prevent double-free in Dispose
+        memSf.DetachStruct();
+
         using var handle = VgmstreamHandle.Create();
         SetupHandle(handle);
 
-        using var memSf = MemoryStreamfile.Create(wemData, wemName);
-
-        int result = handle.OpenStream(memSf.Ptr);
-        if (result < 0)
-            throw new InvalidOperationException(
-                $"libvgmstream failed to open stream (error {result})"
-            );
-
-        memSf.ReleaseStruct();
+        try
+        {
+            int result = handle.OpenStream(bufferedSf);
+            if (result < 0)
+                throw new InvalidOperationException(
+                    $"libvgmstream failed to open stream (error {result})"
+                );
+        }
+        finally
+        {
+            CloseStreamfile(bufferedSf);
+        }
 
         DecodeAndWriteWav(handle, outputPath);
     }
@@ -89,12 +103,14 @@ public sealed class LibVgmstreamConverter : IWemConverter
         if (channels <= 0 || sampleRate <= 0 || totalSamples <= 0)
             throw new InvalidOperationException("Invalid stream format");
 
-        long totalBytes = totalSamples * channels * sampleSize;
-        if (totalBytes > int.MaxValue)
-            throw new InvalidOperationException($"Stream too large: {totalBytes} bytes");
+        int expectedBytes = (int)(totalSamples * channels * sampleSize);
 
-        using var ms = new MemoryStream((int)totalBytes);
+        // Write WAV header then stream decoded data directly — no intermediate MemoryStream
+        using var fs = File.Create(outputPath);
+        using var writer = new BinaryWriter(fs);
+        WavWriter.WriteHeader(writer, channels, sampleRate, sampleSize * 8, expectedBytes);
 
+        int writtenBytes = 0;
         while (!handle.Done)
         {
             int renderResult = handle.Render();
@@ -110,15 +126,18 @@ public sealed class LibVgmstreamConverter : IWemConverter
             nint buf = handle.DecodedBuf;
             unsafe
             {
-                ms.Write(new ReadOnlySpan<byte>((void*)buf, bytes));
+                fs.Write(new ReadOnlySpan<byte>((void*)buf, bytes));
             }
+            writtenBytes += bytes;
         }
 
-        using var fs = File.Create(outputPath);
-        using var writer = new BinaryWriter(fs);
-        WavWriter.WriteHeader(writer, channels, sampleRate, sampleSize * 8, (int)ms.Length);
-        ms.Position = 0;
-        ms.CopyTo(fs);
+        if (writtenBytes != expectedBytes)
+        {
+            fs.Seek(4, SeekOrigin.Begin);
+            writer.Write(36 + writtenBytes);
+            fs.Seek(40, SeekOrigin.Begin);
+            writer.Write(writtenBytes);
+        }
     }
 
     private static void CloseStreamfile(nint sf)
