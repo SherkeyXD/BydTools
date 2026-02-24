@@ -7,5 +7,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\BydTools.Utils\BydTools.Utils.csproj" />
+    <ProjectReference Include="..\BydTools.PCK\BydTools.PCK.csproj" />
   </ItemGroup>
 </Project>

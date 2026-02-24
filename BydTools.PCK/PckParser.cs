@@ -139,6 +139,46 @@ public class PckParser
         return data;
     }
 
+    /// <summary>
+    /// Returns full PCK bytes with VFS-layer encryption removed.
+    /// If the source is already plain AKPK, returns the original bytes.
+    /// </summary>
+    public byte[] GetDecryptedPckBytes()
+    {
+        _file.Seek(0, SeekOrigin.Begin);
+        byte[] pckBytes = new byte[_file.Length];
+        _file.ReadExactly(pckBytes);
+
+        var content = Parse();
+        if (!_isVfsEncrypted)
+            return pckBytes;
+
+        byte[] decryptedHeader = ReadDecryptedHeader();
+        if (pckBytes.Length < 8 + decryptedHeader.Length)
+            throw new InvalidDataException("PCK buffer is too small for decrypted header");
+
+        BinaryPrimitives.WriteUInt32LittleEndian(pckBytes.AsSpan(0, 4), AKPK_MAGIC);
+        decryptedHeader.CopyTo(pckBytes.AsSpan(8, decryptedHeader.Length));
+
+        foreach (var entry in content.Entries)
+        {
+            if (entry.Offset < 0)
+                continue;
+
+            if (entry.Size > int.MaxValue || entry.Offset > int.MaxValue)
+                continue;
+
+            int offset = (int)entry.Offset;
+            int size = (int)entry.Size;
+            if (size == 0 || offset > pckBytes.Length - size)
+                continue;
+
+            DecipherInplace(pckBytes.AsSpan(offset, size), (uint)entry.FileId, size, 0);
+        }
+
+        return pckBytes;
+    }
+
     // ── private helpers ──────────────────────────────────────────────
 
     /// <summary>

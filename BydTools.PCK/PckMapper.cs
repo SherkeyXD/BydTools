@@ -10,15 +10,16 @@ namespace BydTools.PCK;
 /// Expected format: <c>{ "id": { "path": "v1d0/.../file.wem", ... }, ... }</c>
 /// </para>
 /// <para>
-/// PCK file IDs are FNV-1a 64-bit hashes of <c>voice/{language}/{path}</c> (lowercased).
-/// When <paramref name="language"/> is provided to the constructor, the mapper computes
-/// these hashes and uses them as lookup keys.
+/// PCK file IDs are FNV-1a 64-bit hashes of <c>{soundType}/{language}/{path}</c> (lowercased).
+/// This mapper internally tries known prefixes <c>voice</c>, <c>music</c>, and <c>sfx</c>
+/// for each AudioDialog row and records all resulting hashes as lookup keys.
 /// </para>
 /// </summary>
 public class PckMapper
 {
     private const ulong FnvOffset = 0xcbf29ce484222325;
     private const ulong FnvPrime = 0x100000001b3;
+    private static readonly string[] KnownSoundTypes = ["voice", "music", "sfx"];
 
     private readonly Dictionary<string, string> _idToPath;
 
@@ -77,7 +78,7 @@ public class PckMapper
             throw new InvalidDataException("JSON root must be an object (id -> row)");
 
         string lang = language.ToLowerInvariant();
-        var map = new Dictionary<string, string>(root.GetPropertyCount());
+        var map = new Dictionary<string, string>(root.GetPropertyCount() * KnownSoundTypes.Length);
 
         foreach (var entry in root.EnumerateObject())
         {
@@ -91,16 +92,21 @@ public class PckMapper
             if (string.IsNullOrWhiteSpace(rawPath))
                 continue;
 
-            string voicePath = $"voice/{lang}/{rawPath}".Replace('\\', '/').ToLowerInvariant();
+            string normalizedPath = rawPath.Replace('/', '\\').Trim();
+            foreach (string soundType in KnownSoundTypes)
+            {
+                string hashInput = $"{soundType}/{language}/{rawPath}".Replace('\\', '/')
+                    .ToLowerInvariant();
 
-            ulong hash = Fnv1a64(Encoding.UTF8.GetBytes(voicePath));
-            string hashKey = hash.ToString();
+                ulong hash = Fnv1a64(Encoding.UTF8.GetBytes(hashInput));
+                string hashKey = hash.ToString();
 
-            string outputPath = Path.Combine("voice", lang, rawPath.Replace('/', '\\').Trim());
-            if (outputPath.EndsWith(".wem", StringComparison.OrdinalIgnoreCase))
-                outputPath = outputPath[..^4];
+                string outputPath = Path.Combine(soundType, lang, normalizedPath);
+                if (outputPath.EndsWith(".wem", StringComparison.OrdinalIgnoreCase))
+                    outputPath = outputPath[..^4];
 
-            map.TryAdd(hashKey, outputPath);
+                map.TryAdd(hashKey, outputPath);
+            }
         }
 
         return map;

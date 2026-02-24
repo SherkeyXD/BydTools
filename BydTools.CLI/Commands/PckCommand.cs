@@ -13,15 +13,20 @@ sealed class PckCommand : ICommand
     public string Name => "pck";
     public string Description => "Extract audio from VFS";
 
+    // Single source of truth for supported PCK audio block types and their mapping language.
+    // Adding a new block here enables CLI validation and language resolution at the same time.
+    private static readonly Dictionary<EVFSBlockType, string?> BlockLanguageMap = new()
+    {
+        { EVFSBlockType.InitAudio, "Initial" },
+        { EVFSBlockType.Audio, "Main" },
+        { EVFSBlockType.AudioChinese, "Chinese" },
+        { EVFSBlockType.AudioEnglish, "English" },
+        { EVFSBlockType.AudioJapanese, "Japanese" },
+        { EVFSBlockType.AudioKorean, "Korean" },
+    };
+
     private static readonly string[] AudioBlockTypeNames =
-    [
-        nameof(EVFSBlockType.InitAudio),
-        nameof(EVFSBlockType.Audio),
-        nameof(EVFSBlockType.AudioChinese),
-        nameof(EVFSBlockType.AudioEnglish),
-        nameof(EVFSBlockType.AudioJapanese),
-        nameof(EVFSBlockType.AudioKorean),
-    ];
+        [.. BlockLanguageMap.Keys.Select(static t => t.ToString())];
 
     public void PrintHelp(string exeName)
     {
@@ -203,14 +208,7 @@ sealed class PckCommand : ICommand
     }
 
     private static string? GetLanguageForBlockType(EVFSBlockType type) =>
-        type switch
-        {
-            EVFSBlockType.AudioChinese => "chinese",
-            EVFSBlockType.AudioEnglish => "english",
-            EVFSBlockType.AudioJapanese => "japanese",
-            EVFSBlockType.AudioKorean => "korean",
-            _ => null,
-        };
+        BlockLanguageMap.GetValueOrDefault(type);
 
     private static PckMapper? LoadAudioDialogMapper(
         string vfsPath,
@@ -313,6 +311,8 @@ sealed class PckCommand : ICommand
 
         string ext = mode == "wav" ? ".wav" : ".wem";
         var jobs = new List<AudioJob>();
+        int mappedCount = 0;
+        int unmappedCount = 0;
 
         foreach (var (pckName, pckData) in pckFiles)
         {
@@ -336,7 +336,16 @@ sealed class PckCommand : ICommand
 
                 if (magic.SequenceEqual("BKHD"u8))
                 {
-                    CollectBnkJobs(fileData, entry, outputDir, mapper, ext, jobs);
+                    CollectBnkJobs(
+                        fileData,
+                        entry,
+                        outputDir,
+                        mapper,
+                        ext,
+                        jobs,
+                        ref mappedCount,
+                        ref unmappedCount
+                    );
                 }
                 else if (magic.SequenceEqual("RIFF"u8) || magic.SequenceEqual("RIFX"u8))
                 {
@@ -345,13 +354,19 @@ sealed class PckCommand : ICommand
                         mapper,
                         ext,
                         content.Languages,
-                        entry.LanguageId
+                        entry.LanguageId,
+                        out bool isMapped
                     );
+                    if (isMapped)
+                        mappedCount++;
+                    else
+                        unmappedCount++;
                     jobs.Add(new AudioJob(fileData, Path.Combine(outputDir, outName)));
                 }
             }
         }
 
+        logger.Info($"Name mapping: mapped={mappedCount}, unmapped={unmappedCount}");
         AnsiConsole.MarkupLine(
             $"Collected [blue]{jobs.Count}[/] audio files, processing [blue]{Markup.Escape(mode)}[/]..."
         );
@@ -466,7 +481,9 @@ sealed class PckCommand : ICommand
         string outputDir,
         PckMapper? mapper,
         string extension,
-        List<AudioJob> jobs
+        List<AudioJob> jobs,
+        ref int mappedCount,
+        ref int unmappedCount
     )
     {
         var wemEntries = BnkParser.Parse(bnkData);
@@ -475,7 +492,17 @@ sealed class PckCommand : ICommand
             byte[] wemData = new byte[wem.Size];
             Array.Copy(bnkData, wem.Offset, wemData, 0, wem.Size);
 
-            string outName = ResolveBnkWemName(bankEntry.FileId, wem.Id, mapper, extension);
+            string outName = ResolveBnkWemName(
+                bankEntry.FileId,
+                wem.Id,
+                mapper,
+                extension,
+                out bool isMapped
+            );
+            if (isMapped)
+                mappedCount++;
+            else
+                unmappedCount++;
             jobs.Add(new AudioJob(wemData, Path.Combine(outputDir, outName)));
         }
     }
@@ -493,20 +520,28 @@ sealed class PckCommand : ICommand
         PckMapper? mapper,
         string extension,
         List<PckLanguage>? languages,
-        uint languageId
+        uint languageId,
+        out bool isMapped
     )
     {
         string? mapped = mapper?.GetMappedPath(fileId.ToString());
         if (mapped != null)
+        {
+            isMapped = true;
             return Path.ChangeExtension(mapped, extension);
+        }
 
         if (languageId != 0 && languages != null)
         {
             var lang = languages.Find(l => l.Id == languageId);
             if (lang != null)
+            {
+                isMapped = false;
                 return Path.Combine("unmapped", lang.Name, $"{fileId}{extension}");
+            }
         }
 
+        isMapped = false;
         return Path.Combine("unmapped", $"{fileId}{extension}");
     }
 
@@ -514,13 +549,18 @@ sealed class PckCommand : ICommand
         ulong bankFileId,
         uint wemId,
         PckMapper? mapper,
-        string extension
+        string extension,
+        out bool isMapped
     )
     {
         string? mapped = mapper?.GetMappedPath(wemId.ToString());
         if (mapped != null)
+        {
+            isMapped = true;
             return Path.ChangeExtension(mapped, extension);
+        }
 
+        isMapped = false;
         return Path.Combine("unmapped", $"{bankFileId}_{wemId}{extension}");
     }
 
