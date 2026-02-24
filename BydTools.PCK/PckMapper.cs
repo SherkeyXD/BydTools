@@ -91,9 +91,7 @@ public class PckMapper
             if (string.IsNullOrWhiteSpace(rawPath))
                 continue;
 
-            string voicePath = $"voice/{lang}/{rawPath}"
-                .Replace('\\', '/')
-                .ToLowerInvariant();
+            string voicePath = $"voice/{lang}/{rawPath}".Replace('\\', '/').ToLowerInvariant();
 
             ulong hash = Fnv1a64(Encoding.UTF8.GetBytes(voicePath));
             string hashKey = hash.ToString();

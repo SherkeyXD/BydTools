@@ -80,9 +80,7 @@ public sealed class LibVgmstreamConverter : IWemConverter
         {
             int renderResult = handle.Render();
             if (renderResult < 0)
-                throw new InvalidOperationException(
-                    $"libvgmstream render error: {renderResult}"
-                );
+                throw new InvalidOperationException($"libvgmstream render error: {renderResult}");
 
             int bytes = handle.DecodedBytes;
             if (bytes <= 0)

@@ -19,14 +19,12 @@ public class Logger : ILogger
         _verbose = verbose;
     }
 
-    public void Info(string message) =>
-        AnsiConsole.MarkupLine(Markup.Escape(message));
+    public void Info(string message) => AnsiConsole.MarkupLine(Markup.Escape(message));
 
     public void Info(string format, params object[] args) =>
         AnsiConsole.MarkupLine(Markup.Escape(string.Format(format, args)));
 
-    public void InfoNoNewline(string message) =>
-        AnsiConsole.Markup(Markup.Escape(message));
+    public void InfoNoNewline(string message) => AnsiConsole.Markup(Markup.Escape(message));
 
     public void Verbose(string message)
     {
@@ -46,8 +44,7 @@ public class Logger : ILogger
             AnsiConsole.Markup($"[grey]{Markup.Escape(message)}[/]");
     }
 
-    public void Error(string message) =>
-        _stderr.MarkupLine($"[red]{Markup.Escape(message)}[/]");
+    public void Error(string message) => _stderr.MarkupLine($"[red]{Markup.Escape(message)}[/]");
 
     public void Error(string format, params object[] args) =>
         _stderr.MarkupLine($"[red]{Markup.Escape(string.Format(format, args))}[/]");

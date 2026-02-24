@@ -174,9 +174,7 @@ sealed class PckCommand : ICommand
             }
             else if (autoMap && language == null)
             {
-                logger.Info(
-                    $"Auto-mapping skipped: no language context for {blockType}"
-                );
+                logger.Info($"Auto-mapping skipped: no language context for {blockType}");
             }
 
             Directory.CreateDirectory(outputDir);
@@ -360,7 +358,8 @@ sealed class PckCommand : ICommand
 
         if (mode == "raw" || wemConverter == null)
         {
-            AnsiConsole.Progress()
+            AnsiConsole
+                .Progress()
                 .AutoClear(false)
                 .HideCompleted(false)
                 .Columns(
@@ -387,7 +386,8 @@ sealed class PckCommand : ICommand
         int failed = 0;
         var failMessages = new ConcurrentBag<string>();
 
-        AnsiConsole.Progress()
+        AnsiConsole
+            .Progress()
             .AutoClear(false)
             .HideCompleted(false)
             .Columns(
@@ -439,7 +439,10 @@ sealed class PckCommand : ICommand
                         }
                         finally
                         {
-                            try { File.Delete(tempWem); }
+                            try
+                            {
+                                File.Delete(tempWem);
+                            }
                             catch { }
                         }
 

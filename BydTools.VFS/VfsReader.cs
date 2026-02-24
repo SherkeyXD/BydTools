@@ -14,11 +14,7 @@ public static class VfsReader
     /// Decrypts and parses a BLC file for the given block type.
     /// Validates the parsed hash against the directory name.
     /// </summary>
-    public static VFBlockMainInfo ReadBlockInfo(
-        string vfsPath,
-        EVFSBlockType blockType,
-        byte[] key
-    )
+    public static VFBlockMainInfo ReadBlockInfo(string vfsPath, EVFSBlockType blockType, byte[] key)
     {
         if (!VFSDumper.BlockHashMap.TryGetValue(blockType, out var hashName))
             throw new InvalidOperationException($"No hash mapping for block type {blockType}");
