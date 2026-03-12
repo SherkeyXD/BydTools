@@ -21,6 +21,7 @@ public static class PostProcessorFactory
             { EVFSBlockType.AudioJapanese, new PckPostProcessor(logger) },
             { EVFSBlockType.AudioKorean, new PckPostProcessor(logger) },
             { EVFSBlockType.AuditAudio, new PckPostProcessor(logger) },
+            { EVFSBlockType.HotfixAudio, new PckPostProcessor(logger) },
         };
 
         var luaProcessor = LuaPostProcessor.TryCreate(logger);
