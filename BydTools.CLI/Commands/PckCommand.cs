@@ -28,6 +28,7 @@ sealed class PckCommand : ICommand
         { EVFSBlockType.AudioEnglish, "English" },
         { EVFSBlockType.AudioJapanese, "Japanese" },
         { EVFSBlockType.AudioKorean, "Korean" },
+        { EVFSBlockType.HotfixAudio, "Hotfix" },
     };
 
     private static readonly string[] AudioBlockTypeNames =
