@@ -1,4 +1,4 @@
-﻿namespace BydTools.VFS;
+namespace BydTools.VFS;
 
 /// <summary>
 /// Represents file information for a virtual file within a VFS chunk.
@@ -55,6 +55,11 @@ public struct FVFBlockFileInfo
     /// The nonce is constructed as: [version (4 bytes LE)] + [ivSeed (8 bytes LE)]
     /// </summary>
     public long ivSeed;
+
+    /// <summary>
+    /// File tag for this file (only present when VFS version > 3).
+    /// </summary>
+    public EVFSFileTag fileTag;
 
     /// <summary>
     /// Indicates if this is a direct file reference.

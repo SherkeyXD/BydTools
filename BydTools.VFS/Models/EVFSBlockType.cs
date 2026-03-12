@@ -4,6 +4,7 @@ namespace BydTools.VFS
     /// VFS block types as defined in the game's VFS system.
     /// Each block type corresponds to a specific category of game assets.
     /// The enum member names match the groupCfgName found in BLC files.
+    /// Values updated for release version (differs from CBT3).
     /// </summary>
     public enum EVFSBlockType : byte
     {
@@ -25,140 +26,146 @@ namespace BydTools.VFS
         InitBundle = 2,
 
         /// <summary>
-        /// Bundle manifest file (Manifest Map .hgmmap)
-        /// Hash: 1CDDBF1F
-        /// </summary>
-        BundleManifest = 3,
-
-        /// <summary>
         /// Initial extended data (.bin files)
         /// Hash: 3C9D9D2D
         /// </summary>
-        InitialExtendData = 5,
+        InitialExtendData = 3,
 
         /// <summary>
-        /// Main audio assets (AK Package .pck files)
-        /// Hash: 24ED34CF
+        /// Bundle manifest file (Manifest Map .hgmmap)
+        /// Hash: 1CDDBF1F
         /// </summary>
-        Audio = 11,
-
-        /// <summary>
-        /// Main bundle assets (Asset Bundle .ab files)
-        /// Hash: 7064D8E2
-        /// </summary>
-        Bundle = 12,
-
-        /// <summary>
-        /// Dynamic streaming data (.bytes files)
-        /// Hash: 23D53F5D
-        /// </summary>
-        DynamicStreaming = 13,
-
-        /// <summary>
-        /// Table/data assets (.bytes files, encrypted with SparkBuffer)
-        /// Hash: 42A8FCA6
-        /// </summary>
-        Table = 14,
-
-        /// <summary>
-        /// Video assets (Criware USM .usm files)
-        /// Hash: 55FC21C6
-        /// </summary>
-        Video = 15,
-
-        /// <summary>
-        /// Irradiance Volume data (.bytes files)
-        /// Hash: A63D7E6A
-        /// </summary>
-        IV = 16,
-
-        /// <summary>
-        /// Streaming data (.bytes files)
-        /// Hash: C3442D43
-        /// </summary>
-        Streaming = 17,
-
-        /// <summary>
-        /// JSON data (.json files, encrypted)
-        /// Hash: 775A31D1
-        /// </summary>
-        JsonData = 18,
-
-        /// <summary>
-        /// Lua scripts (.lua files, encrypted)
-        /// Hash: 19E3AE45
-        /// </summary>
-        Lua = 19,
+        BundleManifest = 4,
 
         /// <summary>
         /// IFix patch output (usually empty)
         /// Hash: DAFE52C9
         /// </summary>
-        IFixPatchOut = 21,
-
-        /// <summary>
-        /// Extended data (.bin files)
-        /// Hash: D6E622F7
-        /// </summary>
-        ExtendData = 22,
-
-        /// <summary>
-        /// Chinese audio assets (AK Package .pck files)
-        /// Hash: E1E7D7CE
-        /// </summary>
-        AudioChinese = 30,
-
-        /// <summary>
-        /// English audio assets (AK Package .pck files)
-        /// Hash: A31457D0
-        /// </summary>
-        AudioEnglish = 31,
-
-        /// <summary>
-        /// Japanese audio assets (AK Package .pck files)
-        /// Hash: F668D4EE
-        /// </summary>
-        AudioJapanese = 32,
-
-        /// <summary>
-        /// Korean audio assets (AK Package .pck files)
-        /// Hash: E9D31017
-        /// </summary>
-        AudioKorean = 33,
-
-        /// <summary>
-        /// Audit audio assets (AK Package .pck files)
-        /// Hash: 1EBAF5C6
-        /// </summary>
-        AuditAudio = 34,
-
-        /// <summary>
-        /// Audit dynamic streaming data (.bytes files)
-        /// Hash: B9358E30
-        /// </summary>
-        AuditDynamicStreaming = 35,
-
-        /// <summary>
-        /// Audit irradiance volume data (.bytes files)
-        /// Hash: 06223FE2
-        /// </summary>
-        AuditIV = 36,
+        IFixPatchOut = 5,
 
         /// <summary>
         /// Audit streaming data (.bytes files)
         /// Hash: 6432320A
         /// </summary>
-        AuditStreaming = 37,
+        AuditStreaming = 6,
+
+        /// <summary>
+        /// Audit dynamic streaming data (.bytes files)
+        /// Hash: B9358E30
+        /// </summary>
+        AuditDynamicStreaming = 7,
+
+        /// <summary>
+        /// Audit irradiance volume data (.bytes files)
+        /// Hash: 06223FE2
+        /// </summary>
+        AuditIV = 8,
+
+        /// <summary>
+        /// Audit audio assets (AK Package .pck files)
+        /// Hash: 1EBAF5C6
+        /// </summary>
+        AuditAudio = 9,
 
         /// <summary>
         /// Audit video assets (Criware USM .usm files)
         /// Hash: 2E6CE44D
         /// </summary>
-        AuditVideo = 38,
+        AuditVideo = 10,
+
+        /// <summary>
+        /// Main bundle assets (Asset Bundle .ab files)
+        /// Hash: 7064D8E2
+        /// </summary>
+        Bundle = 11,
+
+        /// <summary>
+        /// Main audio assets (AK Package .pck files)
+        /// Hash: 24ED34CF
+        /// </summary>
+        Audio = 12,
+
+        /// <summary>
+        /// Video assets (Criware USM .usm files)
+        /// Hash: 55FC21C6
+        /// </summary>
+        Video = 13,
+
+        /// <summary>
+        /// Irradiance Volume data (.bytes files)
+        /// Hash: A63D7E6A
+        /// </summary>
+        IV = 14,
+
+        /// <summary>
+        /// Streaming data (.bytes files)
+        /// Hash: C3442D43
+        /// </summary>
+        Streaming = 15,
+
+        /// <summary>
+        /// Dynamic streaming data (.bytes files)
+        /// Hash: 23D53F5D
+        /// </summary>
+        DynamicStreaming = 16,
+
+        /// <summary>
+        /// Lua scripts (.lua files, encrypted)
+        /// Hash: 19E3AE45
+        /// </summary>
+        Lua = 17,
+
+        /// <summary>
+        /// Table/data assets (.bytes files, encrypted with SparkBuffer)
+        /// Hash: 42A8FCA6
+        /// </summary>
+        Table = 18,
+
+        /// <summary>
+        /// JSON data (.json files, encrypted)
+        /// Hash: 775A31D1
+        /// </summary>
+        JsonData = 19,
+
+        /// <summary>
+        /// Extended data (.bin files)
+        /// Hash: D6E622F7
+        /// </summary>
+        ExtendData = 20,
+
+        /// <summary>
+        /// Hotfix audio assets
+        /// Hash: F151B649
+        /// </summary>
+        HotfixAudio = 21,
 
         /// <summary>
         /// Raw assets
         /// </summary>
         Raw = 100,
+
+        /// <summary>
+        /// Chinese audio assets (AK Package .pck files)
+        /// Hash: E1E7D7CE
+        /// </summary>
+        AudioChinese = 101,
+
+        /// <summary>
+        /// English audio assets (AK Package .pck files)
+        /// Hash: A31457D0
+        /// </summary>
+        AudioEnglish = 102,
+
+        /// <summary>
+        /// Japanese audio assets (AK Package .pck files)
+        /// Hash: F668D4EE
+        /// </summary>
+        AudioJapanese = 103,
+
+        /// <summary>
+        /// Korean audio assets (AK Package .pck files)
+        /// Hash: E9D31017
+        /// </summary>
+        AudioKorean = 104,
     }
 }

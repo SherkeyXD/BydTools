@@ -21,9 +21,13 @@ public class VFBlockMainInfo
         version = BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(offset));
         offset += sizeof(int);
 
-        // Skip 12 bytes of unknown data (CRC and other metadata).
-        // As mentioned in the blog: "there are 12 unknown bytes after the version field in the decrypted BLC file".
-        offset += 12;
+        // Clamp illegal version values (mirrors game logic: version > 10 → forced to 3)
+        if (version > 10)
+            version = 3;
+
+        // Skip 16 bytes: remaining nonce (8B) + decrypted header (version 4B + unknown 4B).
+        // Release version added 4 bytes to the header compared to CBT3.
+        offset += 16;
 
         // Read groupCfgName (2 bytes length + UTF-8 string)
         ushort groupCfgNameLength = BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(offset));
@@ -70,6 +74,12 @@ public class VFBlockMainInfo
 
             // Read blockType (1 byte)
             chunk.blockType = (EVFSBlockType)bytes[offset++];
+
+            // EVFSFileTag (serialized as int32, only low byte is meaningful)
+            chunk.fileTag = (EVFSFileTag)(byte)BinaryPrimitives.ReadInt32LittleEndian(
+                bytes.AsSpan(offset)
+            );
+            offset += sizeof(int);
 
             // Read file count and allocate array
             var fileCount = BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(offset));
@@ -121,6 +131,12 @@ public class VFBlockMainInfo
                     file.ivSeed = BinaryPrimitives.ReadInt64LittleEndian(bytes.AsSpan(offset));
                     offset += sizeof(long);
                 }
+
+                // EVFSFileTag (serialized as int32, only low byte is meaningful)
+                file.fileTag = (EVFSFileTag)(byte)BinaryPrimitives.ReadInt32LittleEndian(
+                    bytes.AsSpan(offset)
+                );
+                offset += sizeof(int);
             }
         }
     }

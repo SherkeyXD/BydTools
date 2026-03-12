@@ -59,6 +59,7 @@ public class VFSDumper : IVFSDumper
         { EVFSBlockType.AuditIV, "06223FE2" },
         { EVFSBlockType.AuditStreaming, "6432320A" },
         { EVFSBlockType.AuditVideo, "2E6CE44D" },
+        { EVFSBlockType.HotfixAudio, "F151B649" },
     }.ToFrozenDictionary();
 
     public static IReadOnlyDictionary<EVFSBlockType, string> BlockHashMap => blockHashMap;
@@ -185,6 +186,7 @@ public class VFSDumper : IVFSDumper
             _logger.Verbose("  contentMD5   : {0}", chunk.contentMD5.ToHexStringLittleEndian());
             _logger.Verbose("  length       : {0}", chunk.length);
             _logger.Verbose("  blockType    : {0} ({1})", chunk.blockType, (byte)chunk.blockType);
+            _logger.Verbose("  fileTag      : {0} ({1})", chunk.fileTag, (byte)chunk.fileTag);
             _logger.Verbose("  filesCount   : {0}", chunk.files.Length);
 
             for (int j = 0; j < chunk.files.Length; j++)
@@ -211,6 +213,7 @@ public class VFSDumper : IVFSDumper
                 _logger.Verbose("      useEncrypt  : {0}", file.bUseEncrypt);
                 if (file.bUseEncrypt)
                     _logger.Verbose("      ivSeed      : {0}", file.ivSeed);
+                _logger.Verbose("      fileTag     : {0} ({1})", file.fileTag, (byte)file.fileTag);
             }
 
             _logger.Verbose("------------------------------");

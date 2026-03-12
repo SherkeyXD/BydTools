@@ -1,4 +1,4 @@
-﻿using System.Text.Json.Serialization;
+using System.Text.Json.Serialization;
 
 namespace BydTools.VFS;
 
@@ -33,6 +33,11 @@ public struct FVFBlockChunkInfo
     /// Block type of this chunk.
     /// </summary>
     public EVFSBlockType blockType;
+
+    /// <summary>
+    /// File tag for this chunk (only present when VFS version > 3).
+    /// </summary>
+    public EVFSFileTag fileTag;
 
     /// <summary>
     /// Array of file information within this chunk.
