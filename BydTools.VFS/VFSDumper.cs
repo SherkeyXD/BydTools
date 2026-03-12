@@ -54,6 +54,11 @@ public class VFSDumper : IVFSDumper
         { EVFSBlockType.AudioEnglish, "A31457D0" },
         { EVFSBlockType.AudioJapanese, "F668D4EE" },
         { EVFSBlockType.AudioKorean, "E9D31017" },
+        { EVFSBlockType.AuditAudio, "1EBAF5C6" },
+        { EVFSBlockType.AuditDynamicStreaming, "B9358E30" },
+        { EVFSBlockType.AuditIV, "06223FE2" },
+        { EVFSBlockType.AuditStreaming, "6432320A" },
+        { EVFSBlockType.AuditVideo, "2E6CE44D" },
     }.ToFrozenDictionary();
 
     public static IReadOnlyDictionary<EVFSBlockType, string> BlockHashMap => blockHashMap;

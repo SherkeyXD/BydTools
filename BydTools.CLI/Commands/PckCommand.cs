@@ -17,8 +17,13 @@ sealed class PckCommand : ICommand
     // Adding a new block here enables CLI validation and language resolution at the same time.
     private static readonly Dictionary<EVFSBlockType, string?> BlockLanguageMap = new()
     {
-        { EVFSBlockType.InitAudio, "Initial" },
+        // main audios
         { EVFSBlockType.Audio, "Main" },
+        // prologue audios (and more?)
+        { EVFSBlockType.AuditAudio, "Audit" },
+        // loading screen audios
+        { EVFSBlockType.InitAudio, "Initial" },
+        // language audios
         { EVFSBlockType.AudioChinese, "Chinese" },
         { EVFSBlockType.AudioEnglish, "English" },
         { EVFSBlockType.AudioJapanese, "Japanese" },
@@ -340,8 +345,10 @@ sealed class PckCommand : ICommand
                         fileData,
                         entry,
                         outputDir,
+                        blockType,
                         mapper,
                         ext,
+                        content.Languages,
                         jobs,
                         ref mappedCount,
                         ref unmappedCount
@@ -350,6 +357,7 @@ sealed class PckCommand : ICommand
                 else if (magic.SequenceEqual("RIFF"u8) || magic.SequenceEqual("RIFX"u8))
                 {
                     string outName = ResolveOutputName(
+                        blockType,
                         entry.FileId,
                         mapper,
                         ext,
@@ -479,8 +487,10 @@ sealed class PckCommand : ICommand
         byte[] bnkData,
         PckFileEntry bankEntry,
         string outputDir,
+        EVFSBlockType blockType,
         PckMapper? mapper,
         string extension,
+        List<PckLanguage> languages,
         List<AudioJob> jobs,
         ref int mappedCount,
         ref int unmappedCount
@@ -493,10 +503,13 @@ sealed class PckCommand : ICommand
             Array.Copy(bnkData, wem.Offset, wemData, 0, wem.Size);
 
             string outName = ResolveBnkWemName(
+                blockType,
                 bankEntry.FileId,
                 wem.Id,
                 mapper,
                 extension,
+                languages,
+                bankEntry.LanguageId,
                 out bool isMapped
             );
             if (isMapped)
@@ -516,6 +529,7 @@ sealed class PckCommand : ICommand
     // ── Output name resolution ──────────────────────────────────────
 
     private static string ResolveOutputName(
+        EVFSBlockType blockType,
         ulong fileId,
         PckMapper? mapper,
         string extension,
@@ -528,7 +542,7 @@ sealed class PckCommand : ICommand
         if (mapped != null)
         {
             isMapped = true;
-            return Path.ChangeExtension(mapped, extension);
+            return BuildMappedOutputPath(blockType, mapped, extension);
         }
 
         if (languageId != 0 && languages != null)
@@ -537,19 +551,30 @@ sealed class PckCommand : ICommand
             if (lang != null)
             {
                 isMapped = false;
-                return Path.Combine("unmapped", lang.Name, $"{fileId}{extension}");
+                return BuildUnmappedOutputPath(
+                    blockType,
+                    NormalizeLanguageDirectoryName(lang.Name),
+                    $"{fileId}{extension}"
+                );
             }
         }
 
         isMapped = false;
-        return Path.Combine("unmapped", $"{fileId}{extension}");
+        return BuildUnmappedOutputPath(
+            blockType,
+            NormalizeLanguageDirectoryName(GetLanguageForBlockType(blockType) ?? "Unknown"),
+            $"{fileId}{extension}"
+        );
     }
 
     private static string ResolveBnkWemName(
+        EVFSBlockType blockType,
         ulong bankFileId,
         uint wemId,
         PckMapper? mapper,
         string extension,
+        List<PckLanguage>? languages,
+        uint languageId,
         out bool isMapped
     )
     {
@@ -557,11 +582,83 @@ sealed class PckCommand : ICommand
         if (mapped != null)
         {
             isMapped = true;
-            return Path.ChangeExtension(mapped, extension);
+            return BuildMappedOutputPath(blockType, mapped, extension);
         }
 
         isMapped = false;
-        return Path.Combine("unmapped", $"{bankFileId}_{wemId}{extension}");
+        string language = "Unknown";
+        if (languageId != 0 && languages != null)
+        {
+            var lang = languages.Find(l => l.Id == languageId);
+            if (lang != null)
+                language = NormalizeLanguageDirectoryName(lang.Name);
+        }
+        else
+        {
+            language = NormalizeLanguageDirectoryName(GetLanguageForBlockType(blockType) ?? "Unknown");
+        }
+
+        return BuildUnmappedOutputPath(blockType, language, $"{bankFileId}_{wemId}{extension}");
+    }
+
+    private static string BuildMappedOutputPath(
+        EVFSBlockType blockType,
+        string mappedPath,
+        string extension
+    )
+    {
+        string withExtension = Path.ChangeExtension(mappedPath, extension);
+        if (TryParseMappedPath(withExtension, out var audioType, out var language, out var realPath))
+        {
+            return Path.Combine(
+                blockType.ToString(),
+                NormalizeLanguageDirectoryName(language),
+                audioType,
+                realPath
+            );
+        }
+
+        string fallbackLanguage = NormalizeLanguageDirectoryName(
+            GetLanguageForBlockType(blockType) ?? "Unknown"
+        );
+        return BuildUnmappedOutputPath(blockType, fallbackLanguage, Path.GetFileName(withExtension));
+    }
+
+    private static bool TryParseMappedPath(
+        string mappedPath,
+        out string audioType,
+        out string language,
+        out string realPath
+    )
+    {
+        string[] parts = mappedPath.Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length < 3)
+        {
+            audioType = "unknown";
+            language = "Unknown";
+            realPath = Path.GetFileName(mappedPath);
+            return false;
+        }
+
+        audioType = parts[0];
+        language = parts[1];
+        realPath = Path.Combine(parts[2..]);
+        return true;
+    }
+
+    private static string BuildUnmappedOutputPath(
+        EVFSBlockType blockType,
+        string language,
+        string fileName
+    ) => Path.Combine(blockType.ToString(), "unmapped", language, fileName);
+
+    private static string NormalizeLanguageDirectoryName(string languageName)
+    {
+        if (string.IsNullOrWhiteSpace(languageName))
+            return "Unknown";
+
+        string trimmed = languageName.Trim();
+        return char.ToUpperInvariant(trimmed[0]) + trimmed[1..].ToLowerInvariant();
     }
 
     private static void EnsureDirectory(string filePath)

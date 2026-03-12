@@ -127,6 +127,36 @@ namespace BydTools.VFS
         AudioKorean = 33,
 
         /// <summary>
+        /// Audit audio assets (AK Package .pck files)
+        /// Hash: 1EBAF5C6
+        /// </summary>
+        AuditAudio = 34,
+
+        /// <summary>
+        /// Audit dynamic streaming data (.bytes files)
+        /// Hash: B9358E30
+        /// </summary>
+        AuditDynamicStreaming = 35,
+
+        /// <summary>
+        /// Audit irradiance volume data (.bytes files)
+        /// Hash: 06223FE2
+        /// </summary>
+        AuditIV = 36,
+
+        /// <summary>
+        /// Audit streaming data (.bytes files)
+        /// Hash: 6432320A
+        /// </summary>
+        AuditStreaming = 37,
+
+        /// <summary>
+        /// Audit video assets (Criware USM .usm files)
+        /// Hash: 2E6CE44D
+        /// </summary>
+        AuditVideo = 38,
+
+        /// <summary>
         /// Raw assets
         /// </summary>
         Raw = 100,
