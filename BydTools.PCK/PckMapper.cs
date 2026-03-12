@@ -95,7 +95,8 @@ public class PckMapper
             string normalizedPath = rawPath.Replace('/', '\\').Trim();
             foreach (string soundType in KnownSoundTypes)
             {
-                string hashInput = $"{soundType}/{language}/{rawPath}".Replace('\\', '/')
+                string hashInput = $"{soundType}/{language}/{rawPath}"
+                    .Replace('\\', '/')
                     .ToLowerInvariant();
 
                 ulong hash = Fnv1a64(Encoding.UTF8.GetBytes(hashInput));

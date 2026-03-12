@@ -32,7 +32,9 @@ sealed class PckCommand : ICommand
     };
 
     private static readonly string[] AudioBlockTypeNames =
-        [.. BlockLanguageMap.Keys.Select(static t => t.ToString())];
+    [
+        .. BlockLanguageMap.Keys.Select(static t => t.ToString()),
+    ];
 
     public void PrintHelp(string exeName)
     {
@@ -596,7 +598,9 @@ sealed class PckCommand : ICommand
         }
         else
         {
-            language = NormalizeLanguageDirectoryName(GetLanguageForBlockType(blockType) ?? "Unknown");
+            language = NormalizeLanguageDirectoryName(
+                GetLanguageForBlockType(blockType) ?? "Unknown"
+            );
         }
 
         return BuildUnmappedOutputPath(blockType, language, $"{bankFileId}_{wemId}{extension}");
@@ -609,7 +613,9 @@ sealed class PckCommand : ICommand
     )
     {
         string withExtension = Path.ChangeExtension(mappedPath, extension);
-        if (TryParseMappedPath(withExtension, out var audioType, out var language, out var realPath))
+        if (
+            TryParseMappedPath(withExtension, out var audioType, out var language, out var realPath)
+        )
         {
             return Path.Combine(
                 blockType.ToString(),
@@ -622,7 +628,11 @@ sealed class PckCommand : ICommand
         string fallbackLanguage = NormalizeLanguageDirectoryName(
             GetLanguageForBlockType(blockType) ?? "Unknown"
         );
-        return BuildUnmappedOutputPath(blockType, fallbackLanguage, Path.GetFileName(withExtension));
+        return BuildUnmappedOutputPath(
+            blockType,
+            fallbackLanguage,
+            Path.GetFileName(withExtension)
+        );
     }
 
     private static bool TryParseMappedPath(

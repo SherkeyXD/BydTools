@@ -76,9 +76,8 @@ public class VFBlockMainInfo
             chunk.blockType = (EVFSBlockType)bytes[offset++];
 
             // EVFSFileTag (serialized as int32, only low byte is meaningful)
-            chunk.fileTag = (EVFSFileTag)(byte)BinaryPrimitives.ReadInt32LittleEndian(
-                bytes.AsSpan(offset)
-            );
+            chunk.fileTag = (EVFSFileTag)
+                (byte)BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(offset));
             offset += sizeof(int);
 
             // Read file count and allocate array
@@ -133,9 +132,8 @@ public class VFBlockMainInfo
                 }
 
                 // EVFSFileTag (serialized as int32, only low byte is meaningful)
-                file.fileTag = (EVFSFileTag)(byte)BinaryPrimitives.ReadInt32LittleEndian(
-                    bytes.AsSpan(offset)
-                );
+                file.fileTag = (EVFSFileTag)
+                    (byte)BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(offset));
                 offset += sizeof(int);
             }
         }
