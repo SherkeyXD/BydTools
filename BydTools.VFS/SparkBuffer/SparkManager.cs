@@ -1,3 +1,4 @@
+using System.Text.Encodings.Web;
 using System.Text.Json;
 
 namespace BydTools.VFS.SparkBuffer
@@ -7,6 +8,7 @@ namespace BydTools.VFS.SparkBuffer
         public static readonly JsonSerializerOptions jsonSerializerOptions = new()
         {
             WriteIndented = true,
+            Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
         };
 
         private static readonly Dictionary<int, BeanType> beanTypeMap = [];
