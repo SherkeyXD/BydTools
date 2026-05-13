@@ -242,7 +242,7 @@ sealed class PckCommand : ICommand
                     continue;
 
                 chunkFs.Seek(file.offset, SeekOrigin.Begin);
-                var data = VfsReader.ReadFileData(chunkFs, file, tableInfo.version, key);
+                var data = VfsReader.ReadFileData(chunkFs, file, key);
 
                 using var ms = new MemoryStream(data);
                 using var br = new BinaryReader(ms);
@@ -304,7 +304,7 @@ sealed class PckCommand : ICommand
                     continue;
 
                 chunkFs.Seek(file.offset, SeekOrigin.Begin);
-                var data = VfsReader.ReadFileData(chunkFs, file, blockInfo.version, key);
+                var data = VfsReader.ReadFileData(chunkFs, file, key);
                 pckFiles.Add((file.fileName, data));
             }
         }

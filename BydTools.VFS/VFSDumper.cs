@@ -67,8 +67,8 @@ public class VFSDumper : IVFSDumper
     private VFBlockMainInfo ReadBlockInfo(string streamingAssetsPath, EVFSBlockType blockType) =>
         VfsReader.ReadBlockInfo(streamingAssetsPath, blockType, _chaChaKey);
 
-    private byte[] ReadFileData(FileStream chunkFs, in FVFBlockFileInfo file, int version) =>
-        VfsReader.ReadFileData(chunkFs, file, version, _chaChaKey);
+    private byte[] ReadFileData(FileStream chunkFs, in FVFBlockFileInfo file) =>
+        VfsReader.ReadFileData(chunkFs, file, _chaChaKey);
 
     public void DumpAssetByType(
         string streamingAssetsPath,
@@ -125,7 +125,7 @@ public class VFSDumper : IVFSDumper
             foreach (var file in chunk.files)
             {
                 chunkFs.Seek(file.offset, SeekOrigin.Begin);
-                var fileData = ReadFileData(chunkFs, file, vfBlockMainInfo.version);
+                var fileData = ReadFileData(chunkFs, file);
 
                 var fileName = file.fileName;
                 if (string.IsNullOrEmpty(fileName) && dumpAssetType == EVFSBlockType.Video)
@@ -171,7 +171,7 @@ public class VFSDumper : IVFSDumper
         _logger.Verbose("========== BLC INFO ==========");
         _logger.Verbose("GroupCfgName   : {0}", info.groupCfgName);
         _logger.Verbose("GroupCfgHash   : {0}", info.groupCfgHashName);
-        _logger.Verbose("Version        : {0}", info.version);
+        _logger.Verbose("Version        : {0}", info.codeVersion);
         _logger.Verbose("BlockType      : {0} ({1})", info.blockType, (byte)info.blockType);
         _logger.Verbose("FileInfoNum    : {0}", info.groupFileInfoNum);
         _logger.Verbose("ChunksLength   : {0}", info.groupChunksLength);

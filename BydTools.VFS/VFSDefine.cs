@@ -27,7 +27,7 @@ public static class VFSDefine
     public const string VFS_DIR = "VFS";
 
     /// <summary>
-    /// VFS protocol version (must match the version in BLC files).
+    /// VFS protocol version.
     /// </summary>
     public const int VFS_PROTO_VERSION = 3;
 

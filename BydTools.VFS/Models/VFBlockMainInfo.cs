@@ -18,17 +18,19 @@ public class VFBlockMainInfo
     public VFBlockMainInfo(byte[] bytes, int offset = 0)
     {
         // Read version (4 bytes, little-endian)
-        version = BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(offset));
+        codeVersion = BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(offset));
+        version = codeVersion;
         offset += sizeof(int);
 
         // Clamp illegal version values (mirrors game logic: version > 10 → forced to 3)
-        if (version > 10)
-            version = 3;
-
-        // Skip 16 bytes: remaining nonce (8B) + decrypted header (version 4B + unknown 4B).
-        // Release version added 4 bytes to the header compared to CBT3.
-        offset += 16;
-
+        if (codeVersion > 10)
+            codeVersion = 3;
+        else
+        {
+            version = BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(offset));
+            offset += sizeof(int);
+        }
+        
         // Read groupCfgName (2 bytes length + UTF-8 string)
         ushort groupCfgNameLength = BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(offset));
         offset += sizeof(ushort);
@@ -76,10 +78,11 @@ public class VFBlockMainInfo
             chunk.blockType = (EVFSBlockType)bytes[offset++];
 
             // EVFSFileTag (serialized as int32, only low byte is meaningful)
-            chunk.fileTag = (EVFSFileTag)
-                (byte)BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(offset));
-            offset += sizeof(int);
-
+            if (codeVersion > 3)
+            {
+                chunk.fileTag = (EVFSFileTag)(byte)BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(offset));
+                offset += sizeof(int);
+            }
             // Read file count and allocate array
             var fileCount = BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(offset));
             chunk.files = GC.AllocateUninitializedArray<FVFBlockFileInfo>(fileCount);
@@ -132,15 +135,22 @@ public class VFBlockMainInfo
                 }
 
                 // EVFSFileTag (serialized as int32, only low byte is meaningful)
-                file.fileTag = (EVFSFileTag)
-                    (byte)BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(offset));
-                offset += sizeof(int);
+                if (codeVersion > 3)
+                {
+                    file.fileTag = (EVFSFileTag)(byte)BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(offset));
+                    offset += sizeof(int);
+                }
             }
         }
     }
-
+    
     /// <summary>
-    /// VFS protocol version (typically 3).
+    /// Blk version.
+    /// </summary>
+    public int codeVersion;
+    
+    /// <summary>
+    /// Some version.
     /// </summary>
     public int version;
 

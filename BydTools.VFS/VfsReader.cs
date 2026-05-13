@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using BydTools.Utils.Crypto;
 using BydTools.Utils.Extensions;
 
@@ -36,12 +37,17 @@ public static class VfsReader
 
         byte[] nonce = new byte[VFSDefine.BLOCK_HEAD_LEN];
         Buffer.BlockCopy(blockFile, 0, nonce, 0, nonce.Length);
+        var version = BinaryPrimitives.ReadInt32LittleEndian(nonce);
+        if (version != VFSDefine.VFS_PROTO_VERSION)
+        {
+            Console.WriteLine($"Warning: VFS version {version} does not match expected {VFSDefine.VFS_PROTO_VERSION}.");
+        }
 
         using var chacha = new CSChaCha20(key, nonce, 1);
         var decrypted = chacha.DecryptBytes(blockFile[VFSDefine.BLOCK_HEAD_LEN..]);
         Buffer.BlockCopy(decrypted, 0, blockFile, VFSDefine.BLOCK_HEAD_LEN, decrypted.Length);
 
-        var info = new VFBlockMainInfo(blockFile, 0);
+        var info = new VFBlockMainInfo(blockFile, VFSDefine.BLOCK_HEAD_LEN);
 
         var expectedHash = Path.GetFileNameWithoutExtension(blcFilePath);
         if (!string.Equals(info.groupCfgHashName, expectedHash, StringComparison.OrdinalIgnoreCase))
@@ -79,14 +85,13 @@ public static class VfsReader
     public static byte[] ReadFileData(
         FileStream chunkFs,
         in FVFBlockFileInfo file,
-        int version,
         byte[] key
     )
     {
         if (file.bUseEncrypt)
         {
             byte[] nonce = new byte[VFSDefine.BLOCK_HEAD_LEN];
-            Buffer.BlockCopy(BitConverter.GetBytes(version), 0, nonce, 0, sizeof(int));
+            Buffer.BlockCopy(BitConverter.GetBytes(VFSDefine.VFS_PROTO_VERSION), 0, nonce, 0, sizeof(int));
             Buffer.BlockCopy(
                 BitConverter.GetBytes(file.ivSeed),
                 0,
