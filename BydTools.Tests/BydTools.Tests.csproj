@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsTestProject>true</IsTestProject>
+    <IsAotCompatible>false</IsAotCompatible>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+    <ProjectReference Include="..\BydTools.CLI\BydTools.CLI.csproj" />
+    <ProjectReference Include="..\BydTools.Extraction\BydTools.Extraction.csproj" />
+    <ProjectReference Include="..\BydTools.Audio\BydTools.Audio.csproj" />
+    <ProjectReference Include="..\BydTools.Formats\BydTools.Formats.csproj" />
+    <ProjectReference Include="..\BydTools.VFS\BydTools.VFS.csproj" />
+  </ItemGroup>
+</Project>
