@@ -15,6 +15,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BydTools.Wwise", "BydTools.
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BydTools.Core", "BydTools.Core\BydTools.Core.csproj", "{6F107594-B476-4913-91CF-FB5D39AD590D}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BydTools.Formats", "BydTools.Formats\BydTools.Formats.csproj", "{2DFA0D42-2FBD-415B-965F-4FBE51101AB2}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -97,6 +99,18 @@ Global
 		{6F107594-B476-4913-91CF-FB5D39AD590D}.Release|x64.Build.0 = Release|Any CPU
 		{6F107594-B476-4913-91CF-FB5D39AD590D}.Release|x86.ActiveCfg = Release|Any CPU
 		{6F107594-B476-4913-91CF-FB5D39AD590D}.Release|x86.Build.0 = Release|Any CPU
+		{2DFA0D42-2FBD-415B-965F-4FBE51101AB2}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2DFA0D42-2FBD-415B-965F-4FBE51101AB2}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2DFA0D42-2FBD-415B-965F-4FBE51101AB2}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{2DFA0D42-2FBD-415B-965F-4FBE51101AB2}.Debug|x64.Build.0 = Debug|Any CPU
+		{2DFA0D42-2FBD-415B-965F-4FBE51101AB2}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{2DFA0D42-2FBD-415B-965F-4FBE51101AB2}.Debug|x86.Build.0 = Debug|Any CPU
+		{2DFA0D42-2FBD-415B-965F-4FBE51101AB2}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2DFA0D42-2FBD-415B-965F-4FBE51101AB2}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2DFA0D42-2FBD-415B-965F-4FBE51101AB2}.Release|x64.ActiveCfg = Release|Any CPU
+		{2DFA0D42-2FBD-415B-965F-4FBE51101AB2}.Release|x64.Build.0 = Release|Any CPU
+		{2DFA0D42-2FBD-415B-965F-4FBE51101AB2}.Release|x86.ActiveCfg = Release|Any CPU
+		{2DFA0D42-2FBD-415B-965F-4FBE51101AB2}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
