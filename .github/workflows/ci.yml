@@ -22,9 +22,12 @@ jobs:
         
     - name: Restore dependencies
       run: dotnet restore
-      
+
+    - name: Test
+      run: dotnet test -c Release --no-restore
+
     - name: Publish BydTools.CLI
-      run: dotnet publish BydTools.CLI/BydTools.CLI.csproj -c Release -r win-x64 -o ./publish
+      run: dotnet publish BydTools.CLI/BydTools.CLI.csproj -c Release -r win-x64 -o ./publish -p:EnableAotAnalyzer=true -p:EnableTrimAnalyzer=true
 
     - name: Clean up unnecessary files
       run: |

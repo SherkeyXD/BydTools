@@ -31,74 +31,78 @@
 ## Prerequisites
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download) as runtime
-- [ffmpeg](https://ffmpeg.org/) must be in `PATH`
+- WAV conversion uses the bundled `libvgmstream` on Windows. Elsewhere, `vgmstream-cli` must be on `PATH`. `raw` mode does not need it.
 
 ## Usage
 
 > [!NOTE]
-> Some features may generate a large number of small files (e.g., `BydTools.VFS` extracting `Bundle` or `BydTools.PCK`), which could affect disk performance or write endurance.
+> Dumping `Bundle` or extracting audio can write a large number of small files.
 
-```help
+Exit codes: `0` success, `2` bad arguments, `1` a runtime failure. Ctrl+C stops the run and deletes files that were only partly written.
+
+```text
 Usage:
   BydTools <command> [options]
 
 Commands:
-  vfs                       Dump files from VFS
-  pck                       Extract audio from VFS
-
-Options:
-  -h, --help                Show help information
+  vfs             Dump files from VFS
+  pck             Extract audio from VFS
 ```
 
-### BydTools.VFS
+### vfs
 
-Dump specific types of files from the game's VFS.
-
-```help
-Usage:
-  BydTools vfs --input <path> --output <dir> --blocktype <type>[,type2,...] [options]
+```text
+BydTools vfs --input <path> --output <dir> --blocktype <type>[,type2,...]
 
 Required:
-  -i, --input <path>        Game data directory that contains the VFS folder
-  -o, --output <dir>        Output directory
-  -t, --blocktype <type>    Block type to dump (name or numeric value)
-                            Multiple types can be separated by comma, e.g. Bundle,Lua,Table
+  -i, --input <path>         Game data directory that contains the VFS folder
+  -o, --output <dir>         Output directory
+  -t, --blocktype <type>     Block type. Commas separate several types.
 
 Options:
-  --debug                   Scan subfolders and print block info (no extraction)
-  -v, --verbose             Enable verbose output
-  -h, --help                Show help information
+  --key <base64>             ChaCha20 key (32 bytes). Overrides --platform.
+  --platform <name>          pc (default) or android, used when --key is omitted.
+  --jobs <n>                 Chunks read at once. Default: processor count.
+  -d, --debug                Print block declarations without extracting.
+  -v, --verbose              Per-chunk and per-file details.
+  -h, --help
 
-Available block types:
-  InitAudio, InitBundle, BundleManifest, InitialExtendData, Audio, Bundle,
-  DynamicStreaming, Table, Video, IV, Streaming, JsonData, Lua, IFixPatchOut,
-  ExtendData, AudioChinese, AudioEnglish, AudioJapanese, AudioKorean
+Block types:
+  InitAudio, InitBundle, InitialExtendData, BundleManifest, IFixPatchOut,
+  AuditStreaming, AuditDynamicStreaming, AuditIV, AuditAudio, AuditVideo,
+  Bundle, Audio, Video, IV, Streaming, DynamicStreaming, Lua, Table, JsonData,
+  ExtendData, HotfixAudio, AudioChinese, AudioEnglish, AudioJapanese, AudioKorean
 ```
 
-### BydTools.PCK
+A directory that is not in this list can still be dumped by its `groupCfgName`. `All`, `Raw`, and numbers that are not a real block type are rejected. `--debug` prints the blocks actually present, including ones the catalog does not know yet.
 
-Extract audio from VFS and convert WEM to WAV. Automatically maps filenames via AudioDialog.
+### pck
 
-```help
-Usage:
-  BydTools pck --input <path> --output <dir> --type <type> [options]
+Extracts `.pck` audio and, in `wav` mode, converts WEM to WAV. Names come from the Table block's AudioDialog when that block is present.
+
+```text
+BydTools pck --input <path> --output <dir> --type <type>
 
 Required:
-  -i, --input <path>        Game data directory that contains the VFS folder
-  -o, --output <dir>        Output directory
-  -t, --type <type>         Audio block type to extract
+  -i, --input <path>         Game data directory that contains the VFS folder
+  -o, --output <dir>         Output directory
+  -t, --type <type>          Audio block, or a groupCfgName found in this VFS.
 
 Options:
-  -m, --mode <mode>         Extract mode (default: wav)
-                            raw  Extract wem without conversion
-                            wav  Convert to wav via vgmstream
-  --no-map                  Disable automatic AudioDialog filename mapping
-  -v, --verbose             Enable verbose output
-  -h, --help                Show help information
+  -m, --mode <mode>          wav (default) or raw.
+  --key <base64>             ChaCha20 key (32 bytes). Overrides --platform.
+  --platform <name>          pc (default) or android.
+  --jobs <n>                 WEM files converted at once. Default: processor count.
+  --no-map                   Skip AudioDialog name mapping.
+  -v, --verbose
+  -h, --help
 
 Audio block types:
-  InitAudio, Audio, AudioChinese, AudioEnglish, AudioJapanese, AudioKorean
+  InitAudio, Audio, AudioChinese, AudioEnglish, AudioJapanese, AudioKorean,
+  AuditAudio, HotfixAudio
 ```
+
+Files with no AudioDialog match go under `<block>/unmapped/<language>/`. The language is the one stored in the PCK when it is known, otherwise the block's own language (Main, Chinese, Hotfix, and so on). `PLUG` entries are written as `.plg` in `raw` mode and skipped in `wav` mode. Extracting a USM again overwrites the previous video and audio streams instead of creating `_2`, `_3`, and so on.
 
 ## License
 
@@ -109,5 +113,7 @@ This project includes code ported from or inspired by the following open-source 
 - [AnimeStudio](https://github.com/Escartem/AnimeStudio)
 - [AnimeWwise](https://github.com/Escartem/AnimeWwise)
 - [vgmstream](https://github.com/vgmstream/vgmstream)
+- [CSChaCha20](https://github.com/KaarloR/CSChaCha20)
+- [XXTEA](https://github.com/xxtea/xxtea-dotnet)
 
 See [NOTICES.md](NOTICES.md) for full details.
