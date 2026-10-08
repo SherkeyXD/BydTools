@@ -1,12 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
-  </PropertyGroup>
-
   <ItemGroup>
-    <ProjectReference Include="..\BydTools.Utils\BydTools.Utils.csproj" />
-    <ProjectReference Include="..\BydTools.PCK\BydTools.PCK.csproj" />
+    <ProjectReference Include="..\BydTools.Core\BydTools.Core.csproj" />
   </ItemGroup>
 </Project>

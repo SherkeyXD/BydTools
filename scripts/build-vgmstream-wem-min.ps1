@@ -1,7 +1,7 @@
 param(
     [string]$VsDevCmdPath = "D:\Program Files\Microsoft Visual Studio\18\Enterprise\Common7\Tools\VsDevCmd.bat",
     [string]$VgmstreamRoot = "F:\Workplace\Endfield\vgmstream",
-    [string]$Project3rdPartyDir = "$PSScriptRoot\..\BydTools.Wwise\3rdParty",
+    [string]$Project3rdPartyDir = "$PSScriptRoot\..\BydTools.Audio\3rdParty",
     [string]$BuildDir = "",
     [string]$Generator = "Visual Studio 18 2026",
     [string]$Configuration = "Release",

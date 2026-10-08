@@ -1,50 +1,47 @@
 namespace BydTools.VFS;
 
-/// <summary>
-/// Constants used for VFS (Virtual File System) operations.
-/// Based on reverse engineering of Arknights: Endfield CBT3.
-/// </summary>
 public static class VFSDefine
 {
-    /// <summary>
-    /// ChaCha20 encryption key in Base64 format (PC / default).
-    /// </summary>
-    public const string CHACHA_KEY_PC_BASE64 = "6VsxesT4KFadI6hr8nHctT6Eb6dckk1nHbqOOPTKUuE=";
+    public const string ChaChaKeyPcBase64 = "6VsxesT4KFadI6hr8nHctT6Eb6dckk1nHbqOOPTKUuE=";
+    public const string ChaChaKeyAndroidBase64 = "eU1cu+MYQiaYdVherRzV86pv/N/lIU/9gIk+5n5Vj4Y=";
 
-    /// <summary>
-    /// ChaCha20 encryption key in Base64 format (Android).
-    /// </summary>
-    public const string CHACHA_KEY_ANDROID_BASE64 = "eU1cu+MYQiaYdVherRzV86pv/N/lIU/9gIk+5n5Vj4Y=";
+    public static readonly byte[] PcKey = Convert.FromBase64String(ChaChaKeyPcBase64);
+    public static readonly byte[] AndroidKey = Convert.FromBase64String(ChaChaKeyAndroidBase64);
 
-    /// <summary>
-    /// Pre-decoded default (PC) ChaCha20 key bytes.
-    /// </summary>
-    public static readonly byte[] DefaultChaChaKey = Convert.FromBase64String(CHACHA_KEY_PC_BASE64);
+    public const string VfsDirectoryName = "VFS";
+    public const int ProtocolVersion = 3;
+    public const int NonceLength = 12;
+    public const int KeyLength = 32;
 
-    /// <summary>
-    /// VFS directory name within StreamingAssets.
-    /// </summary>
-    public const string VFS_DIR = "VFS";
+    public static byte[] ResolveKey(string? platform, string? keyBase64)
+    {
+        if (!string.IsNullOrWhiteSpace(keyBase64))
+        {
+            byte[] key;
+            try
+            {
+                key = Convert.FromBase64String(keyBase64);
+            }
+            catch (FormatException)
+            {
+                throw new ArgumentException("--key must be a valid Base64 string.");
+            }
 
-    /// <summary>
-    /// VFS protocol version.
-    /// </summary>
-    public const int VFS_PROTO_VERSION = 3;
+            if (key.Length != KeyLength)
+            {
+                throw new ArgumentException(
+                    $"--key must decode to {KeyLength} bytes (got {key.Length})."
+                );
+            }
 
-    /// <summary>
-    /// Minimum size of a valid VFB (VFS Block) file header.
-    /// </summary>
-    public const int VFS_VFB_HEAD_LEN = 16;
+            return key;
+        }
 
-    /// <summary>
-    /// Size of the block header used as nonce for ChaCha20 encryption.
-    /// For BLC: First 12 bytes are used as nonce.
-    /// For CHK outer-layer encryption: 4 bytes version + 8 bytes ivSeed = 12 bytes nonce.
-    /// </summary>
-    public const int BLOCK_HEAD_LEN = 12;
-
-    /// <summary>
-    /// ChaCha20 key length in bytes (256 bits).
-    /// </summary>
-    public const int KEY_LEN = 32;
+        return (platform ?? "pc").ToLowerInvariant() switch
+        {
+            "pc" => PcKey,
+            "android" => AndroidKey,
+            _ => throw new ArgumentException("--platform must be one of: pc, android."),
+        };
+    }
 }

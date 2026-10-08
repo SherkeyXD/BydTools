@@ -1,56 +1,51 @@
-using System.Reflection;
 using BydTools.CLI.Commands;
 
 namespace BydTools.CLI;
 
-class Program
+public static class Program
 {
-    private static readonly ICommand[] Commands = [new VfsCommand(), new PckCommand()];
+    private static CancellationTokenSource? _cancellation;
+    private static int _cancelHooked;
 
-    internal static string ExecutableName { get; } =
-        Path.GetFileNameWithoutExtension(
-            Assembly.GetEntryAssembly()?.GetName().Name
-                ?? Assembly.GetExecutingAssembly().GetName().Name
-                ?? "BydTools.CLI"
-        );
-
-    static void Main(string[] args)
+    public static int Main(string[] args)
     {
-        if (args.Length == 0)
+        using var cancellation = new CancellationTokenSource();
+        _cancellation = cancellation;
+        if (Interlocked.Exchange(ref _cancelHooked, 1) == 0)
         {
-            PrintHelp();
-            return;
+            Console.CancelKeyPress += (_, eventArgs) =>
+            {
+                eventArgs.Cancel = true;
+                _cancellation?.Cancel();
+            };
         }
 
-        var subcommand = args[0].ToLowerInvariant();
-
-        if (subcommand is "-h" or "--help")
+        var commands = new ICommand[] { new VfsCommand(), new PckCommand() };
+        if (args.Length == 0 || args[0] is "-h" or "--help" or "help")
         {
-            PrintHelp();
-            return;
+            HelpFormatter.WriteRootHelp(commands);
+            return 0;
         }
 
-        var command = Array.Find(Commands, c => c.Name == subcommand);
+        var command = commands.FirstOrDefault(c =>
+            c.Name.Equals(args[0], StringComparison.OrdinalIgnoreCase)
+        );
         if (command == null)
         {
-            Logger.WriteError($"unknown command: {subcommand}");
-            PrintHelp();
-            return;
+            Logger.WriteError("Unknown command: {0}", args[0]);
+            Console.Error.WriteLine();
+            HelpFormatter.WriteRootHelp(commands);
+            return 2;
         }
 
-        command.Execute(args[1..]);
-    }
-
-    static void PrintHelp()
-    {
-        HelpFormatter.WriteUsage("<command>", "[options]", null);
-
-        HelpFormatter.WriteSectionHeader("Commands");
-        foreach (var cmd in Commands)
-            HelpFormatter.WriteEntry(cmd.Name, cmd.Description);
-        HelpFormatter.WriteBlankLine();
-
-        HelpFormatter.WriteSectionHeader("Options");
-        HelpFormatter.WriteEntry("-h, --help", "Show help information");
+        try
+        {
+            return command.Execute(args[1..], cancellation.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            Logger.WriteError("Cancelled.");
+            return 1;
+        }
     }
 }

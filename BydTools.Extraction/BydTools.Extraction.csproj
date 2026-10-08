@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\BydTools.Core\BydTools.Core.csproj" />
+    <ProjectReference Include="..\BydTools.VFS\BydTools.VFS.csproj" />
+    <ProjectReference Include="..\BydTools.Formats\BydTools.Formats.csproj" />
+    <ProjectReference Include="..\BydTools.Audio\BydTools.Audio.csproj" />
+  </ItemGroup>
+</Project>
