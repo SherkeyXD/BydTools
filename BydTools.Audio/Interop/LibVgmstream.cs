@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Runtime.InteropServices;
 
 namespace BydTools.Audio.Interop;
@@ -5,6 +6,31 @@ namespace BydTools.Audio.Interop;
 internal static partial class LibVgmstream
 {
     private const string DllName = "libvgmstream";
+
+    static LibVgmstream()
+    {
+        NativeLibrary.SetDllImportResolver(typeof(LibVgmstream).Assembly, Resolve);
+    }
+
+    // CMake writes libvgmstream.so / .dylib / .dll (PREFIX "" and OUTPUT_NAME libvgmstream).
+    private static nint Resolve(string libraryName, Assembly assembly, DllImportSearchPath? searchPath)
+    {
+        _ = assembly;
+        _ = searchPath;
+        if (libraryName != DllName)
+            return 0;
+
+        string fileName = OperatingSystem.IsWindows()
+            ? "libvgmstream.dll"
+            : OperatingSystem.IsMacOS()
+                ? "libvgmstream.dylib"
+                : "libvgmstream.so";
+        string path = Path.Combine(AppContext.BaseDirectory, fileName);
+        if (File.Exists(path) && NativeLibrary.TryLoad(path, out nint handle))
+            return handle;
+
+        return 0;
+    }
 
     [LibraryImport(DllName, EntryPoint = "libvgmstream_get_version")]
     public static partial uint GetVersion();

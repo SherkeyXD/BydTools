@@ -5,6 +5,6 @@
   <ItemGroup>
     <ProjectReference Include="..\BydTools.Core\BydTools.Core.csproj" />
     <InternalsVisibleTo Include="BydTools.Tests" />
-    <Content Include="3rdParty\*.dll" Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="3rdParty\*.dll;3rdParty\*.so;3rdParty\*.dylib" Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

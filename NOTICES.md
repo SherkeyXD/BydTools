@@ -57,16 +57,14 @@ SOFTWARE.
 ## vgmstream
 
 - **Source**: https://github.com/vgmstream/vgmstream
+- **Pinned commit**: `7dc938fa2f210943b37c7b6511852b516ef432ab` (`scripts/vgmstream.rev`), API 1.1.0
 - **License**: ISC / MIT (depending on component)
 - **Copyright**: vgmstream contributors
-- **Usage**: `libvgmstream.dll` is used via P/Invoke for WEM → WAV decoding in `BydTools.Audio`.
-  Falls back to `vgmstream-cli` when the DLL is unavailable.
-- **Bundled files** (in `BydTools.Audio/3rdParty/`):
-  - `libvgmstream.dll` — core decoding library
-  - `libvorbis.dll` — Vorbis decoder (Wwise Vorbis)
-  - `avcodec-vgmstream-59.dll` — FFmpeg avcodec (Wwise Opus)
-  - `avformat-vgmstream-59.dll` — FFmpeg avformat
-  - `avutil-vgmstream-57.dll` — FFmpeg avutil
+- **Usage**: `libvgmstream` is loaded via P/Invoke for WEM → WAV decoding in `BydTools.Audio`.
+  Falls back to `vgmstream-cli` when the library is unavailable.
+- **CI** builds the shared library from that commit and publishes it with the CLI. The binaries are not stored in this repository.
+  - Windows ships `libvgmstream.dll` plus the x64 runtimes from vgmstream `ext_libs/dll-x64`: `libvorbis.dll`, `avcodec-vgmstream-59.dll`, `avformat-vgmstream-59.dll`, `avutil-vgmstream-57.dll`.
+  - Linux and macOS link Vorbis and a trimmed static FFmpeg (`n7.1.1`, the tag vgmstream's build scripts pin) into `libvgmstream.so` / `libvgmstream.dylib`.
 
 ---
 

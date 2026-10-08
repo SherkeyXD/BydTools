@@ -6,35 +6,108 @@ on:
 
 jobs:
   build:
-    name: Build BydTools
-    runs-on: windows-latest
-    
+    name: ${{ matrix.rid }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+          - os: ubuntu-latest
+            rid: linux-x64
+          - os: macos-latest
+            rid: osx-arm64
+
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v6
-      with:
-        show-progress: false
-      
-    - name: Setup .NET
-      uses: actions/setup-dotnet@v5
-      with:
-        dotnet-version: '10.0.x'
-        
-    - name: Restore dependencies
-      run: dotnet restore
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          show-progress: false
 
-    - name: Test
-      run: dotnet test -c Release --no-restore
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "10.0.x"
 
-    - name: Publish BydTools.CLI
-      run: dotnet publish BydTools.CLI/BydTools.CLI.csproj -c Release -r win-x64 -o ./publish -p:EnableAotAnalyzer=true -p:EnableTrimAnalyzer=true
+      - name: Install native build tools
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake nasm pkg-config autoconf automake libtool clang zlib1g-dev
 
-    - name: Clean up unnecessary files
-      run: |
-        Remove-Item -Path ./publish/*.pdb -Force -ErrorAction SilentlyContinue
+      - name: Install native build tools
+        if: runner.os == 'macOS'
+        run: brew install cmake nasm pkg-config autoconf automake libtool
 
-    - name: Upload artifact
-      uses: actions/upload-artifact@v6
-      with:
-        name: BydTools-win-x64
-        path: ./publish
+      - name: Cache libvgmstream build
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/vgmstream/build
+          key: vgmstream-${{ runner.os }}-${{ hashFiles('scripts/vgmstream.rev', 'scripts/build-libvgmstream.sh', 'scripts/build-vgmstream-wem-min.ps1') }}
+
+      - name: Build libvgmstream
+        if: runner.os != 'Windows'
+        env:
+          VGMSTREAM_ROOT: ${{ runner.temp }}/vgmstream/src
+          VGMSTREAM_BUILD_DIR: ${{ runner.temp }}/vgmstream/build
+        run: bash scripts/build-libvgmstream.sh
+
+      - name: Build libvgmstream
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/build-vgmstream-wem-min.ps1 -VgmstreamRoot "$env:RUNNER_TEMP\vgmstream\src" -BuildDir "$env:RUNNER_TEMP\vgmstream\build"
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Test
+        run: dotnet test -c Release --no-restore
+
+      - name: Publish BydTools.CLI
+        run: dotnet publish BydTools.CLI/BydTools.CLI.csproj -c Release -r ${{ matrix.rid }} -o ./publish -p:EnableAotAnalyzer=true -p:EnableTrimAnalyzer=true
+
+      - name: Package
+        shell: pwsh
+        run: |
+          Get-ChildItem ./publish -Filter *.pdb -ErrorAction SilentlyContinue | Remove-Item -Force
+          $dest = "BydTools-${{ matrix.rid }}.zip"
+          if (Test-Path $dest) { Remove-Item $dest -Force }
+          Compress-Archive -Path ./publish/* -DestinationPath $dest
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: BydTools-${{ matrix.rid }}
+          path: BydTools-${{ matrix.rid }}.zip
+
+  release:
+    name: Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v6
+        with:
+          pattern: BydTools-*
+          path: artifacts
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          shopt -s nullglob
+          files=(artifacts/*/*.zip)
+          if ((${#files[@]} == 0)); then
+            echo "No release archives found." >&2
+            exit 1
+          fi
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "${files[@]}" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "${files[@]}" --title "$GITHUB_REF_NAME" --generate-notes
+          fi

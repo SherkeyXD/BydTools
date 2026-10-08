@@ -11,7 +11,7 @@ public static class WemDecoders
     {
         if (LibVgmstreamDecoder.IsAvailable)
         {
-            logger.Verbose("Engine: libvgmstream (DLL)");
+            logger.Verbose("Engine: libvgmstream");
             return new LibVgmstreamDecoder();
         }
 

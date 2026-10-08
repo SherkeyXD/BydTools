@@ -65,3 +65,7 @@ nunit-*.xml
 .env.development.local/
 .env.test.local/
 .env.production.local/
+
+# libvgmstream built by scripts/build-libvgmstream.sh or scripts/build-vgmstream-wem-min.ps1
+BydTools.Audio/3rdParty/*
+!BydTools.Audio/3rdParty/.gitkeep

@@ -31,7 +31,9 @@
 ## Prerequisites
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download) as runtime
-- WAV conversion uses the bundled `libvgmstream` on Windows. Elsewhere, `vgmstream-cli` must be on `PATH`. `raw` mode does not need it.
+- WAV conversion uses `libvgmstream` when that library sits next to the program. Tagged releases include it for `win-x64`, `linux-x64`, and `osx-arm64`. A checkout without it uses `vgmstream-cli` on `PATH`. `raw` mode needs neither.
+
+CI builds the library from the vgmstream commit in `scripts/vgmstream.rev`. To put it in `BydTools.Audio/3rdParty` locally, run `./scripts/build-libvgmstream.sh` or `./scripts/build-vgmstream-wem-min.ps1`. Pass `VGMSTREAM_ROOT` or `-VgmstreamRoot` to compile an existing checkout instead of cloning that commit. The first Unix build also compiles FFmpeg.
 
 ## Usage
 
