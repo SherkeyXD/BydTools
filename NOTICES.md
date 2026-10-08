@@ -59,12 +59,29 @@ SOFTWARE.
 - **Source**: https://github.com/vgmstream/vgmstream
 - **License**: ISC / MIT (depending on component)
 - **Copyright**: vgmstream contributors
-- **Usage**: `libvgmstream.dll` is used via P/Invoke for WEM → WAV decoding in `BydTools.Wwise`.
+- **Usage**: `libvgmstream.dll` is used via P/Invoke for WEM → WAV decoding in `BydTools.Audio`.
   Falls back to `vgmstream-cli` when the DLL is unavailable.
-- **Bundled files** (in `BydTools.Wwise/3rdParty/`):
+- **Bundled files** (in `BydTools.Audio/3rdParty/`):
   - `libvgmstream.dll` — core decoding library
   - `libvorbis.dll` — Vorbis decoder (Wwise Vorbis)
   - `avcodec-vgmstream-59.dll` — FFmpeg avcodec (Wwise Opus)
   - `avformat-vgmstream-59.dll` — FFmpeg avformat
   - `avutil-vgmstream-57.dll` — FFmpeg avutil
-  - `swresample-vgmstream-4.dll` — FFmpeg swresample
+
+---
+
+## CSChaCha20
+
+- **Source**: https://github.com/KaarloR/CSChaCha20
+- **License**: ISC
+- **Copyright**: (c) 2015, 2018 Scott Bennett; (c) 2018-2023 Kaarlo Räihä
+- **Usage**: ChaCha20 decryption of BLC payloads and encrypted VFS file entries, in `BydTools.Core`.
+
+---
+
+## XXTEA
+
+- **Source**: https://github.com/xxtea/xxtea-dotnet
+- **License**: MIT
+- **Copyright**: (c) 2008-2016 Ma Bingyao. Algorithm by David J. Wheeler and Roger M. Needham.
+- **Usage**: Lua script decryption in `BydTools.Formats`.

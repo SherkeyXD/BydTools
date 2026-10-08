@@ -1,198 +1,187 @@
+using BydTools.Extraction;
+using BydTools.Extraction.Vfs;
 using BydTools.VFS;
-using BydTools.VFS.PostProcessors;
+using Spectre.Console;
 
 namespace BydTools.CLI.Commands;
 
-sealed class VfsCommand : ICommand
+public sealed class VfsCommand : ICommand
 {
     public string Name => "vfs";
-    public string Description => "Dump files from VFS";
+    public string Description => "Parse VFS block declarations and dump assets";
 
-    public void PrintHelp(string exeName)
+    public int Execute(string[] args, CancellationToken cancellationToken)
     {
-        HelpFormatter.WriteUsage(
-            "vfs",
-            "--input <path> --output <dir> --blocktype <type>[,type2,...]"
-        );
-
-        HelpFormatter.WriteSectionHeader("Required");
-        HelpFormatter.WriteEntry(
-            "-i, --input <path>",
-            "Game data directory that contains the VFS folder"
-        );
-        HelpFormatter.WriteEntry("-o, --output <dir>", "Output directory");
-        HelpFormatter.WriteEntry(
-            "-t, --blocktype <type>",
-            "Block type to dump (name or numeric value)"
-        );
-        HelpFormatter.WriteEntryContinuation(
-            "Multiple types can be separated by comma, e.g. Bundle,Lua,Table"
-        );
-        HelpFormatter.WriteBlankLine();
-
-        HelpFormatter.WriteSectionHeader("Options");
-        HelpFormatter.WriteEntry("--debug", "Scan subfolders and print block info (no extraction)");
-        HelpFormatter.WriteCommonOptions();
-        HelpFormatter.WriteBlankLine();
-
-        HelpFormatter.WriteEnumValues("Available block types", VFSDumper.BlockHashMap.Keys);
-    }
-
-    public void Execute(string[] args)
-    {
-        var parser = new ArgParser()
-            .AddFlag("help", "h")
-            .AddFlag("verbose", "v")
-            .AddFlag("debug")
-            .AddOption("input", "i")
-            .AddOption("output", "o")
-            .AddOption("blocktype", "t")
-            .AddOption("key");
-
-        if (!parser.TryParse(args))
+        var parser = CreateParser();
+        if (!parser.Parse(args))
+            return Fail(2, parser.Errors[0]);
+        if (parser.HasFlag("help"))
         {
-            foreach (var error in parser.Errors)
-                Console.Error.WriteLine(error);
-            PrintHelp(Program.ExecutableName);
-            return;
+            PrintHelp(parser);
+            return 0;
         }
 
-        if (parser.GetFlag("help"))
-        {
-            PrintHelp(Program.ExecutableName);
-            return;
-        }
+        string? input = parser.Get("input");
+        if (string.IsNullOrWhiteSpace(input))
+            return Fail(2, "--input is required.");
 
-        var gamePath = parser.GetValue("input");
-        if (string.IsNullOrWhiteSpace(gamePath))
-        {
-            Console.Error.WriteLine("Error: --input is required.");
-            PrintHelp(Program.ExecutableName);
-            return;
-        }
+        string gamePath = Path.GetFullPath(input);
+        if (!Directory.Exists(gamePath))
+            return Fail(1, "Game directory not found: \"{0}\"", gamePath);
 
-        var streamingAssetsPath = Path.Combine(gamePath, VFSDefine.VFS_DIR);
-        if (!Directory.Exists(streamingAssetsPath))
-        {
-            Console.Error.WriteLine(
-                "Error: VFS directory ({1}) not found under \"{0}\".",
-                gamePath,
-                VFSDefine.VFS_DIR
-            );
-            return;
-        }
+        string vfsPath = Path.Combine(gamePath, VFSDefine.VfsDirectoryName);
+        if (!Directory.Exists(vfsPath))
+            return Fail(1, "VFS directory not found under \"{0}\".", gamePath);
 
-        byte[]? customKey = null;
-        var keyBase64 = parser.GetValue("key");
-        if (!string.IsNullOrWhiteSpace(keyBase64))
-        {
-            try
-            {
-                customKey = Convert.FromBase64String(keyBase64);
-            }
-            catch (FormatException)
-            {
-                Console.Error.WriteLine("Error: --key must be a valid Base64 string.");
-                return;
-            }
-
-            if (customKey.Length != VFSDefine.KEY_LEN)
-            {
-                Console.Error.WriteLine(
-                    "Error: --key must decode to {0} bytes (got {1}).",
-                    VFSDefine.KEY_LEN,
-                    customKey.Length
-                );
-                return;
-            }
-        }
-
-        var logger = new Logger(parser.GetFlag("verbose"));
-        var postProcessors = PostProcessorFactory.CreateProcessors(logger);
-        IVFSDumper dumper = new VFSDumper(logger, postProcessors, customKey);
-
-        if (parser.GetFlag("debug"))
-        {
-            try
-            {
-                dumper.DebugScanBlocks(streamingAssetsPath);
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"Error: {ex.Message}");
-                Environment.Exit(1);
-            }
-            return;
-        }
-
-        var outputDir = parser.GetValue("output");
-        if (string.IsNullOrWhiteSpace(outputDir))
-        {
-            Console.Error.WriteLine("Error: --output is required.");
-            PrintHelp(Program.ExecutableName);
-            return;
-        }
-
-        var blockTypeString = parser.GetValue("blocktype");
-        if (string.IsNullOrWhiteSpace(blockTypeString))
-        {
-            Console.Error.WriteLine("Error: --blocktype is required.");
-            HelpFormatter.WriteBlankLine();
-            HelpFormatter.WriteEnumValues("Available block types", VFSDumper.BlockHashMap.Keys);
-            return;
-        }
-
-        var blockTypes = ParseBlockTypes(blockTypeString);
-        if (blockTypes == null)
-            return;
-
+        byte[] key;
+        int jobs;
         try
         {
-            Console.WriteLine("Input:  {0}", streamingAssetsPath);
-            Console.WriteLine("Output: {0}", outputDir);
+            key = VFSDefine.ResolveKey(parser.Get("platform"), parser.Get("key"));
+            jobs = ResolveJobs(parser.Get("jobs"));
+        }
+        catch (ArgumentException ex)
+        {
+            return Fail(2, ex.Message);
+        }
 
-            for (int i = 0; i < blockTypes.Count; i++)
-            {
-                if (i > 0)
-                    Console.WriteLine();
-                dumper.DumpAssetByType(streamingAssetsPath, blockTypes[i], outputDir);
-            }
+        bool debug = parser.HasFlag("debug");
+        string? output = parser.Get("output");
+        string? blockTypeArg = parser.Get("blocktype");
+        if (!debug)
+        {
+            if (string.IsNullOrWhiteSpace(output))
+                return Fail(2, "--output is required.");
+            if (string.IsNullOrWhiteSpace(blockTypeArg))
+                return Fail(2, "--blocktype is required.");
+        }
+
+        var logger = new Logger(parser.HasFlag("verbose"));
+        VfsArchive archive;
+        try
+        {
+            archive = VfsArchive.Open(vfsPath, key, logger);
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"Error: {ex.Message}");
-            Environment.Exit(1);
+            return Fail(1, ex.Message);
         }
-    }
 
-    private static List<EVFSBlockType>? ParseBlockTypes(string raw)
-    {
-        var segments = raw.Split(',', StringSplitOptions.RemoveEmptyEntries);
-        var result = new List<EVFSBlockType>(segments.Length);
-
-        foreach (var segment in segments)
+        var extractor = new VfsExtractor(logger);
+        if (debug)
         {
-            var trimmed = segment.Trim();
-            if (Enum.TryParse<EVFSBlockType>(trimmed, ignoreCase: true, out var parsed))
-            {
-                result.Add(parsed);
-            }
-            else if (
-                byte.TryParse(trimmed, out var btValue)
-                && Enum.IsDefined(typeof(EVFSBlockType), btValue)
-            )
-            {
-                result.Add((EVFSBlockType)btValue);
-            }
-            else
-            {
-                Console.Error.WriteLine("Error: failed to parse blocktype \"{0}\".", trimmed);
-                HelpFormatter.WriteBlankLine();
-                HelpFormatter.WriteEnumValues("Available block types", VFSDumper.BlockHashMap.Keys);
-                return null;
-            }
+            extractor.WriteDebugReport(archive);
+            return 0;
         }
 
-        return result;
+        var blocks = new List<VfsBlock>();
+        foreach (string token in blockTypeArg!.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var block = archive.Find(token);
+            if (block == null)
+            {
+                bool known = BlockRegistry.TryParse(token, out _);
+                return known
+                    ? Fail(1, "Block \"{0}\" was not found in this VFS.", token)
+                    : Fail(2, "Unknown block type: {0}", token);
+            }
+
+            blocks.Add(block);
+        }
+
+        string outputPath = Path.GetFullPath(output!);
+        try
+        {
+            AnsiConsole
+                .Progress()
+                .AutoClear(false)
+                .HideCompleted(false)
+                .Columns(
+                    new TaskDescriptionColumn(),
+                    new ProgressBarColumn(),
+                    new PercentageColumn(),
+                    new RemainingTimeColumn(),
+                    new SpinnerColumn()
+                )
+                .Start(ctx =>
+                {
+                    foreach (var block in blocks)
+                    {
+                        var task = ctx.AddTask(block.DisplayName, maxValue: 0);
+                        extractor.Dump(
+                            block,
+                            outputPath,
+                            jobs,
+                            new SpectreProgress(task),
+                            cancellationToken
+                        );
+                    }
+                });
+        }
+        catch (Exception ex) when (IsCancel(ex))
+        {
+            return Fail(1, "Cancelled.");
+        }
+        catch (Exception ex)
+        {
+            return Fail(1, ex.Message);
+        }
+
+        return 0;
     }
+
+    internal static ArgParser CreateParser() =>
+        new ArgParser()
+            .Add("input", "i", "Game data directory that contains the VFS folder", "path", required: true)
+            .Add("output", "o", "Output directory for extracted files", "dir", required: true)
+            .Add(
+                "blocktype",
+                "t",
+                "Block type to extract",
+                "type",
+                required: true,
+                "Separate multiple types with commas."
+            )
+            .Add("key", null, "ChaCha20 key, Base64 of 32 bytes. Overrides --platform", "base64")
+            .Add("platform", null, "Key to use when --key is omitted", "name", continuation: "pc (default) or android.")
+            .Add("jobs", null, "How many chunks to read at once", "n", continuation: "Default: processor count.")
+            .Add("debug", "d", "Scan block declarations without extracting")
+            .Add("verbose", "v", "Print per-chunk and per-file details")
+            .Add("help", "h", "Show help information");
+
+    private static void PrintHelp(ArgParser parser)
+    {
+        HelpFormatter.WriteCommandHelp(
+            "VFS asset dumper",
+            "vfs --input <path> --output <dir> --blocktype <type>",
+            parser,
+            () => HelpFormatter.WriteEnumValues("Available block types", BlockRegistry.All.Select(static d => d.Type))
+        );
+    }
+
+    internal static int ResolveJobs(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return Environment.ProcessorCount;
+        if (!int.TryParse(text, out int jobs) || jobs < 1)
+            throw new ArgumentException("--jobs must be a positive integer.");
+        return jobs;
+    }
+
+    internal static int Fail(int code, string format, params object[] args)
+    {
+        Logger.WriteError(args.Length == 0 ? format : string.Format(format, args));
+        return code;
+    }
+
+    internal static bool IsCancel(Exception ex) =>
+        ex is OperationCanceledException
+        || (ex is AggregateException aggregate && aggregate.InnerExceptions.All(IsCancel));
+}
+
+internal sealed class SpectreProgress(ProgressTask task) : IProgressSink
+{
+    public void AddTotal(long amount) => task.MaxValue += amount;
+
+    public void Advance(long amount) => task.Increment(amount);
 }

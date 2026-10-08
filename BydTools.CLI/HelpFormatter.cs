@@ -1,78 +1,82 @@
+using BydTools.CLI.Commands;
 using Spectre.Console;
 
 namespace BydTools.CLI;
 
-/// <summary>
-/// Shared help output formatter for consistent CLI help style.
-/// </summary>
-static class HelpFormatter
+public static class HelpFormatter
 {
-    private const int FlagColumnWidth = 26;
-    private const int TypeColumnWidth = 26;
-    private const int TypeColumnsPerRow = 3;
+    public const string Executable = "BydTools";
 
-    public static void WriteUsage(
-        string command,
-        string requiredArgs,
-        string? optionalHint = "[options]"
-    )
+    public static void WriteRootHelp(IEnumerable<ICommand> commands)
     {
-        AnsiConsole.MarkupLine("[bold yellow]Usage:[/]");
-        var parts = new List<string>
+        var rule = new Rule("[bold]BydTools[/]") { Justification = Justify.Left };
+        AnsiConsole.Write(rule);
+        AnsiConsole.MarkupLine("[dim]Arknights: Endfield data tools[/]");
+        AnsiConsole.WriteLine();
+        AnsiConsole.MarkupLine("[bold]Usage:[/]");
+        AnsiConsole.MarkupLine($"  [cyan]{Executable}[/] [yellow]<command>[/] [[options]]");
+        AnsiConsole.WriteLine();
+        AnsiConsole.MarkupLine("[bold]Commands:[/]");
+        foreach (var command in commands)
+            AnsiConsole.MarkupLine($"  [cyan]{command.Name,-12}[/] {Markup.Escape(command.Description)}");
+        AnsiConsole.WriteLine();
+        AnsiConsole.MarkupLine($"Run [cyan]{Executable} <command> --help[/] for details.");
+    }
+
+    public static void WriteCommandHelp(string description, string usage, ArgParser parser, Action? extra = null)
+    {
+        var rule = new Rule($"[bold]{Markup.Escape(description)}[/]") { Justification = Justify.Left };
+        AnsiConsole.Write(rule);
+        AnsiConsole.WriteLine();
+        AnsiConsole.MarkupLine("[bold]Usage:[/]");
+        AnsiConsole.MarkupLine($"  [cyan]{Executable}[/] {Markup.Escape(usage)}");
+        AnsiConsole.WriteLine();
+
+        var required = parser.Options.Where(static o => o.Required).ToArray();
+        var optional = parser.Options.Where(static o => !o.Required).ToArray();
+        if (required.Length > 0)
         {
-            $"[bold]{Markup.Escape(Program.ExecutableName)}[/]",
-            $"[green]{Markup.Escape(command)}[/]",
-            Markup.Escape(requiredArgs),
-        };
-        if (optionalHint != null)
-            parts.Add($"[grey]{Markup.Escape(optionalHint)}[/]");
-        AnsiConsole.MarkupLine($"  {string.Join(" ", parts)}");
+            AnsiConsole.MarkupLine("[bold]Required:[/]");
+            WriteOptions(required);
+            AnsiConsole.WriteLine();
+        }
+
+        if (optional.Length > 0)
+        {
+            AnsiConsole.MarkupLine("[bold]Options:[/]");
+            WriteOptions(optional);
+            AnsiConsole.WriteLine();
+        }
+
+        extra?.Invoke();
+    }
+
+    public static void WriteSection(string title)
+    {
+        AnsiConsole.MarkupLine($"[bold]{Markup.Escape(title)}[/]");
+    }
+
+    public static void WriteEnumValues<T>(string title, IEnumerable<T> values)
+        where T : struct, Enum
+    {
+        WriteSection(title);
+        foreach (var value in values)
+            AnsiConsole.MarkupLine($"  [cyan]{value,-24}[/] [dim]({Convert.ToByte(value)})[/]");
         AnsiConsole.WriteLine();
     }
 
-    public static void WriteSectionHeader(string title)
+    private static void WriteOptions(IEnumerable<CommandOption> options)
     {
-        AnsiConsole.MarkupLine($"[bold yellow]{Markup.Escape(title)}:[/]");
-    }
-
-    public static void WriteEntry(string flags, string description)
-    {
-        AnsiConsole.MarkupLine(
-            $"  [green]{Markup.Escape(flags.PadRight(FlagColumnWidth))}[/]"
-                + Markup.Escape(description)
-        );
-    }
-
-    public static void WriteEntryContinuation(string text)
-    {
-        AnsiConsole.MarkupLine($"  {"".PadRight(FlagColumnWidth)}{Markup.Escape(text)}");
-    }
-
-    public static void WriteCommonOptions()
-    {
-        WriteEntry("-v, --verbose", "Enable verbose output");
-        WriteEntry("-h, --help", "Show help information");
-    }
-
-    public static void WriteBlankLine() => AnsiConsole.WriteLine();
-
-    /// <summary>
-    /// Formats enum values as a multi-column display: "Name (Value)" padded into columns.
-    /// </summary>
-    public static void WriteEnumValues<T>(string sectionTitle, IEnumerable<T> values)
-        where T : Enum
-    {
-        WriteSectionHeader(sectionTitle);
-
-        var items = values.Select(v => $"{v} ({Convert.ToByte(v)})").ToList();
-
-        for (int i = 0; i < items.Count; i += TypeColumnsPerRow)
+        foreach (var option in options)
         {
-            var row = items
-                .Skip(i)
-                .Take(TypeColumnsPerRow)
-                .Select(item => item.PadRight(TypeColumnWidth));
-            AnsiConsole.MarkupLine($"  [grey]{Markup.Escape(string.Join("", row))}[/]");
+            string flags = option.ShortName == null
+                ? $"--{option.LongName}"
+                : $"--{option.LongName}, -{option.ShortName}";
+            if (option.ValueName != null)
+                flags += $" <{option.ValueName}>";
+            AnsiConsole.MarkupLine($"  [cyan]{Markup.Escape(flags),-32}[/] {Markup.Escape(option.Description)}");
+            foreach (string line in option.Continuation)
+                AnsiConsole.MarkupLine($"  {"",-32} [dim]{Markup.Escape(line)}[/]");
         }
     }
 }
