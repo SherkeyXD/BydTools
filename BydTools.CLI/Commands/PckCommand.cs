@@ -1,389 +1,100 @@
-using System.Collections.Concurrent;
-using BydTools.PCK;
-using BydTools.Utils;
+using BydTools.Audio.Wem;
+using BydTools.Extraction;
+using BydTools.Extraction.Audio;
 using BydTools.VFS;
-using BydTools.VFS.SparkBuffer;
-using BydTools.Wwise;
 using Spectre.Console;
 
 namespace BydTools.CLI.Commands;
 
-sealed class PckCommand : ICommand
+public sealed class PckCommand : ICommand
 {
     public string Name => "pck";
-    public string Description => "Extract audio from VFS";
+    public string Description => "Extract audio from a VFS block and convert WEM to WAV";
 
-    // Single source of truth for supported PCK audio block types and their mapping language.
-    // Adding a new block here enables CLI validation and language resolution at the same time.
-    private static readonly Dictionary<EVFSBlockType, string?> BlockLanguageMap = new()
+    public int Execute(string[] args, CancellationToken cancellationToken)
     {
-        // main audios
-        { EVFSBlockType.Audio, "Main" },
-        // prologue audios (and more?)
-        { EVFSBlockType.AuditAudio, "Audit" },
-        // loading screen audios
-        { EVFSBlockType.InitAudio, "Initial" },
-        // language audios
-        { EVFSBlockType.AudioChinese, "Chinese" },
-        { EVFSBlockType.AudioEnglish, "English" },
-        { EVFSBlockType.AudioJapanese, "Japanese" },
-        { EVFSBlockType.AudioKorean, "Korean" },
-        { EVFSBlockType.HotfixAudio, "Hotfix" },
-    };
-
-    private static readonly string[] AudioBlockTypeNames =
-    [
-        .. BlockLanguageMap.Keys.Select(static t => t.ToString()),
-    ];
-
-    public void PrintHelp(string exeName)
-    {
-        HelpFormatter.WriteUsage("pck", "--input <path> --output <dir> --type <type>");
-
-        HelpFormatter.WriteSectionHeader("Required");
-        HelpFormatter.WriteEntry(
-            "-i, --input <path>",
-            "Game data directory that contains the VFS folder"
-        );
-        HelpFormatter.WriteEntry("-o, --output <dir>", "Output directory");
-        HelpFormatter.WriteEntry("-t, --type <type>", "Audio block type to extract");
-        HelpFormatter.WriteBlankLine();
-
-        HelpFormatter.WriteSectionHeader("Options");
-        HelpFormatter.WriteEntry("-m, --mode <mode>", "Extract mode (default: wav)");
-        HelpFormatter.WriteEntryContinuation("raw  Extract wem without conversion");
-        HelpFormatter.WriteEntryContinuation("wav  Convert to wav via vgmstream");
-        HelpFormatter.WriteEntry("--no-map", "Disable automatic AudioDialog filename mapping");
-        HelpFormatter.WriteCommonOptions();
-        HelpFormatter.WriteBlankLine();
-
-        WriteAudioBlockTypes();
-    }
-
-    public void Execute(string[] args)
-    {
-        var parser = new ArgParser()
-            .AddFlag("help", "h")
-            .AddFlag("verbose", "v")
-            .AddFlag("no-map")
-            .AddOption("input", "i")
-            .AddOption("output", "o")
-            .AddOption("type", "t")
-            .AddOption("mode", "m")
-            .AddOption("key");
-
-        if (!parser.TryParse(args))
+        var parser = CreateParser();
+        if (!parser.Parse(args))
+            return VfsCommand.Fail(2, parser.Errors[0]);
+        if (parser.HasFlag("help"))
         {
-            foreach (var error in parser.Errors)
-                Console.Error.WriteLine(error);
-            PrintHelp(Program.ExecutableName);
-            return;
+            PrintHelp(parser);
+            return 0;
         }
 
-        if (parser.GetFlag("help"))
-        {
-            PrintHelp(Program.ExecutableName);
-            return;
-        }
+        string? input = parser.Get("input");
+        string? output = parser.Get("output");
+        string? typeArg = parser.Get("type");
+        if (string.IsNullOrWhiteSpace(input))
+            return VfsCommand.Fail(2, "--input is required.");
+        if (string.IsNullOrWhiteSpace(output))
+            return VfsCommand.Fail(2, "--output is required.");
+        if (string.IsNullOrWhiteSpace(typeArg))
+            return VfsCommand.Fail(2, "--type is required.");
 
-        var gamePath = parser.GetValue("input");
-        if (string.IsNullOrWhiteSpace(gamePath))
-        {
-            Console.Error.WriteLine("Error: --input is required.");
-            PrintHelp(Program.ExecutableName);
-            return;
-        }
+        string modeArg = parser.Get("mode") ?? "wav";
+        if (modeArg is not ("wav" or "raw"))
+            return VfsCommand.Fail(2, "--mode must be one of: wav, raw.");
+        var mode = modeArg == "raw" ? AudioExportMode.Raw : AudioExportMode.Wav;
 
-        var outputDir = parser.GetValue("output");
-        if (string.IsNullOrWhiteSpace(outputDir))
-        {
-            Console.Error.WriteLine("Error: --output is required.");
-            PrintHelp(Program.ExecutableName);
-            return;
-        }
-
-        var typeStr = parser.GetValue("type");
-        if (string.IsNullOrWhiteSpace(typeStr))
-        {
-            Console.Error.WriteLine("Error: --type is required.");
-            HelpFormatter.WriteBlankLine();
-            WriteAudioBlockTypes();
-            return;
-        }
-
-        if (
-            !Enum.TryParse<EVFSBlockType>(typeStr, ignoreCase: true, out var blockType)
-            || !AudioBlockTypeNames.Contains(blockType.ToString())
-        )
-        {
-            Console.Error.WriteLine($"Error: '{typeStr}' is not a valid audio block type.");
-            HelpFormatter.WriteBlankLine();
-            WriteAudioBlockTypes();
-            return;
-        }
-
-        var mode = parser.GetValue("mode") ?? "wav";
-        if (mode is not ("raw" or "wav"))
-        {
-            Console.Error.WriteLine("Error: --mode must be one of: raw, wav");
-            PrintHelp(Program.ExecutableName);
-            return;
-        }
-
-        var vfsPath = Path.Combine(gamePath, VFSDefine.VFS_DIR);
-        if (!Directory.Exists(vfsPath))
-        {
-            Console.Error.WriteLine(
-                $"Error: VFS directory ({VFSDefine.VFS_DIR}) not found under \"{gamePath}\"."
-            );
-            return;
-        }
-
-        byte[] chaChaKey = VFSDefine.DefaultChaChaKey;
-        var keyBase64 = parser.GetValue("key");
-        if (!string.IsNullOrWhiteSpace(keyBase64))
-        {
-            try
-            {
-                chaChaKey = Convert.FromBase64String(keyBase64);
-            }
-            catch (FormatException)
-            {
-                Console.Error.WriteLine("Error: --key must be a valid Base64 string.");
-                return;
-            }
-            if (chaChaKey.Length != VFSDefine.KEY_LEN)
-            {
-                Console.Error.WriteLine(
-                    $"Error: --key must decode to {VFSDefine.KEY_LEN} bytes (got {chaChaKey.Length})."
-                );
-                return;
-            }
-        }
-
+        byte[] key;
+        int jobs;
         try
         {
-            var logger = new Logger(parser.GetFlag("verbose"));
-            bool autoMap = !parser.GetFlag("no-map");
-            string? language = GetLanguageForBlockType(blockType);
+            key = VFSDefine.ResolveKey(parser.Get("platform"), parser.Get("key"));
+            jobs = VfsCommand.ResolveJobs(parser.Get("jobs"));
+        }
+        catch (ArgumentException ex)
+        {
+            return VfsCommand.Fail(2, ex.Message);
+        }
 
-            IWemConverter? wemConverter = null;
-            if (mode == "wav")
-            {
-                wemConverter = ResolveConverter(logger);
-                if (wemConverter == null)
-                    return;
-            }
+        string gamePath = Path.GetFullPath(input);
+        if (!Directory.Exists(gamePath))
+            return VfsCommand.Fail(1, "Game directory not found: \"{0}\"", gamePath);
+        string vfsPath = Path.Combine(gamePath, VFSDefine.VfsDirectoryName);
+        if (!Directory.Exists(vfsPath))
+            return VfsCommand.Fail(1, "VFS directory not found under \"{0}\".", gamePath);
 
-            Console.WriteLine($"Input:  {vfsPath}");
-            Console.WriteLine($"Output: {outputDir}");
-            Console.WriteLine($"Type:   {blockType}");
-            Console.WriteLine($"Mode:   {mode}");
-
-            PckMapper? mapper = null;
-            if (autoMap && language != null)
-            {
-                mapper = LoadAudioDialogMapper(vfsPath, chaChaKey, language, logger);
-            }
-            else if (autoMap && language == null)
-            {
-                logger.Info($"Auto-mapping skipped: no language context for {blockType}");
-            }
-
-            Directory.CreateDirectory(outputDir);
-            ExtractAudioBlock(
-                vfsPath,
-                chaChaKey,
-                blockType,
-                outputDir,
-                mode,
-                mapper,
-                wemConverter,
-                logger
-            );
+        var logger = new Logger(parser.HasFlag("verbose"));
+        VfsArchive archive;
+        try
+        {
+            archive = VfsArchive.Open(vfsPath, key, logger);
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"Error: {ex.Message}");
-            Environment.Exit(1);
+            return VfsCommand.Fail(1, ex.Message);
         }
-    }
 
-    private static void WriteAudioBlockTypes()
-    {
-        HelpFormatter.WriteSectionHeader("Audio block types");
-        Console.WriteLine($"  {string.Join(", ", AudioBlockTypeNames)}");
-    }
-
-    private static string? GetLanguageForBlockType(EVFSBlockType type) =>
-        BlockLanguageMap.GetValueOrDefault(type);
-
-    private static PckMapper? LoadAudioDialogMapper(
-        string vfsPath,
-        byte[] key,
-        string language,
-        ILogger logger
-    )
-    {
-        logger.Info("Loading AudioDialog from Table block...");
-
-        var tableInfo = VfsReader.ReadBlockInfo(vfsPath, EVFSBlockType.Table, key);
-
-        foreach (var chunk in tableInfo.allChunks)
+        var block = archive.Find(typeArg);
+        if (block == null)
         {
-            var chunkFile = VfsReader.ResolveChunkPath(vfsPath, EVFSBlockType.Table, chunk);
-            if (chunkFile == null)
-                continue;
+            return BlockRegistry.TryParse(typeArg, out _)
+                ? VfsCommand.Fail(1, "Block \"{0}\" was not found in this VFS.", typeArg)
+                : VfsCommand.Fail(2, "Unknown block type: {0}", typeArg);
+        }
 
-            using var chunkFs = File.OpenRead(chunkFile);
-            foreach (var file in chunk.files)
+        if (block.Descriptor is { Kind: not ContentKind.Audio })
+            logger.Info("Warning: {0} is not an audio block. Only .pck files inside it will be exported.", block.DisplayName);
+
+        IWemDecoder? decoder = null;
+        if (mode == AudioExportMode.Wav)
+        {
+            decoder = WemDecoders.TryCreate(logger);
+            if (decoder == null)
             {
-                if (!file.fileName.EndsWith(".bytes", StringComparison.OrdinalIgnoreCase))
-                    continue;
-
-                chunkFs.Seek(file.offset, SeekOrigin.Begin);
-                var data = VfsReader.ReadFileData(chunkFs, file, key);
-
-                using var ms = new MemoryStream(data);
-                using var br = new BinaryReader(ms);
-
-                string rootName;
-                try
-                {
-                    rootName = SparkBufferDumper.GetRootDefinitionName(br);
-                }
-                catch
-                {
-                    continue;
-                }
-
-                if (rootName != "AudioDialog")
-                    continue;
-
-                logger.Info("  Found AudioDialog, parsing...");
-                var json = SparkBufferDumper.Decrypt(data);
-                using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json));
-                var mapper = new PckMapper(stream, language);
-                logger.Info($"  Mapped {mapper.Count} entries (lang={language})");
-                return mapper;
+                return VfsCommand.Fail(
+                    1,
+                    "No WEM decoder found. Place libvgmstream next to the program, or install vgmstream-cli."
+                );
             }
         }
 
-        logger.Info("  AudioDialog not found in Table block, skipping auto-map");
-        return null;
-    }
-
-    private static void ExtractAudioBlock(
-        string vfsPath,
-        byte[] key,
-        EVFSBlockType blockType,
-        string outputDir,
-        string mode,
-        PckMapper? mapper,
-        IWemConverter? wemConverter,
-        ILogger logger
-    )
-    {
-        var blockInfo = VfsReader.ReadBlockInfo(vfsPath, blockType, key);
-        logger.Info($"--- {blockType} ---");
-
-        var pckFiles = new List<(string Name, byte[] Data)>();
-        foreach (var chunk in blockInfo.allChunks)
+        string outputPath = Path.GetFullPath(output);
+        try
         {
-            var chunkFile = VfsReader.ResolveChunkPath(vfsPath, blockType, chunk);
-            if (chunkFile == null)
-            {
-                logger.Verbose($"  Chunk not found, skipping");
-                continue;
-            }
-
-            using var chunkFs = File.OpenRead(chunkFile);
-            foreach (var file in chunk.files)
-            {
-                if (!file.fileName.EndsWith(".pck", StringComparison.OrdinalIgnoreCase))
-                    continue;
-
-                chunkFs.Seek(file.offset, SeekOrigin.Begin);
-                var data = VfsReader.ReadFileData(chunkFs, file, key);
-                pckFiles.Add((file.fileName, data));
-            }
-        }
-
-        if (pckFiles.Count == 0)
-        {
-            logger.Info("No PCK files found in block.");
-            return;
-        }
-
-        logger.Info($"Found {pckFiles.Count} PCK file(s)");
-
-        string ext = mode == "wav" ? ".wav" : ".wem";
-        var jobs = new List<AudioJob>();
-        int mappedCount = 0;
-        int unmappedCount = 0;
-
-        foreach (var (pckName, pckData) in pckFiles)
-        {
-            logger.Info($"Parsing {pckName}...");
-
-            using var pckStream = new MemoryStream(pckData);
-            var pckParser = new PckParser(pckStream);
-            var content = pckParser.Parse();
-
-            logger.Verbose(
-                $"  {content.Entries.Count} entries, {content.Languages.Count} languages"
-            );
-
-            foreach (var entry in content.Entries)
-            {
-                byte[] fileData = pckParser.GetFileData(entry);
-                if (fileData.Length < 4)
-                    continue;
-
-                ReadOnlySpan<byte> magic = fileData.AsSpan(0, 4);
-
-                if (magic.SequenceEqual("BKHD"u8))
-                {
-                    CollectBnkJobs(
-                        fileData,
-                        entry,
-                        outputDir,
-                        blockType,
-                        mapper,
-                        ext,
-                        content.Languages,
-                        jobs,
-                        ref mappedCount,
-                        ref unmappedCount
-                    );
-                }
-                else if (magic.SequenceEqual("RIFF"u8) || magic.SequenceEqual("RIFX"u8))
-                {
-                    string outName = ResolveOutputName(
-                        blockType,
-                        entry.FileId,
-                        mapper,
-                        ext,
-                        content.Languages,
-                        entry.LanguageId,
-                        out bool isMapped
-                    );
-                    if (isMapped)
-                        mappedCount++;
-                    else
-                        unmappedCount++;
-                    jobs.Add(new AudioJob(fileData, Path.Combine(outputDir, outName)));
-                }
-            }
-        }
-
-        logger.Info($"Name mapping: mapped={mappedCount}, unmapped={unmappedCount}");
-        AnsiConsole.MarkupLine(
-            $"Collected [blue]{jobs.Count}[/] audio files, processing [blue]{Markup.Escape(mode)}[/]..."
-        );
-
-        if (mode == "raw" || wemConverter == null)
-        {
+            AudioExportResult? result = null;
             AnsiConsole
                 .Progress()
                 .AutoClear(false)
@@ -392,311 +103,77 @@ sealed class PckCommand : ICommand
                     new TaskDescriptionColumn(),
                     new ProgressBarColumn(),
                     new PercentageColumn(),
+                    new RemainingTimeColumn(),
                     new SpinnerColumn()
                 )
                 .Start(ctx =>
                 {
-                    var task = ctx.AddTask("Extracting", maxValue: jobs.Count);
-                    foreach (var job in jobs)
-                    {
-                        EnsureDirectory(job.OutputPath);
-                        File.WriteAllBytes(job.OutputPath, job.Data);
-                        task.Increment(1);
-                    }
+                    var task = ctx.AddTask("Exporting", maxValue: 0);
+                    result = new AudioExportService(logger).Export(
+                        archive,
+                        block,
+                        outputPath,
+                        mode,
+                        mapNames: !parser.HasFlag("no-map"),
+                        decoder,
+                        jobs,
+                        new SpectreProgress(task),
+                        cancellationToken
+                    );
                 });
-            AnsiConsole.MarkupLine($"[green]Done:[/] {jobs.Count} files extracted.");
-            return;
-        }
 
-        int converted = 0;
-        int failed = 0;
-        var failMessages = new ConcurrentBag<string>();
-
-        AnsiConsole
-            .Progress()
-            .AutoClear(false)
-            .HideCompleted(false)
-            .Columns(
-                new TaskDescriptionColumn(),
-                new ProgressBarColumn(),
-                new PercentageColumn(),
-                new RemainingTimeColumn(),
-                new SpinnerColumn()
-            )
-            .Start(ctx =>
-            {
-                var task = ctx.AddTask("Converting", maxValue: jobs.Count);
-
-                Parallel.ForEach(
-                    jobs,
-                    new ParallelOptions
-                    {
-                        MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount),
-                    },
-                    job =>
-                    {
-                        EnsureDirectory(job.OutputPath);
-
-                        string tempWem = Path.Combine(
-                            Path.GetTempPath(),
-                            $"byd_{Environment.CurrentManagedThreadId}_{Path.GetFileNameWithoutExtension(job.OutputPath)}.wem"
-                        );
-
-                        try
-                        {
-                            File.WriteAllBytes(tempWem, job.Data);
-                            job.Data = null!;
-                            wemConverter.Convert(tempWem, job.OutputPath);
-                            Interlocked.Increment(ref converted);
-                        }
-                        catch (Exception ex)
-                        {
-                            string fallback = Path.ChangeExtension(job.OutputPath, ".wem");
-                            EnsureDirectory(fallback);
-                            try
-                            {
-                                if (File.Exists(tempWem))
-                                    File.Copy(tempWem, fallback, true);
-                            }
-                            catch { }
-
-                            failMessages.Add(ex.Message);
-                            Interlocked.Increment(ref failed);
-                        }
-                        finally
-                        {
-                            try
-                            {
-                                File.Delete(tempWem);
-                            }
-                            catch { }
-                        }
-
-                        task.Increment(1);
-                    }
-                );
-            });
-
-        foreach (var msg in failMessages)
-            logger.Verbose($"  Failed: {msg}");
-
-        AnsiConsole.MarkupLine(
-            $"[green]Done:[/] {converted} converted"
-                + (failed > 0 ? $", [yellow]{failed} failed[/] (saved as .wem)" : "")
-        );
-    }
-
-    private static void CollectBnkJobs(
-        byte[] bnkData,
-        PckFileEntry bankEntry,
-        string outputDir,
-        EVFSBlockType blockType,
-        PckMapper? mapper,
-        string extension,
-        List<PckLanguage> languages,
-        List<AudioJob> jobs,
-        ref int mappedCount,
-        ref int unmappedCount
-    )
-    {
-        var wemEntries = BnkParser.Parse(bnkData);
-        foreach (var wem in wemEntries)
-        {
-            byte[] wemData = new byte[wem.Size];
-            Array.Copy(bnkData, wem.Offset, wemData, 0, wem.Size);
-
-            string outName = ResolveBnkWemName(
-                blockType,
-                bankEntry.FileId,
-                wem.Id,
-                mapper,
-                extension,
-                languages,
-                bankEntry.LanguageId,
-                out bool isMapped
+            decoder?.Dispose();
+            if (result == null)
+                return 1;
+            logger.Info(
+                "Done. {0} files extracted, {1} converted, {2} failed.",
+                result.Extracted,
+                result.Converted,
+                result.Failed
             );
-            if (isMapped)
-                mappedCount++;
-            else
-                unmappedCount++;
-            jobs.Add(new AudioJob(wemData, Path.Combine(outputDir, outName)));
+            return result.Failed > 0 && result.Extracted == 0 ? 1 : 0;
+        }
+        catch (Exception ex) when (VfsCommand.IsCancel(ex))
+        {
+            decoder?.Dispose();
+            return VfsCommand.Fail(1, "Cancelled.");
+        }
+        catch (Exception ex)
+        {
+            decoder?.Dispose();
+            return VfsCommand.Fail(1, ex.Message);
         }
     }
 
-    private sealed class AudioJob(byte[] data, string outputPath)
+    private static ArgParser CreateParser() =>
+        new ArgParser()
+            .Add("input", "i", "Game data directory that contains the VFS folder", "path", required: true)
+            .Add("output", "o", "Output directory", "dir", required: true)
+            .Add("type", "t", "Audio block type", "type", required: true)
+            .Add("mode", "m", "Output mode", "mode", continuation: "wav (default) or raw.")
+            .Add("key", null, "ChaCha20 key, Base64 of 32 bytes. Overrides --platform", "base64")
+            .Add("platform", null, "Key to use when --key is omitted", "name", continuation: "pc (default) or android.")
+            .Add("jobs", null, "How many WEM files to convert at once", "n", continuation: "Default: processor count.")
+            .Add("no-map", null, "Skip AudioDialog name mapping")
+            .Add("verbose", "v", "Print per-file details")
+            .Add("help", "h", "Show help information");
+
+    private static void PrintHelp(ArgParser parser)
     {
-        public byte[] Data = data;
-        public readonly string OutputPath = outputPath;
-    }
-
-    // ── Output name resolution ──────────────────────────────────────
-
-    private static string ResolveOutputName(
-        EVFSBlockType blockType,
-        ulong fileId,
-        PckMapper? mapper,
-        string extension,
-        List<PckLanguage>? languages,
-        uint languageId,
-        out bool isMapped
-    )
-    {
-        string? mapped = mapper?.GetMappedPath(fileId.ToString());
-        if (mapped != null)
-        {
-            isMapped = true;
-            return BuildMappedOutputPath(blockType, mapped, extension);
-        }
-
-        if (languageId != 0 && languages != null)
-        {
-            var lang = languages.Find(l => l.Id == languageId);
-            if (lang != null)
+        HelpFormatter.WriteCommandHelp(
+            "PCK audio extractor",
+            "pck --input <path> --output <dir> --type <type>",
+            parser,
+            () =>
             {
-                isMapped = false;
-                return BuildUnmappedOutputPath(
-                    blockType,
-                    NormalizeLanguageDirectoryName(lang.Name),
-                    $"{fileId}{extension}"
+                HelpFormatter.WriteSection("Audio block types");
+                AnsiConsole.MarkupLine(
+                    "  [cyan]{0}[/]",
+                    Markup.Escape(string.Join(", ", BlockRegistry.Audio.Select(static d => d.Type.ToString())))
                 );
+                AnsiConsole.MarkupLine("  [dim]A block discovered in this VFS can also be passed by its groupCfgName.[/]");
+                AnsiConsole.WriteLine();
             }
-        }
-
-        isMapped = false;
-        return BuildUnmappedOutputPath(
-            blockType,
-            NormalizeLanguageDirectoryName(GetLanguageForBlockType(blockType) ?? "Unknown"),
-            $"{fileId}{extension}"
         );
-    }
-
-    private static string ResolveBnkWemName(
-        EVFSBlockType blockType,
-        ulong bankFileId,
-        uint wemId,
-        PckMapper? mapper,
-        string extension,
-        List<PckLanguage>? languages,
-        uint languageId,
-        out bool isMapped
-    )
-    {
-        string? mapped = mapper?.GetMappedPath(wemId.ToString());
-        if (mapped != null)
-        {
-            isMapped = true;
-            return BuildMappedOutputPath(blockType, mapped, extension);
-        }
-
-        isMapped = false;
-        string language = "Unknown";
-        if (languageId != 0 && languages != null)
-        {
-            var lang = languages.Find(l => l.Id == languageId);
-            if (lang != null)
-                language = NormalizeLanguageDirectoryName(lang.Name);
-        }
-        else
-        {
-            language = NormalizeLanguageDirectoryName(
-                GetLanguageForBlockType(blockType) ?? "Unknown"
-            );
-        }
-
-        return BuildUnmappedOutputPath(blockType, language, $"{bankFileId}_{wemId}{extension}");
-    }
-
-    private static string BuildMappedOutputPath(
-        EVFSBlockType blockType,
-        string mappedPath,
-        string extension
-    )
-    {
-        string withExtension = Path.ChangeExtension(mappedPath, extension);
-        if (
-            TryParseMappedPath(withExtension, out var audioType, out var language, out var realPath)
-        )
-        {
-            return Path.Combine(
-                blockType.ToString(),
-                NormalizeLanguageDirectoryName(language),
-                audioType,
-                realPath
-            );
-        }
-
-        string fallbackLanguage = NormalizeLanguageDirectoryName(
-            GetLanguageForBlockType(blockType) ?? "Unknown"
-        );
-        return BuildUnmappedOutputPath(
-            blockType,
-            fallbackLanguage,
-            Path.GetFileName(withExtension)
-        );
-    }
-
-    private static bool TryParseMappedPath(
-        string mappedPath,
-        out string audioType,
-        out string language,
-        out string realPath
-    )
-    {
-        string[] parts = mappedPath.Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length < 3)
-        {
-            audioType = "unknown";
-            language = "Unknown";
-            realPath = Path.GetFileName(mappedPath);
-            return false;
-        }
-
-        audioType = parts[0];
-        language = parts[1];
-        realPath = Path.Combine(parts[2..]);
-        return true;
-    }
-
-    private static string BuildUnmappedOutputPath(
-        EVFSBlockType blockType,
-        string language,
-        string fileName
-    ) => Path.Combine(blockType.ToString(), "unmapped", language, fileName);
-
-    private static string NormalizeLanguageDirectoryName(string languageName)
-    {
-        if (string.IsNullOrWhiteSpace(languageName))
-            return "Unknown";
-
-        string trimmed = languageName.Trim();
-        return char.ToUpperInvariant(trimmed[0]) + trimmed[1..].ToLowerInvariant();
-    }
-
-    private static void EnsureDirectory(string filePath)
-    {
-        string? dir = Path.GetDirectoryName(filePath);
-        if (dir != null)
-            Directory.CreateDirectory(dir);
-    }
-
-    private static IWemConverter? ResolveConverter(ILogger logger)
-    {
-        if (LibVgmstreamConverter.IsAvailable)
-        {
-            logger.Verbose("Engine: libvgmstream (DLL)");
-            return new LibVgmstreamConverter();
-        }
-
-        if (WemConverter.VgmstreamPath != null)
-        {
-            logger.Verbose($"Engine: vgmstream-cli ({WemConverter.VgmstreamPath})");
-            return new WemConverter();
-        }
-
-        Console.Error.WriteLine(
-            "Error: vgmstream not found. Place libvgmstream.dll (preferred) "
-                + "or vgmstream-cli next to the executable, or add to PATH."
-        );
-        return null;
     }
 }
