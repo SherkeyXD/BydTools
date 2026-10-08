@@ -1,0 +1,10 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <Deterministic>true</Deterministic>
+    <IsAotCompatible Condition="'$(IsTestProject)' != 'true' and '$(OutputType)' != 'Exe'">true</IsAotCompatible>
+  </PropertyGroup>
+</Project>
