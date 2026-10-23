@@ -186,6 +186,8 @@ public sealed class VfsExtractor
         _logger.Verbose("========== BLC INFO ==========");
         _logger.Verbose("GroupCfgName   : {0}", info.GroupCfgName);
         _logger.Verbose("GroupCfgHash   : {0}", info.GroupCfgHashName);
+        _logger.Verbose("NonceVersion   : {0}", info.NonceVersion);
+        _logger.Verbose("CodeVersion    : {0}", info.CodeVersion);
         _logger.Verbose("Version        : {0}", info.Version);
         _logger.Verbose("BlockType      : {0} ({1})", info.BlockType, (byte)info.BlockType);
         _logger.Verbose("FileInfoNum    : {0}", info.GroupFileInfoNum);

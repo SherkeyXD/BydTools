@@ -60,6 +60,8 @@ public static class BlcReader
         var reader = new SpanReader(file);
         reader.Seek(VFSDefine.NonceLength);
 
+        // codeVersion picks the directory layout. It is not ProtocolVersion:
+        // that constant only builds the ChaCha nonce for an encrypted file.
         int codeVersion = reader.ReadInt32();
         int version = codeVersion;
         if (codeVersion > 10)
@@ -97,9 +99,7 @@ public static class BlcReader
             var contentMd5 = reader.ReadUInt128();
             long length = reader.ReadInt64();
             var chunkType = (EVFSBlockType)reader.ReadByte();
-            var chunkTag = EVFSFileTag.Base;
-            if (codeVersion > 3)
-                chunkTag = (EVFSFileTag)(byte)reader.ReadInt32();
+            var chunkTag = ReadRecordTag(ref reader, codeVersion);
 
             int fileCount = reader.ReadInt32();
             if (fileCount < 0 || fileCount > MaxFilesPerChunk)
@@ -120,9 +120,7 @@ public static class BlcReader
                 var fileType = (EVFSBlockType)reader.ReadByte();
                 bool encrypted = reader.ReadByte() != 0;
                 long ivSeed = encrypted ? reader.ReadInt64() : 0;
-                var fileTag = EVFSFileTag.Base;
-                if (codeVersion > 3)
-                    fileTag = (EVFSFileTag)(byte)reader.ReadInt32();
+                var fileTag = ReadRecordTag(ref reader, codeVersion);
 
                 files[j] = new VfsFile(
                     fileName,
@@ -152,5 +150,23 @@ public static class BlcReader
             blockType,
             chunks
         );
+    }
+
+    /// <summary>
+    /// Version 4 stores an <see cref="EVFSFileTag"/> as an int32.
+    /// Version 5 stores an int64 that is not a tag; it is 0 on some blocks.
+    /// </summary>
+    private static EVFSFileTag ReadRecordTag(ref SpanReader reader, int codeVersion)
+    {
+        if (codeVersion >= 5)
+        {
+            reader.Skip(8);
+            return EVFSFileTag.Base;
+        }
+
+        if (codeVersion > 3)
+            return (EVFSFileTag)(byte)reader.ReadInt32();
+
+        return EVFSFileTag.Base;
     }
 }
