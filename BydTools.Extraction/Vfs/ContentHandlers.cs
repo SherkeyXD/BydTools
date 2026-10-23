@@ -43,16 +43,17 @@ public sealed class SparkBufferHandler : IContentHandler
 
 public sealed class LuaHandler : IContentHandler
 {
-    public bool CanHandle(string relativePath) => true;
+    public bool CanHandle(string relativePath) =>
+        Path.GetExtension(relativePath).Equals(".lua", StringComparison.OrdinalIgnoreCase);
 
     public HandleResult Handle(string relativePath, ReadOnlyMemory<byte> data, IOutputSink sink)
     {
         try
         {
             byte[]? decrypted = LuaDecipher.Decrypt(data.Span);
-            if (decrypted == null || !LuaDecipher.IsValid(decrypted))
+            if (decrypted == null)
                 return HandleResult.Failed;
-            using var output = sink.Create(Path.ChangeExtension(relativePath, ".lua"));
+            using var output = sink.Create(relativePath);
             output.Write(decrypted);
             output.Complete();
             return HandleResult.Handled;

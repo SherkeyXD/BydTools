@@ -64,6 +64,23 @@ public class PipelineTests
     }
 
     [Fact]
+    public void Lua_block_copies_files_that_are_not_lua()
+    {
+        byte[] markdown = "# notes\n"u8.ToArray();
+        using var root = new TempDir();
+        using var output = new TempDir();
+        Samples.CreateGame(
+            root.Path,
+            Samples.Entry("19E3AE45", "Lua", EVFSBlockType.Lua, "Data/notes.md", markdown)
+        );
+        var block = VfsArchive.Open(Vfs(root.Path), Samples.Key, new QuietLogger()).Find("Lua")!;
+        var result = new VfsExtractor(new QuietLogger()).Dump(block, output.Path, jobs: 1);
+        Assert.Equal(0, result.Failed);
+        Assert.Equal(markdown, File.ReadAllBytes(Path.Combine(output.Path, "Data", "notes.md")));
+        Assert.False(File.Exists(Path.Combine(output.Path, "Data", "notes.lua")));
+    }
+
+    [Fact]
     public void Dump_converts_spark_and_refuses_paths_that_escape()
     {
         using var root = new TempDir();
