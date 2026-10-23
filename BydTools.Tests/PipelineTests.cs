@@ -49,6 +49,21 @@ public class PipelineTests
     }
 
     [Fact]
+    public void Code_version_five_reads_the_extra_fields()
+    {
+        using var root = new TempDir();
+        Samples.CreateGame(
+            root.Path,
+            Samples.Entry("42A8FCA6", "Table", EVFSBlockType.Table, "a.txt", "z"u8.ToArray(), codeVersion: 5)
+        );
+        var block = VfsArchive.Open(Vfs(root.Path), Samples.Key, new QuietLogger()).Find("Table");
+        Assert.NotNull(block);
+        Assert.Equal(5, block.Info.CodeVersion);
+        Assert.Equal("a.txt", block.Info.Chunks[0].Files[0].Name);
+        Assert.Equal("z", Encoding.ASCII.GetString(block.ReadFile(block.ResolveChunkPath(block.Info.Chunks[0])!, block.Info.Chunks[0].Files[0])));
+    }
+
+    [Fact]
     public void Dump_converts_spark_and_refuses_paths_that_escape()
     {
         using var root = new TempDir();

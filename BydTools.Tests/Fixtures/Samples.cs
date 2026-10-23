@@ -233,6 +233,7 @@ internal static class Samples
         writer.Write(new byte[16]);
         writer.Write(files.Sum(static file => (long)file.Stored.Length));
         writer.Write((byte)header.Type);
+        WriteRecordTag(writer, header.CodeVersion);
         writer.Write(files.Length);
         long offset = 0;
         foreach (var file in files)
@@ -249,10 +250,19 @@ internal static class Samples
             writer.Write((byte)(file.Encrypt ? 1 : 0));
             if (file.Encrypt)
                 writer.Write(file.IvSeed);
+            WriteRecordTag(writer, header.CodeVersion);
             offset += file.Stored.Length;
         }
 
         return ms.ToArray();
+    }
+
+    private static void WriteRecordTag(BinaryWriter writer, int codeVersion)
+    {
+        if (codeVersion >= 5 && codeVersion <= 10)
+            writer.Write(0L);
+        else if (codeVersion > 3 && codeVersion <= 10)
+            writer.Write(0);
     }
 
     private static byte[] Encrypt(byte[] payload)
