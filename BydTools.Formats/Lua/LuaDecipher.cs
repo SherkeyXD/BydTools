@@ -1,5 +1,4 @@
 using System.Text;
-using System.Text.Unicode;
 using BydTools.Core.Crypto;
 
 namespace BydTools.Formats.Lua;
@@ -23,40 +22,6 @@ public static class LuaDecipher
         }
 
         return XXTEA.Decrypt(cipher, MasterKey);
-    }
-
-    public static bool IsValid(ReadOnlySpan<byte> data)
-    {
-        if (data.Length < 4)
-            return false;
-        if (data[0] == 0x1B && data[1] == (byte)'L' && data[2] == (byte)'u' && data[3] == (byte)'a')
-            return true;
-        if (!IsUtf8(data))
-            return false;
-
-        int sample = Math.Min(data.Length, 1000);
-        string text = Encoding.UTF8.GetString(data[..sample]).TrimStart('\uFEFF', '\r', '\n', ' ', '\t');
-        return text.StartsWith("local ", StringComparison.Ordinal)
-            || text.StartsWith("function ", StringComparison.Ordinal)
-            || text.StartsWith("return ", StringComparison.Ordinal)
-            || text.StartsWith("require ", StringComparison.Ordinal)
-            || text.StartsWith("--", StringComparison.Ordinal)
-            || text.StartsWith("config ", StringComparison.Ordinal)
-            || text.Contains("local ", StringComparison.Ordinal)
-            || text.Contains("function(", StringComparison.Ordinal);
-    }
-
-    private static bool IsUtf8(ReadOnlySpan<byte> data)
-    {
-        try
-        {
-            Encoding.UTF8.GetString(data);
-            return Utf8.IsValid(data);
-        }
-        catch (ArgumentException)
-        {
-            return false;
-        }
     }
 
     private static string DeriveMasterKey()

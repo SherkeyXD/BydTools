@@ -148,11 +148,9 @@ public class UsmTests
 public class LuaTests
 {
     [Fact]
-    public void Rejects_bytes_that_are_only_ascii_noise()
+    public void Rejects_payloads_that_are_not_base64()
     {
-        Assert.False(LuaDecipher.IsValid("     "u8));
-        Assert.True(LuaDecipher.IsValid("Lua"u8));
-        Assert.True(LuaDecipher.IsValid("local x = 1"u8));
+        Assert.Null(LuaDecipher.Decrypt("# not a cipher"u8));
     }
 }
 
