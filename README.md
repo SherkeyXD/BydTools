@@ -31,7 +31,7 @@
 ## Prerequisites
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download) as runtime
-- WAV conversion uses the bundled `libvgmstream` on Windows. Elsewhere, `vgmstream-cli` must be on `PATH`. `raw` mode does not need it.
+- WAV conversion is built in for PCM, Wwise Vorbis and Wwise Opus. Other codecs are written out as `.wem`. `raw` mode skips conversion.
 
 ## Usage
 
@@ -112,7 +112,7 @@ This project includes code ported from or inspired by the following open-source 
 
 - [AnimeStudio](https://github.com/Escartem/AnimeStudio)
 - [AnimeWwise](https://github.com/Escartem/AnimeWwise)
-- [vgmstream](https://github.com/vgmstream/vgmstream)
+- [vgmstream](https://github.com/vgmstream/vgmstream), [ww2ogg](https://github.com/hcs64/ww2ogg), [NVorbis](https://github.com/NVorbis/NVorbis) and [Concentus](https://github.com/lostromb/concentus), via `WemDecoder/`
 - [CSChaCha20](https://github.com/KaarloR/CSChaCha20)
 - [XXTEA](https://github.com/xxtea/xxtea-dotnet)
 

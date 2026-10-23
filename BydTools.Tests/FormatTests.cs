@@ -1,7 +1,6 @@
 using System.Text;
 using System.Text.Json.Nodes;
 using BydTools.Audio.Bnk;
-using BydTools.Audio.Interop;
 using BydTools.Audio.Naming;
 using BydTools.Audio.Pck;
 using BydTools.Formats.Lua;
@@ -160,27 +159,4 @@ public class RegistryTests
     [InlineData("100", false)]
     public void Only_catalogued_block_types_parse(string text, bool expected) =>
         Assert.Equal(expected, BlockRegistry.TryParse(text, out _));
-}
-
-public class MemoryStreamfileTests
-{
-    [Fact]
-    public void Callbacks_read_the_pinned_buffer()
-    {
-        byte[] data = [1, 2, 3, 4, 5];
-        using var stream = MemoryStreamfile.Create(data);
-        Assert.Equal(3, stream.ReadAt(1, stackalloc byte[3]));
-        unsafe
-        {
-            var native = (LibStreamfile*)stream.Native;
-            byte* dst = stackalloc byte[2];
-            Assert.Equal(2, native->Read(native->UserData, dst, 0, 2));
-            Assert.Equal(1, dst[0]);
-            Assert.Equal(5, native->GetSize(native->UserData));
-            LibStreamfile* child = native->Open(native->UserData, null);
-            Assert.Equal(1, child->Read(child->UserData, dst, 4, 1));
-            Assert.Equal(5, dst[0]);
-            child->Close(child);
-        }
-    }
 }

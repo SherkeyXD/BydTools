@@ -54,19 +54,12 @@ SOFTWARE.
 
 ---
 
-## vgmstream
+## WemDecoder
 
-- **Source**: https://github.com/vgmstream/vgmstream
-- **License**: ISC / MIT (depending on component)
-- **Copyright**: vgmstream contributors
-- **Usage**: `libvgmstream.dll` is used via P/Invoke for WEM → WAV decoding in `BydTools.Audio`.
-  Falls back to `vgmstream-cli` when the DLL is unavailable.
-- **Bundled files** (in `BydTools.Audio/3rdParty/`):
-  - `libvgmstream.dll` — core decoding library
-  - `libvorbis.dll` — Vorbis decoder (Wwise Vorbis)
-  - `avcodec-vgmstream-59.dll` — FFmpeg avcodec (Wwise Opus)
-  - `avformat-vgmstream-59.dll` — FFmpeg avformat
-  - `avutil-vgmstream-57.dll` — FFmpeg avutil
+- **Location**: `WemDecoder/`
+- **License**: MIT (`WemDecoder/LICENSE`). The decoder also contains code from vgmstream (ISC-style), ww2ogg (BSD-3-Clause), NVorbis (MIT) and uses Concentus (BSD-3-Clause).
+- **Usage**: Managed WEM → WAV decoding for PCM, Wwise Vorbis and Wwise Opus, called from `BydTools.Audio`.
+- **Notices**: Full copyright and license texts are in `WemDecoder/THIRD-PARTY-NOTICES.md`.
 
 ---
 
