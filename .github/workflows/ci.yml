@@ -5,36 +5,70 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
-    name: Build BydTools
-    runs-on: windows-latest
-    
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
       with:
         show-progress: false
-      
+
     - name: Setup .NET
-      uses: actions/setup-dotnet@v5
+      uses: actions/setup-dotnet@v6
       with:
         dotnet-version: '10.0.x'
-        
+
     - name: Restore dependencies
       run: dotnet restore
 
     - name: Test
       run: dotnet test -c Release --no-restore
 
+  publish:
+    name: Publish (${{ matrix.rid }})
+    needs: test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+          - os: ubuntu-latest
+            rid: linux-x64
+          - os: macos-latest
+            rid: osx-arm64
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v7
+      with:
+        show-progress: false
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v6
+      with:
+        dotnet-version: '10.0.x'
+
+    - name: (Linux) Install Native AOT prerequisites
+      if: runner.os == 'Linux'
+      run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev
+
     - name: Publish BydTools.CLI
-      run: dotnet publish BydTools.CLI/BydTools.CLI.csproj -c Release -r win-x64 -o ./publish -p:EnableAotAnalyzer=true -p:EnableTrimAnalyzer=true
+      run: dotnet publish BydTools.CLI/BydTools.CLI.csproj -c Release -r ${{ matrix.rid }} -o ./publish -p:EnableAotAnalyzer=true -p:EnableTrimAnalyzer=true
 
     - name: Clean up unnecessary files
-      run: |
-        Remove-Item -Path ./publish/*.pdb -Force -ErrorAction SilentlyContinue
+      shell: bash
+      run: rm -f ./publish/*.pdb
 
     - name: Upload artifact
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       with:
-        name: BydTools-win-x64
+        name: BydTools-${{ matrix.rid }}
         path: ./publish
