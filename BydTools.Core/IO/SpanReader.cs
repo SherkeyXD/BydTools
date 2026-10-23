@@ -41,10 +41,15 @@ public ref struct SpanReader
         Seek(_position + count);
     }
 
-    /// <summary>Advances to the next multiple of <paramref name="boundary"/> (2, 4, or 8).</summary>
+    /// <summary>
+    /// Advances to the next multiple of <paramref name="boundary"/> (2, 4, or 8).
+    /// A value at the end of the buffer has no trailing padding, so alignment stops there.
+    /// </summary>
     public void Align(int boundary)
     {
         int aligned = (_position + (boundary - 1)) & ~(boundary - 1);
+        if (aligned > _span.Length && _position == _span.Length)
+            return;
         Seek(aligned);
     }
 

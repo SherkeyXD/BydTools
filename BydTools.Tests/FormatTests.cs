@@ -42,6 +42,15 @@ public class SparkBufferTests
             Assert.Contains("\"path\"", SparkBuffer.ToJson(map));
         });
     }
+
+    [Fact]
+    public void Map_bool_may_end_on_the_last_byte()
+    {
+        byte[] data = Samples.MapEndingOnBool();
+        Assert.NotEqual(0, data.Length % 4);
+        Assert.Equal("Flags", SparkBuffer.GetRootName(data));
+        Assert.Equal("{\n  \"on\": true\n}", SparkBuffer.ToJson(data).Replace("\r\n", "\n"));
+    }
 }
 
 public class PckTests
@@ -142,7 +151,7 @@ public class LuaTests
     public void Rejects_bytes_that_are_only_ascii_noise()
     {
         Assert.False(LuaDecipher.IsValid("     "u8));
-        Assert.True(LuaDecipher.IsValid("\u001bLua"u8));
+        Assert.True(LuaDecipher.IsValid("Lua"u8));
         Assert.True(LuaDecipher.IsValid("local x = 1"u8));
     }
 }
