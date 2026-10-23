@@ -67,11 +67,7 @@ jobs:
       run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev
 
     - name: Publish BydTools.CLI
-      run: dotnet publish BydTools.CLI/BydTools.CLI.csproj -c Release -r ${{ matrix.rid }} -o ./publish -p:EnableAotAnalyzer=true -p:EnableTrimAnalyzer=true
-
-    - name: Clean up unnecessary files
-      shell: bash
-      run: rm -f ./publish/*.pdb
+      run: dotnet publish BydTools.CLI/BydTools.CLI.csproj -c Release -r ${{ matrix.rid }} -o ./publish
 
     - name: Upload artifact
       uses: actions/upload-artifact@v7
