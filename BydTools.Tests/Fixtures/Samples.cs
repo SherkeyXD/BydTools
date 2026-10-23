@@ -36,6 +36,28 @@ internal static class Samples
             static w => w.Write(42)
         );
 
+    public static byte[] MapEndingOnBool() =>
+        Spark(
+            static (_, w) => w.Write(0),
+            static (ms, w) =>
+            {
+                w.Write((byte)SparkType.Map);
+                CString(w, "Flags");
+                w.Write((byte)SparkType.String);
+                w.Write((byte)SparkType.Bool);
+            },
+            static w =>
+            {
+                w.Write(1);
+                long key = w.BaseStream.Position;
+                CString(w, "on");
+                while (w.BaseStream.Position < key + 8)
+                    w.Write((byte)0);
+                w.Write((int)key);
+                w.Write((byte)1);
+            }
+        );
+
     public static byte[] AudioDialogMap() =>
         Spark(
             static (ms, w) =>
