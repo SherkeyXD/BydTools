@@ -78,18 +78,7 @@ public sealed class PckCommand : ICommand
         if (block.Descriptor is { Kind: not ContentKind.Audio })
             logger.Info("Warning: {0} is not an audio block. Only .pck files inside it will be exported.", block.DisplayName);
 
-        IWemDecoder? decoder = null;
-        if (mode == AudioExportMode.Wav)
-        {
-            decoder = WemDecoders.TryCreate(logger);
-            if (decoder == null)
-            {
-                return VfsCommand.Fail(
-                    1,
-                    "No WEM decoder found. Place libvgmstream next to the program, or install vgmstream-cli."
-                );
-            }
-        }
+        IWemDecoder? decoder = mode == AudioExportMode.Wav ? WemDecoders.Create() : null;
 
         string outputPath = Path.GetFullPath(output);
         try
