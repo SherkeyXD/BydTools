@@ -139,6 +139,8 @@ public sealed class VfsExtractor
     public void WriteDebugReport(VfsArchive archive)
     {
         _logger.Info("Debug: scanning all block declarations under {0}", archive.Root);
+        if (!string.IsNullOrWhiteSpace(archive.PersistentRoot))
+            _logger.Info("  Persistent (preferred): {0}", archive.PersistentRoot);
         _logger.Info("");
         if (archive.Blocks.Count == 0)
         {

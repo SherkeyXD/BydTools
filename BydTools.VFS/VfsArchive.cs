@@ -6,13 +6,21 @@ namespace BydTools.VFS;
 public sealed class VfsBlock
 {
     private readonly byte[] _key;
+    private readonly IReadOnlyList<string> _chunkDirectories;
 
-    internal VfsBlock(string directoryPath, VfsBlockInfo info, BlockDescriptor? descriptor, byte[] key)
+    internal VfsBlock(
+        string directoryPath,
+        VfsBlockInfo info,
+        BlockDescriptor? descriptor,
+        byte[] key,
+        IReadOnlyList<string> chunkDirectories
+    )
     {
         DirectoryPath = directoryPath;
         Info = info;
         Descriptor = descriptor;
         _key = key;
+        _chunkDirectories = chunkDirectories;
     }
 
     public string DirectoryPath { get; }
@@ -25,8 +33,14 @@ public sealed class VfsBlock
 
     public string? ResolveChunkPath(VfsChunk chunk)
     {
-        string path = Path.Combine(DirectoryPath, chunk.FileName);
-        return File.Exists(path) ? path : null;
+        foreach (string directory in _chunkDirectories)
+        {
+            string path = Path.Combine(directory, chunk.FileName);
+            if (File.Exists(path))
+                return path;
+        }
+
+        return null;
     }
 
     public byte[] ReadFile(string chunkPath, VfsFile file)
@@ -73,27 +87,51 @@ public sealed class VfsBlock
 /// </summary>
 public sealed class VfsArchive
 {
-    private VfsArchive(string root, IReadOnlyList<VfsBlock> blocks)
+    private VfsArchive(string root, string? persistentRoot, IReadOnlyList<VfsBlock> blocks)
     {
         Root = root;
+        PersistentRoot = persistentRoot;
         Blocks = blocks;
     }
 
     public string Root { get; }
+    public string? PersistentRoot { get; }
     public IReadOnlyList<VfsBlock> Blocks { get; }
 
-    public static VfsArchive Open(string vfsDirectory, byte[] key, ILogger logger)
+    /// <summary>
+    /// Opens StreamingAssets/VFS with an optional Persistent/VFS overlay.
+    /// Each BLC and CHK is resolved independently, preferring Persistent.
+    /// </summary>
+    public static VfsArchive Open(
+        string vfsDirectory,
+        byte[] key,
+        ILogger logger,
+        string? persistentDirectory = null
+    )
     {
         if (!Directory.Exists(vfsDirectory))
             throw new DirectoryNotFoundException($"VFS directory not found: {vfsDirectory}");
 
+        string[] roots = string.IsNullOrWhiteSpace(persistentDirectory)
+            ? [vfsDirectory]
+            : [persistentDirectory, vfsDirectory];
+        string[] directoryNames = roots
+            .Where(Directory.Exists)
+            .SelectMany(static root => Directory.GetDirectories(root))
+            .Select(static dir => Path.GetFileName(dir))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
         var blocks = new List<VfsBlock>();
         Exception? firstError = null;
-        foreach (var dir in Directory.GetDirectories(vfsDirectory).OrderBy(static d => d, StringComparer.Ordinal))
+        foreach (string dirName in directoryNames)
         {
-            string dirName = Path.GetFileName(dir);
-            string blcPath = Path.Combine(dir, dirName + ".blc");
-            if (!File.Exists(blcPath))
+            string[] chunkDirectories = roots.Select(root => Path.Combine(root, dirName)).ToArray();
+            string? blcPath = chunkDirectories
+                .Select(dir => Path.Combine(dir, dirName + ".blc"))
+                .FirstOrDefault(File.Exists);
+            if (blcPath == null)
             {
                 logger.Verbose("  [{0}] No BLC file found, skipping.", dirName);
                 continue;
@@ -129,7 +167,7 @@ public sealed class VfsArchive
                     );
                 }
 
-                blocks.Add(new VfsBlock(dir, info, descriptor, key));
+                blocks.Add(new VfsBlock(Path.GetDirectoryName(blcPath)!, info, descriptor, key, chunkDirectories));
             }
             catch (Exception ex)
             {
@@ -141,7 +179,7 @@ public sealed class VfsArchive
         if (blocks.Count == 0 && firstError != null)
             throw firstError;
 
-        return new VfsArchive(vfsDirectory, blocks);
+        return new VfsArchive(vfsDirectory, persistentDirectory, blocks);
     }
 
     public VfsBlock? Find(string nameOrType)

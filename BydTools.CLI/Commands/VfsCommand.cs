@@ -60,7 +60,11 @@ public sealed class VfsCommand : ICommand
         VfsArchive archive;
         try
         {
-            archive = VfsArchive.Open(vfsPath, key, logger);
+            string? persistent = parser.Get("persistent");
+            string? persistentVfs = string.IsNullOrWhiteSpace(persistent)
+                ? null
+                : Path.Combine(Path.GetFullPath(persistent), VFSDefine.VfsDirectoryName);
+            archive = VfsArchive.Open(vfsPath, key, logger, persistentVfs);
         }
         catch (Exception ex)
         {
@@ -133,6 +137,7 @@ public sealed class VfsCommand : ICommand
     internal static ArgParser CreateParser() =>
         new ArgParser()
             .Add("input", "i", "Game data directory that contains the VFS folder", "path", required: true)
+            .Add("persistent", "p", "Persistent directory containing VFS; missing files fall back to --input", "path")
             .Add("output", "o", "Output directory for extracted files", "dir", required: true)
             .Add(
                 "blocktype",
@@ -153,7 +158,7 @@ public sealed class VfsCommand : ICommand
     {
         HelpFormatter.WriteCommandHelp(
             "VFS asset dumper",
-            "vfs --input <path> --output <dir> --blocktype <type>",
+            "vfs --input <path> --output <dir> --blocktype <type> [--persistent <path>]",
             parser,
             () => HelpFormatter.WriteEnumValues("Available block types", BlockRegistry.All.Select(static d => d.Type))
         );

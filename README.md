@@ -60,6 +60,7 @@ Required:
   -t, --blocktype <type>     Block type. Commas separate several types.
 
 Options:
+  -p, --persistent <path>    Persistent directory containing VFS. Preferred over --input.
   --key <base64>             ChaCha20 key (32 bytes). Overrides --platform.
   --platform <name>          pc (default) or android, used when --key is omitted.
   --jobs <n>                 Chunks read at once. Default: processor count.
@@ -76,6 +77,16 @@ Block types:
 
 A directory that is not in this list can still be dumped by its `groupCfgName`. `All`, `Raw`, and numbers that are not a real block type are rejected. `--debug` prints the blocks actually present, including ones the catalog does not know yet.
 
+Pass the game's `StreamingAssets` directory to `-i` and optionally its `Persistent`
+directory to `-p`. Each `.blc` declaration and `.chk` file is read from
+`Persistent/VFS` when present, otherwise from `StreamingAssets/VFS`. Empty or
+missing Persistent directories fall back to `-i`. Blocks found only in Persistent
+are also included.
+
+```powershell
+BydTools vfs -i "D:\Program Files\Endfield Game\Endfield_Data\StreamingAssets" -p "D:\Program Files\Endfield Game\Endfield_Data\Persistent" -t Table -o output
+```
+
 ### pck
 
 Extracts `.pck` audio and, in `wav` mode, converts WEM to WAV. Names come from the Table block's AudioDialog when that block is present.
@@ -89,6 +100,7 @@ Required:
   -t, --type <type>          Audio block, or a groupCfgName found in this VFS.
 
 Options:
+  -p, --persistent <path>    Persistent directory containing VFS. Preferred over --input.
   -m, --mode <mode>          wav (default) or raw.
   --key <base64>             ChaCha20 key (32 bytes). Overrides --platform.
   --platform <name>          pc (default) or android.
@@ -103,6 +115,9 @@ Audio block types:
 ```
 
 Files with no AudioDialog match go under `<block>/unmapped/<language>/`. The language is the one stored in the PCK when it is known, otherwise the block's own language (Main, Chinese, Hotfix, and so on). `PLUG` entries are written as `.plg` in `raw` mode and skipped in `wav` mode. Extracting a USM again overwrites the previous video and audio streams instead of creating `_2`, `_3`, and so on.
+
+`--persistent` uses the same file-by-file priority as `vfs`, including the Table
+block used for AudioDialog name mapping.
 
 ## License
 
