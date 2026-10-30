@@ -60,7 +60,11 @@ public sealed class PckCommand : ICommand
         VfsArchive archive;
         try
         {
-            archive = VfsArchive.Open(vfsPath, key, logger);
+            string? persistent = parser.Get("persistent");
+            string? persistentVfs = string.IsNullOrWhiteSpace(persistent)
+                ? null
+                : Path.Combine(Path.GetFullPath(persistent), VFSDefine.VfsDirectoryName);
+            archive = VfsArchive.Open(vfsPath, key, logger, persistentVfs);
         }
         catch (Exception ex)
         {
@@ -137,6 +141,7 @@ public sealed class PckCommand : ICommand
     private static ArgParser CreateParser() =>
         new ArgParser()
             .Add("input", "i", "Game data directory that contains the VFS folder", "path", required: true)
+            .Add("persistent", "p", "Persistent directory containing VFS; missing files fall back to --input", "path")
             .Add("output", "o", "Output directory", "dir", required: true)
             .Add("type", "t", "Audio block type", "type", required: true)
             .Add("mode", "m", "Output mode", "mode", continuation: "wav (default) or raw.")
@@ -151,7 +156,7 @@ public sealed class PckCommand : ICommand
     {
         HelpFormatter.WriteCommandHelp(
             "PCK audio extractor",
-            "pck --input <path> --output <dir> --type <type>",
+            "pck --input <path> --output <dir> --type <type> [--persistent <path>]",
             parser,
             () =>
             {
