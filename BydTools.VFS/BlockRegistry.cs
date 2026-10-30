@@ -52,6 +52,11 @@ public static class BlockRegistry
         new(EVFSBlockType.AuditStreaming, "6432320A", ContentKind.Generic),
         new(EVFSBlockType.AuditVideo, "2E6CE44D", ContentKind.Video),
         new(EVFSBlockType.HotfixAudio, "F151B649", ContentKind.Audio, "Hotfix"),
+        new(EVFSBlockType.Terrain, "F84BF5E6", ContentKind.Generic),
+        new(EVFSBlockType.JsonLipChinese, "D3007764", ContentKind.Generic),
+        new(EVFSBlockType.JsonLipEnglish, "9F9F1488", ContentKind.Generic),
+        new(EVFSBlockType.JsonLipJapanese, "C7602E1B", ContentKind.Generic),
+        new(EVFSBlockType.JsonLipKorean, "F6DCF266", ContentKind.Generic),
     ];
 
     private static readonly FrozenDictionary<EVFSBlockType, BlockDescriptor> ByType =
