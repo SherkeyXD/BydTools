@@ -5,6 +5,8 @@ namespace BydTools.Formats.MemoryPack;
 
 /// <summary>
 /// Beyond StringPool blocks (<c>StringPool*.byte</c>, magic <c>USPC</c>).
+/// <c>StringPool0.byte</c> may start with a little-endian <c>extraFileCount</c>
+/// and only then <c>USPC</c>. Later blocks start at <c>USPC</c>.
 /// Global id = <c>blockIndex * count(StringPool0) + localIndex</c>.
 /// Ids <c>-1</c> and <c>-2</c> are the empty string and null, not pool slots.
 /// </summary>
@@ -62,10 +64,14 @@ public sealed class BeyondStringPool
     /// One USPC block. Layout: magic, int32 uncompressed size, then that many raw bytes
     /// or an LZ4 block that expands to that size. The payload is int32 count, int32
     /// offsets[count] (relative to the string blob), then UTF-8 bytes.
+    /// <c>StringPool0</c> may prefix that layout with a little-endian int32; when bytes 4..7 are <c>USPC</c>, that int32 is skipped.
     /// </summary>
     public static string[] ReadBlock(ReadOnlySpan<byte> file)
     {
-        if (file.Length < 8 || file[0] != (byte)'U' || file[1] != (byte)'S' || file[2] != (byte)'P' || file[3] != (byte)'C')
+        if (file.Length >= 8 && !IsUspc(file) && IsUspc(file.Slice(4, 4)))
+            file = file.Slice(4);
+
+        if (file.Length < 8 || !IsUspc(file))
             throw new InvalidDataException("String pool block does not start with USPC.");
 
         int uncompressed = BitConverter.ToInt32(file.Slice(4, 4));
@@ -145,6 +151,13 @@ public sealed class BeyondStringPool
             return value ?? "";
         return "#" + id.ToString(CultureInfo.InvariantCulture);
     }
+
+    private static bool IsUspc(ReadOnlySpan<byte> span) =>
+        span.Length >= 4
+        && span[0] == (byte)'U'
+        && span[1] == (byte)'S'
+        && span[2] == (byte)'P'
+        && span[3] == (byte)'C';
 
     private static int PoolIndex(string path)
     {
