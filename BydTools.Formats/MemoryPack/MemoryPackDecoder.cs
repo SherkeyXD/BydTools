@@ -10,7 +10,9 @@ namespace BydTools.Formats.MemoryPack;
 /// reads a prefix (MemoryPack versioning). Strings are StringPool int32 ids.
 /// AbilityActionData / ActionBase are MemoryPack unions (tag, then concrete).
 /// Concrete ability payloads are AbilityActionData members plus wrapper wire_order.
-/// UnityEngine.AnimationCurve left unmapped (FAnimationCurve alias unsafe on game data).
+/// Unmanaged Beyond structs (GameplayTag, AnimationClipAsyncInfo, FMontageTransitionInfo)
+/// are read as raw blittable layouts (no object header), matching parent WriteUnmanaged.
+/// UnityEngine.AnimationCurve uses the native MemoryPack layout (count 3 + Keyframe[28]).
 /// </summary>
 public sealed class MemoryPackDecoder
 {
@@ -78,6 +80,12 @@ public sealed class MemoryPackDecoder
 
         if (type == "GUIDProxy" || type.EndsWith(".GUIDProxy", StringComparison.Ordinal))
             return ReadGuidProxy(cursor);
+        if (type == "Beyond.Gameplay.Core.GameplayTag" || type == "GameplayTag")
+            return ReadGameplayTag(cursor);
+        if (type == "Beyond.Montage.AnimationClipAsyncInfo")
+            return ReadAnimationClipAsyncInfo(cursor);
+        if (type == "Beyond.Montage.FMontageTransitionInfo")
+            return ReadFMontageTransitionInfo(cursor);
         if (type.StartsWith("Beyond.Optional`1<", StringComparison.Ordinal))
             return ReadBeyondOptional(cursor, type, depth, sandbox);
         if (IsTaggedUnion(type))
@@ -121,11 +129,7 @@ public sealed class MemoryPackDecoder
             case MpKind.Nullable:
                 return ReadNullable(cursor, InnerType(type), depth, sandbox);
             case MpKind.AnimationCurve:
-                // Beyond.FAnimationCurve exists, but aliasing UnityEngine.AnimationCurve to it
-                // mis-reads payloads (FKeyframe memberCount garbage). Leave unmapped.
-                throw new MemoryPackTypeException(
-                    $"UnityEngine.AnimationCurve has no safe Beyond wire mapping (offset {cursor.Position})."
-                );
+                return ReadUnityAnimationCurve(cursor);
             default:
                 MpType resolved = _schema.Require(type, hint);
                 return ReadObject(cursor, resolved, abilityPayload: false, depth, sandbox);
@@ -168,6 +172,136 @@ public sealed class MemoryPackDecoder
             ["val1"] = JsonValue.Create(unchecked((uint)cursor.I32())),
             ["val2"] = JsonValue.Create(unchecked((uint)cursor.I32())),
             ["val3"] = JsonValue.Create(unchecked((uint)cursor.I32())),
+        };
+    }
+
+    /// <summary>
+    /// GameplayTag is an unmanaged struct { int tagId }. Parents WriteUnmanaged a raw int32.
+    /// </summary>
+    private static JsonNode ReadGameplayTag(Cursor cursor) =>
+        new JsonObject { ["tagId"] = JsonValue.Create(cursor.I32()) };
+
+    /// <summary>
+    /// AnimationClipAsyncInfo is an unmanaged struct (36 bytes, declaration order).
+    /// </summary>
+    private static JsonNode ReadAnimationClipAsyncInfo(Cursor cursor)
+    {
+        if (cursor.Remaining < 36)
+        {
+            throw new InvalidDataException(
+                $"AnimationClipAsyncInfo needs 36 bytes at offset {cursor.Position}, have {cursor.Remaining}."
+            );
+        }
+
+        var obj = new JsonObject
+        {
+            ["montagePathHash"] = JsonValue.Create(cursor.I64()),
+            ["length"] = JsonValue.Create(cursor.F32()),
+            ["framerate"] = JsonValue.Create(cursor.F32()),
+            ["averageSpeed"] = Vec(cursor.F32(), cursor.F32(), cursor.F32()),
+            ["averageAngularSpeed"] = JsonValue.Create(cursor.F32()),
+            ["isHumanoid"] = JsonValue.Create(cursor.U8() != 0),
+            ["isLooping"] = JsonValue.Create(cursor.U8() != 0),
+        };
+        _ = cursor.U16(); // padding to unmanaged size 36
+        return obj;
+    }
+
+    /// <summary>
+    /// FMontageTransitionInfo is an unmanaged struct (32 bytes, declaration order with bool pad).
+    /// </summary>
+    private static JsonNode ReadFMontageTransitionInfo(Cursor cursor)
+    {
+        if (cursor.Remaining < 32)
+        {
+            throw new InvalidDataException(
+                $"FMontageTransitionInfo needs 32 bytes at offset {cursor.Position}, have {cursor.Remaining}."
+            );
+        }
+
+        bool fixedTime = cursor.U8() != 0;
+        cursor.U8();
+        cursor.U8();
+        cursor.U8();
+        return new JsonObject
+        {
+            ["bIsFixedTransitionTime"] = JsonValue.Create(fixedTime),
+            ["transistionOffset"] = JsonValue.Create(cursor.F32()),
+            ["transitionDuration"] = JsonValue.Create(cursor.F32()),
+            ["transitionTime"] = JsonValue.Create(cursor.F32()),
+            ["fixedTime"] = JsonValue.Create(cursor.F32()),
+            ["fixedTransitionDuration"] = JsonValue.Create(cursor.F32()),
+            ["normalizedTransitionTime"] = JsonValue.Create(cursor.F32()),
+            ["exitTime"] = JsonValue.Create(cursor.F32()),
+        };
+    }
+
+    /// <summary>
+    /// UnityEngine.AnimationCurve MemoryPack: memberCount 3, preWrapMode, postWrapMode,
+    /// then Keyframe[] where each key is a raw 28-byte unmanaged blob.
+    /// </summary>
+    private static JsonNode? ReadUnityAnimationCurve(Cursor cursor)
+    {
+        int origin = cursor.Position;
+        int? count = ReadHeader(cursor);
+        if (count == null)
+            return null;
+        // MemoryPack empty/default curve (versioning): unlock trailing decode.
+        if (count == 0)
+        {
+            return new JsonObject
+            {
+                ["_type"] = "AnimationCurve",
+                ["_skipped"] = true,
+            };
+        }
+        if (count != 3)
+        {
+            throw new InvalidDataException(
+                $"UnityEngine.AnimationCurve memberCount {count} at offset {origin} (expected 3)."
+            );
+        }
+
+        int preWrapMode = cursor.I32();
+        int postWrapMode = cursor.I32();
+        int keyCount = cursor.I32();
+        JsonNode? keys;
+        if (keyCount == -1)
+            keys = null;
+        else
+        {
+            if (keyCount < 0 || keyCount > 1_000_000)
+                throw new InvalidDataException($"AnimationCurve key count {keyCount} at offset {cursor.Position - 4}.");
+            var array = new JsonArray();
+            for (int i = 0; i < keyCount; i++)
+            {
+                if (cursor.Remaining < 28)
+                {
+                    throw new InvalidDataException(
+                        $"AnimationCurve keyframe needs 28 bytes at offset {cursor.Position}."
+                    );
+                }
+
+                array.Add((JsonNode)new JsonObject
+                {
+                    ["time"] = JsonValue.Create(cursor.F32()),
+                    ["value"] = JsonValue.Create(cursor.F32()),
+                    ["inTangent"] = JsonValue.Create(cursor.F32()),
+                    ["outTangent"] = JsonValue.Create(cursor.F32()),
+                    ["weightedMode"] = JsonValue.Create(cursor.I32()),
+                    ["inWeight"] = JsonValue.Create(cursor.F32()),
+                    ["outWeight"] = JsonValue.Create(cursor.F32()),
+                });
+            }
+
+            keys = array;
+        }
+
+        return new JsonObject
+        {
+            ["preWrapMode"] = JsonValue.Create(preWrapMode),
+            ["postWrapMode"] = JsonValue.Create(postWrapMode),
+            ["keys"] = keys,
         };
     }
 
@@ -284,6 +418,8 @@ public sealed class MemoryPackDecoder
         MpMember[] members;
         if (abilityPayload && type.AbilityPayload != null && count == type.AbilityPayload.Length)
             members = type.AbilityPayload;
+        else if (abilityPayload && type.AbilityPayloadAlt != null && count == type.AbilityPayloadAlt.Length)
+            members = type.AbilityPayloadAlt;
         else if (count == type.Wire.Length)
             members = type.Wire;
         else if (count == type.Own.Length)
@@ -303,10 +439,13 @@ public sealed class MemoryPackDecoder
         }
         else
         {
+            string ability = type.AbilityPayload == null
+                ? ""
+                : $", ability {type.AbilityPayload.Length}"
+                    + (type.AbilityPayloadAlt == null ? "" : $"/{type.AbilityPayloadAlt.Length}");
             throw new InvalidDataException(
                 $"memberCount {count} at offset {origin} does not match {ShortName(type)} "
-                + $"(wire {type.Wire.Length}, merged {type.Own.Length}"
-                + (type.AbilityPayload == null ? ")." : $", ability {type.AbilityPayload.Length}).")
+                + $"(wire {type.Wire.Length}, merged {type.Own.Length}{ability})."
             );
         }
 
@@ -322,8 +461,7 @@ public sealed class MemoryPackDecoder
         if (!sandbox)
             return true;
         return type.TargetType.StartsWith("Beyond.Optional`1<", StringComparison.Ordinal)
-            || type.TargetType.StartsWith("Beyond.Gameplay.Actions.Param`1<", StringComparison.Ordinal)
-            || type.TargetType == "Beyond.Montage.AnimationClipAsyncInfo";
+            || type.TargetType.StartsWith("Beyond.Gameplay.Actions.Param`1<", StringComparison.Ordinal);
     }
 
     private JsonNode? ReadList(Cursor cursor, string element, string? hint, int depth, bool sandbox)

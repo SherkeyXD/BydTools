@@ -176,6 +176,55 @@ public class MemoryPackTests
 
 
     [Fact]
+    public void GameplayTag_reads_unmanaged_int32()
+    {
+        var decoder = new MemoryPackDecoder(Schema());
+        // tagId 0x01020304 little-endian — must NOT be read as object memberCount.
+        JsonNode? node = decoder.Decode(new byte[] { 0x04, 0x03, 0x02, 0x01 }, "Beyond.Gameplay.Core.GameplayTag");
+        var obj = Assert.IsType<JsonObject>(node);
+        Assert.Equal(0x01020304, obj["tagId"]!.GetValue<int>());
+    }
+
+    [Fact]
+    public void AnimationClipAsyncInfo_reads_unmanaged_36_bytes()
+    {
+        var decoder = new MemoryPackDecoder(Schema());
+        var payload = new byte[36];
+        BitConverter.TryWriteBytes(payload.AsSpan(0), 0x1122334455667788L);
+        BitConverter.TryWriteBytes(payload.AsSpan(8), 1.5f);
+        BitConverter.TryWriteBytes(payload.AsSpan(12), 30f);
+        BitConverter.TryWriteBytes(payload.AsSpan(16), 1f);
+        BitConverter.TryWriteBytes(payload.AsSpan(20), 2f);
+        BitConverter.TryWriteBytes(payload.AsSpan(24), 3f);
+        BitConverter.TryWriteBytes(payload.AsSpan(28), 0.25f);
+        payload[32] = 1;
+        payload[33] = 0;
+        JsonNode? node = decoder.Decode(payload, "Beyond.Montage.AnimationClipAsyncInfo");
+        var obj = Assert.IsType<JsonObject>(node);
+        Assert.Equal(0x1122334455667788L, obj["montagePathHash"]!.GetValue<long>());
+        Assert.Equal(1.5f, obj["length"]!.GetValue<float>());
+        Assert.True(obj["isHumanoid"]!.GetValue<bool>());
+        Assert.False(obj["isLooping"]!.GetValue<bool>());
+    }
+
+    [Fact]
+    public void UnityAnimationCurve_reads_header3_and_28byte_keys()
+    {
+        var decoder = new MemoryPackDecoder(Schema());
+        // count=3, pre=1, post=2, keyCount=1, one zero keyframe
+        var payload = new byte[1 + 4 + 4 + 4 + 28];
+        payload[0] = 3;
+        BitConverter.TryWriteBytes(payload.AsSpan(1), 1);
+        BitConverter.TryWriteBytes(payload.AsSpan(5), 2);
+        BitConverter.TryWriteBytes(payload.AsSpan(9), 1);
+        JsonNode? node = decoder.Decode(payload, "UnityEngine.AnimationCurve");
+        var obj = Assert.IsType<JsonObject>(node);
+        Assert.Equal(1, obj["preWrapMode"]!.GetValue<int>());
+        Assert.Equal(2, obj["postWrapMode"]!.GetValue<int>());
+        Assert.Single(Assert.IsType<JsonArray>(obj["keys"]));
+    }
+
+    [Fact]
     public void FAnimationCurve_memberCount_0_yields_empty_object()
     {
         var decoder = new MemoryPackDecoder(Schema());
