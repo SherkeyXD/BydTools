@@ -13,20 +13,15 @@
 
 ### VFS
 
-- [ ] `JsonData` (MemoryPack):
-  - AnimationConfig
-  - AtmosphericNpcData
-  - Interactive
-  - LevelConfig
-  - LevelData
-  - LevelScriptData
-  - LevelScriptTemplateData
-  - LipSync
-  - NPC
-  - NavMesh
-  - NonGeneratedConfigs
-  - SkillData
-  - SpawnerConfig
+- [x] `JsonData` MemoryPack decode (`decode-jsondata`), using `beyond-mp-schema` `wire_order`
+  - Plain UTF-8 JSON (leading `{` / `[`) is copied through
+  - StringPool ids (`-1` empty, `-2` null) resolve from `StringPool*.byte` when `--string-pool` is set
+  - Tables such as BambooRaft and teleport validation decode fully
+  - Remaining gaps (fail with a typed error, counted in the coverage report):
+    - `AbilityActionData` unions whose tag matches more than one concrete wrapper (Buff/Skill and similar). Pass `--union-map` when the tag is known. A tag is remembered for the run once exactly one concrete type fits.
+    - Abstract formatters other than `AbilityActionData` (`ConditionBase`, `CalculationBase`, `DamageProcessorBase`, …) are not switched
+    - `UnityEngine.AnimationCurve` has no wrapper in the export
+    - U8, Webview, and Table SparkBuffer are out of scope
 
 ## Prerequisites
 
@@ -45,8 +40,9 @@ Usage:
   BydTools <command> [options]
 
 Commands:
-  vfs             Dump files from VFS
-  pck             Extract audio from VFS
+  vfs               Dump files from VFS
+  pck               Extract audio from VFS
+  decode-jsondata   Decode a JsonData dump (MemoryPack) to plaintext JSON
 ```
 
 ### vfs
@@ -103,6 +99,25 @@ Audio block types:
 ```
 
 Files with no AudioDialog match go under `<block>/unmapped/<language>/`. The language is the one stored in the PCK when it is known, otherwise the block's own language (Main, Chinese, Hotfix, and so on). `PLUG` entries are written as `.plg` in `raw` mode and skipped in `wav` mode. Extracting a USM again overwrites the previous video and audio streams instead of creating `_2`, `_3`, and so on.
+
+### decode-jsondata
+
+Reads a directory produced by `vfs --blocktype JsonData`. Schemas come from the `beyond-mp-schema` export (`schemas.json` + `type_index.json`). Member order is `wire_order`, not the target field declaration order. Wrappers that omit private fields still accept a member count that matches those fields inserted in case-insensitive alphabetical order.
+
+```text
+BydTools decode-jsondata \
+  --input vfs-json \
+  --output vfs-json-text \
+  --schema out/memorypack/schemas.json \
+  --index out/memorypack/type_index.json \
+  --string-pool vfs-json/Data/Json/StringPool
+```
+
+Optional `--union-map unions.json` supplies AbilityActionData tags (`{ "AbilityActionData": { "296": "PlayAnimationActionData" } }`). `--report` overrides the default `<output>/memorypack-report.json`. Exit code `1` means the run finished and at least one file failed; the report still has ok / plain JSON / skipped / failed counts by top-level folder.
+
+Basename `CommonSysTeleportValidationDataTable` matches the `TeleportValidationDataTable` suffix. Instance-id filenames use the folder hint (`BuffData/`, `SkillData/`, `LevelConfig/`, `LevelData/`, `LevelScriptData/`, `SpawnerConfig` → `SpawnerConfigData`, `AtmosphericNpcData` → `NpcAtmosphericDataTable`, `NPC/MontageJson` → `NPCMontageJson`, `Interactive/ModelViewStateControllerData` → `MVSCModelViewStateControllerData`, `CharInteractPerformCfgs` → `CharInteractPerformRuntimeCfg`). `GameplayConfig/NonGeneratedConfigs` uses the file basename. When several types share a leaf, an `IMemoryPackSerialize` root wins.
+
+String pool files are `USPC`, optionally LZ4-compressed. Global id = `blockIndex * len(StringPool0) + localIndex`.
 
 ## License
 

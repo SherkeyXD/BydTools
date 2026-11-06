@@ -20,7 +20,7 @@ public static class Program
             };
         }
 
-        var commands = new ICommand[] { new VfsCommand(), new PckCommand() };
+        var commands = new ICommand[] { new VfsCommand(), new PckCommand(), new DecodeJsonDataCommand() };
         if (args.Length == 0 || args[0] is "-h" or "--help" or "help")
         {
             HelpFormatter.WriteRootHelp(commands);
