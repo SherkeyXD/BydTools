@@ -143,6 +143,18 @@ public class MemoryPackTests
         BitConverter.TryWriteBytes(lzFile.AsSpan(4), payload.Length);
         compressed.CopyTo(lzFile.AsSpan(8));
         Assert.Equal(["hello", "world"], BeyondStringPool.ReadBlock(lzFile));
+
+        var prefixed = new byte[4 + file.Length];
+        BitConverter.TryWriteBytes(prefixed.AsSpan(0), 27);
+        file.CopyTo(prefixed.AsSpan(4));
+        Assert.Equal(["hello", "world"], BeyondStringPool.ReadBlock(prefixed));
+
+        using var poolDir = new TempDir();
+        File.WriteAllBytes(Path.Combine(poolDir.Path, "StringPool0.byte"), prefixed);
+        File.WriteAllBytes(Path.Combine(poolDir.Path, "StringPool1.byte"), file);
+        var loaded = BeyondStringPool.Load(poolDir.Path);
+        Assert.Equal("hello", loaded.Format(0));
+        Assert.Equal("hello", loaded.Format(2));
     }
 
     private static void AssertHardSample(MemoryPackDecoder decoder, byte[] data, string root)
