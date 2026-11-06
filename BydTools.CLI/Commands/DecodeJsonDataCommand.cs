@@ -25,7 +25,7 @@ public sealed class DecodeJsonDataCommand : ICommand
                     Console.WriteLine("  A leading { or [ is copied as UTF-8 JSON. USPC and SHPI files are skipped.");
                     Console.WriteLine("  String pool ids -1 and -2 are \"\" and null. Other ids are resolved from StringPool*.byte");
                     Console.WriteLine("  when --string-pool is set, otherwise written as \"#<id>\".");
-                    Console.WriteLine("  --union-map is a JSON object { \"AbilityActionData\": { \"<tag>\": \"<TypeName>\" } }.");
+                    Console.WriteLine("  --union-map is { \"AbilityActionData\": { \"<tag>\": \"<TypeName>\" }, \"ActionBase\": { ... } }.");
                     Console.WriteLine();
                 }
             );
@@ -57,7 +57,7 @@ public sealed class DecodeJsonDataCommand : ICommand
             string? poolDir = parser.Get("string-pool");
             if (!string.IsNullOrWhiteSpace(poolDir))
                 pool = BeyondStringPool.Load(Path.GetFullPath(poolDir));
-            IReadOnlyDictionary<int, string>? unions = null;
+            IReadOnlyDictionary<string, IReadOnlyDictionary<int, string>>? unions = null;
             string? unionMap = parser.Get("union-map");
             if (!string.IsNullOrWhiteSpace(unionMap))
                 unions = JsonDataMemoryPack.LoadUnionMap(Path.GetFullPath(unionMap));

@@ -14,15 +14,40 @@ public sealed class MemoryPackDecoder
 {
     private readonly MemoryPackSchema _schema;
     private readonly BeyondStringPool? _pool;
-    private readonly Dictionary<int, string> _abilityMap;
+    private readonly Dictionary<string, Dictionary<int, string>> _unionMaps;
 
-    public MemoryPackDecoder(MemoryPackSchema schema, BeyondStringPool? pool = null, IReadOnlyDictionary<int, string>? abilityTags = null)
+    public MemoryPackDecoder(
+        MemoryPackSchema schema,
+        BeyondStringPool? pool = null,
+        IReadOnlyDictionary<string, IReadOnlyDictionary<int, string>>? unionMaps = null
+    )
     {
         _schema = schema;
         _pool = pool;
-        _abilityMap = abilityTags == null
-            ? []
-            : new Dictionary<int, string>(abilityTags);
+        _unionMaps = new Dictionary<string, Dictionary<int, string>>(StringComparer.Ordinal);
+        if (unionMaps == null)
+            return;
+        foreach (var (key, tags) in unionMaps)
+            _unionMaps[key] = new Dictionary<int, string>(tags);
+    }
+
+    private bool TryMappedConcrete(string staticType, int tag, out MpType concrete)
+    {
+        concrete = null!;
+        if (LookupUnionMap(staticType) is not { } map || !map.TryGetValue(tag, out string? mapped))
+            return false;
+        concrete = _schema.ResolveNamed(mapped);
+        return true;
+    }
+
+    private Dictionary<int, string>? LookupUnionMap(string staticType)
+    {
+        if (_unionMaps.TryGetValue(staticType, out var exact))
+            return exact;
+        int dot = staticType.LastIndexOf('.');
+        if (dot >= 0 && _unionMaps.TryGetValue(staticType[(dot + 1)..], out var leaf))
+            return leaf;
+        return null;
     }
 
     public JsonNode? Decode(ReadOnlySpan<byte> data, string rootType)
@@ -162,13 +187,15 @@ public sealed class MemoryPackDecoder
         if (tag == null)
             return null;
 
-        if (staticType == "AbilityActionData")
+        if (TryMappedConcrete(staticType, tag.Value, out MpType mappedType))
         {
-            if (_abilityMap.TryGetValue(tag.Value, out string? mapped))
-                return ReadConcrete(cursor, _schema.ResolveNamed(mapped), depth, sandbox);
-            if (_schema.FindAbilityTag(tag.Value) is MpType cached)
-                return ReadConcrete(cursor, cached, depth, sandbox);
+            return staticType == "AbilityActionData"
+                ? ReadConcrete(cursor, mappedType, depth, sandbox)
+                : ReadObject(cursor, mappedType, abilityPayload: false, depth, sandbox);
         }
+
+        if (staticType == "AbilityActionData" && _schema.FindAbilityTag(tag.Value) is MpType cached)
+            return ReadConcrete(cursor, cached, depth, sandbox);
 
         int afterTag = cursor.Position;
         IReadOnlyList<MpType> candidates = _schema.UnionCandidates(staticType, hint);

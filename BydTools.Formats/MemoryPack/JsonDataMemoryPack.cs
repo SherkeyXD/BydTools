@@ -75,7 +75,7 @@ public static class JsonDataMemoryPack
         string inputDirectory,
         string outputDirectory,
         BeyondStringPool? pool = null,
-        IReadOnlyDictionary<int, string>? abilityTags = null,
+        IReadOnlyDictionary<string, IReadOnlyDictionary<int, string>>? unionMaps = null,
         int jobs = 1,
         CancellationToken cancellationToken = default
     )
@@ -86,7 +86,7 @@ public static class JsonDataMemoryPack
             throw new ArgumentOutOfRangeException(nameof(jobs), "jobs must be positive.");
 
         Directory.CreateDirectory(outputDirectory);
-        var decoder = new MemoryPackDecoder(schema, pool, abilityTags);
+        var decoder = new MemoryPackDecoder(schema, pool, unionMaps);
         string[] files = Directory.GetFiles(inputDirectory, "*.json", SearchOption.AllDirectories);
         var report = new JsonDataDecodeReport();
         var bag = new ConcurrentBag<JsonDataFileResult>();
@@ -173,16 +173,51 @@ public static class JsonDataMemoryPack
         };
     }
 
-    public static IReadOnlyDictionary<int, string> LoadUnionMap(string path)
+    /// <summary>
+    /// Loads <c>{ "AbilityActionData": { "296": "PlayAnimationActionData" }, "ActionBase": { ... } }</c>.
+    /// A flat <c>{ "296": "..." }</c> object is AbilityActionData only.
+    /// </summary>
+    public static IReadOnlyDictionary<string, IReadOnlyDictionary<int, string>> LoadUnionMap(string path)
     {
         using var doc = JsonDocument.Parse(File.ReadAllBytes(path));
-        var map = new Dictionary<int, string>();
         JsonElement root = doc.RootElement;
-        JsonElement tags = root;
-        if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("AbilityActionData", out var nested))
-            tags = nested;
+        if (root.ValueKind != JsonValueKind.Object)
+            throw new InvalidDataException("Union map must be a JSON object.");
+
+        bool looksNested = false;
+        foreach (var prop in root.EnumerateObject())
+        {
+            if (prop.Value.ValueKind != JsonValueKind.Object)
+                continue;
+            if (int.TryParse(prop.Name, out _))
+                continue;
+            if (prop.Value.EnumerateObject().Any(child => int.TryParse(child.Name, out _)))
+                looksNested = true;
+        }
+
+        var maps = new Dictionary<string, IReadOnlyDictionary<int, string>>(StringComparer.Ordinal);
+        if (looksNested)
+        {
+            foreach (var prop in root.EnumerateObject())
+            {
+                if (prop.Value.ValueKind != JsonValueKind.Object)
+                    continue;
+                maps[prop.Name] = ReadTagObject(prop.Value);
+            }
+        }
+        else
+        {
+            maps["AbilityActionData"] = ReadTagObject(root);
+        }
+
+        return maps;
+    }
+
+    private static Dictionary<int, string> ReadTagObject(JsonElement tags)
+    {
+        var map = new Dictionary<int, string>();
         if (tags.ValueKind != JsonValueKind.Object)
-            throw new InvalidDataException("Union map must be an object of tag to type name.");
+            throw new InvalidDataException("Union map tags must be an object of tag to type name.");
         foreach (var prop in tags.EnumerateObject())
         {
             if (!int.TryParse(prop.Name, out int tag))
