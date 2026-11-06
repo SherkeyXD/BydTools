@@ -129,19 +129,11 @@ public class MemoryPackTests
         Assert.Equal("", pool.Format(-2));
         Assert.Equal("#99", pool.Format(99));
 
-        byte[] payload = StringTable(["hello", "world"]);
-        var file = new byte[8 + payload.Length];
-        "USPC"u8.CopyTo(file);
-        BitConverter.TryWriteBytes(file.AsSpan(4), payload.Length);
-        payload.CopyTo(file.AsSpan(8));
-        string[] read = BeyondStringPool.ReadBlock(file);
-        Assert.Equal(["hello", "world"], read);
+        byte[] payload = StringPayload(["hello", "world"]);
+        byte[] file = WrapPool(payload, compressed: false);
+        Assert.Equal(["hello", "world"], BeyondStringPool.ReadBlock(file));
 
-        byte[] compressed = Lz4Literal(payload);
-        var lzFile = new byte[8 + compressed.Length];
-        "USPC"u8.CopyTo(lzFile);
-        BitConverter.TryWriteBytes(lzFile.AsSpan(4), payload.Length);
-        compressed.CopyTo(lzFile.AsSpan(8));
+        byte[] lzFile = WrapPool(payload, compressed: true);
         Assert.Equal(["hello", "world"], BeyondStringPool.ReadBlock(lzFile));
 
         var prefixed = new byte[4 + file.Length];
@@ -152,8 +144,11 @@ public class MemoryPackTests
         using var poolDir = new TempDir();
         File.WriteAllBytes(Path.Combine(poolDir.Path, "StringPool0.byte"), prefixed);
         File.WriteAllBytes(Path.Combine(poolDir.Path, "StringPool1.byte"), file);
+        File.WriteAllBytes(Path.Combine(poolDir.Path, "StringPoolHashIndex.byte"), "SHPI"u8.ToArray());
         var loaded = BeyondStringPool.Load(poolDir.Path);
+        Assert.Equal(2, loaded.BlockCount);
         Assert.Equal("hello", loaded.Format(0));
+        Assert.Equal("world", loaded.Format(1));
         Assert.Equal("hello", loaded.Format(2));
     }
 
@@ -166,21 +161,37 @@ public class MemoryPackTests
         Assert.NotEmpty(ex.Candidates);
     }
 
-    private static byte[] StringTable(string[] values)
+    private static byte[] StringPayload(string[] values)
     {
         byte[][] blobs = values.Select(v => Encoding.UTF8.GetBytes(v)).ToArray();
-        int blobBytes = blobs.Sum(b => b.Length);
+        int blobBytes = blobs.Sum(b => 4 + b.Length);
         var payload = new byte[4 + values.Length * 4 + blobBytes];
         BitConverter.TryWriteBytes(payload.AsSpan(0), values.Length);
-        int offset = 0;
+        int cursor = 0;
         for (int i = 0; i < values.Length; i++)
         {
-            BitConverter.TryWriteBytes(payload.AsSpan(4 + i * 4), offset);
-            blobs[i].CopyTo(payload.AsSpan(4 + values.Length * 4 + offset));
-            offset += blobs[i].Length;
+            BitConverter.TryWriteBytes(payload.AsSpan(4 + i * 4), cursor);
+            int at = 4 + values.Length * 4 + cursor;
+            BitConverter.TryWriteBytes(payload.AsSpan(at), blobs[i].Length);
+            blobs[i].CopyTo(payload.AsSpan(at + 4));
+            cursor += 4 + blobs[i].Length;
         }
 
         return payload;
+    }
+
+    private static byte[] WrapPool(byte[] payload, bool compressed)
+    {
+        byte[] stored = compressed ? Lz4Literal(payload) : payload;
+        var file = new byte[24 + stored.Length];
+        "USPC"u8.CopyTo(file);
+        BitConverter.TryWriteBytes(file.AsSpan(4), 1);
+        BitConverter.TryWriteBytes(file.AsSpan(8), compressed ? 1 : 0);
+        BitConverter.TryWriteBytes(file.AsSpan(12), BitConverter.ToInt32(payload));
+        BitConverter.TryWriteBytes(file.AsSpan(16), payload.Length);
+        BitConverter.TryWriteBytes(file.AsSpan(20), stored.Length);
+        stored.CopyTo(file.AsSpan(24));
+        return file;
     }
 
     private sealed class TempDir : IDisposable

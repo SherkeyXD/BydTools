@@ -61,57 +61,71 @@ public sealed class BeyondStringPool
     }
 
     /// <summary>
-    /// One USPC block. Layout: magic, int32 uncompressed size, then that many raw bytes
-    /// or an LZ4 block that expands to that size. The payload is int32 count, int32
-    /// offsets[count] (relative to the string blob), then UTF-8 bytes.
-    /// <c>StringPool0</c> may prefix that layout with a little-endian int32; when bytes 4..7 are <c>USPC</c>, that int32 is skipped.
+    /// One USPC block. After an optional leading int32 (when bytes 4..7 are <c>USPC</c>),
+    /// the 24-byte header is magic, version 1, flags (bit 0 = LZ4), count, rawLength, storedLength.
+    /// The payload is innerCount, then int32 offsets relative to <c>4 + 4*count</c>.
+    /// Each string is an int32 byte length followed by that many UTF-8 bytes.
     /// </summary>
     public static string[] ReadBlock(ReadOnlySpan<byte> file)
     {
         if (file.Length >= 8 && !IsUspc(file) && IsUspc(file.Slice(4, 4)))
             file = file.Slice(4);
 
-        if (file.Length < 8 || !IsUspc(file))
+        const int HeaderSize = 24;
+        if (file.Length < HeaderSize || !IsUspc(file))
             throw new InvalidDataException("String pool block does not start with USPC.");
 
-        int uncompressed = BitConverter.ToInt32(file.Slice(4, 4));
-        if (uncompressed < 4)
-            throw new InvalidDataException($"USPC uncompressed size {uncompressed} is too small.");
+        int version = ReadInt32(file, 4);
+        if (version != 1)
+            throw new InvalidDataException($"USPC version {version} is not 1.");
+        int flags = ReadInt32(file, 8);
+        int count = ReadInt32(file, 12);
+        int rawLength = ReadInt32(file, 16);
+        int storedLength = ReadInt32(file, 20);
+        if (count < 0 || rawLength < 4 || storedLength < 0)
+            throw new InvalidDataException($"USPC header is invalid (count {count}, raw {rawLength}, stored {storedLength}).");
+        if (file.Length < HeaderSize + storedLength)
+            throw new InvalidDataException($"USPC block is shorter than the stored payload ({storedLength} bytes).");
 
-        ReadOnlySpan<byte> payload;
-        byte[]? owned = null;
-        if (file.Length - 8 == uncompressed)
+        ReadOnlySpan<byte> stored = file.Slice(HeaderSize, storedLength);
+        ReadOnlySpan<byte> raw;
+        if ((flags & 1) != 0)
         {
-            payload = file.Slice(8, uncompressed);
+            raw = Lz4Block.Decompress(stored, rawLength);
         }
         else
         {
-            owned = Lz4Block.Decompress(file.Slice(8), uncompressed);
-            payload = owned;
+            if (rawLength > storedLength)
+                throw new InvalidDataException($"USPC raw length {rawLength} exceeds the stored payload ({storedLength}).");
+            raw = stored.Slice(0, rawLength);
         }
 
-        int count = BitConverter.ToInt32(payload);
-        if (count < 0 || 4L + (long)count * 4 > payload.Length)
-            throw new InvalidDataException($"USPC string count {count} does not fit the block.");
+        int innerCount = ReadInt32(raw, 0);
+        if (innerCount != count)
+            throw new InvalidDataException($"USPC payload count {innerCount} does not match the header count {count}.");
+        long tableBytes = 4L + (long)count * 4;
+        if (tableBytes > raw.Length)
+            throw new InvalidDataException($"USPC offset table for {count} strings does not fit the payload.");
 
-        int blob = 4 + count * 4;
+        int baseOffset = 4 + count * 4;
         var strings = new string[count];
         for (int i = 0; i < count; i++)
         {
-            int start = blob + BitConverter.ToInt32(payload.Slice(4 + i * 4, 4));
-            int end = i + 1 < count
-                ? blob + BitConverter.ToInt32(payload.Slice(4 + (i + 1) * 4, 4))
-                : payload.Length;
-            if (start < blob || end < start || end > payload.Length)
-                throw new InvalidDataException($"USPC string {i} offset is outside the block.");
-            int length = end - start;
-            if (length > 0 && payload[end - 1] == 0)
-                length--;
-            strings[i] = Encoding.UTF8.GetString(payload.Slice(start, length));
+            int relative = ReadInt32(raw, 4 + i * 4);
+            int room = raw.Length - baseOffset;
+            if (relative < 0 || relative > room - 4)
+                throw new InvalidDataException($"USPC string {i} offset is outside the payload.");
+            int at = baseOffset + relative;
+            int byteLength = ReadInt32(raw, at);
+            if (byteLength < 0 || at + 4L + byteLength > raw.Length)
+                throw new InvalidDataException($"USPC string {i} length {byteLength} is outside the payload.");
+            strings[i] = Encoding.UTF8.GetString(raw.Slice(at + 4, byteLength));
         }
 
         return strings;
     }
+
+    private static int ReadInt32(ReadOnlySpan<byte> data, int offset) => BitConverter.ToInt32(data.Slice(offset, 4));
 
     public bool TryResolve(int id, out string? value)
     {
