@@ -40,6 +40,8 @@ public sealed class MpType
     public required MpMember[] Wire { get; set; }
     public required MpMember[] Own { get; set; }
     public MpMember[]? AbilityPayload { get; set; }
+    /// <summary>Ability base + Own when Own is longer than Wire (PlaySound etc.).</summary>
+    public MpMember[]? AbilityPayloadAlt { get; set; }
     public int? MinFieldOffset { get; init; }
     public bool SerializeMarker { get; set; }
 }
@@ -200,6 +202,7 @@ public sealed class MemoryPackSchema
             // Native Deserialize always writes: NodeBase privates + NodeBase wire props + _nextID
             // + concrete '_' fields (alpha) + concrete wire_order.
             SynthesizeActionBaseWires(byTarget, pending, kinds);
+            SynthesizeActionHeaderWires(byTarget, pending, kinds);
         }
 
         // AbilityActionData base prefix, then each concrete's own members.
@@ -211,8 +214,16 @@ public sealed class MemoryPackSchema
         {
             if (!IsAbilityConcrete(type))
                 continue;
-            var names = new HashSet<string>(type.Own.Select(m => m.Name), StringComparer.Ordinal);
-            type.AbilityPayload = abilityBase.Where(m => !names.Contains(m.Name)).Concat(type.Own).ToArray();
+            // Prefer wire_order leaf (EffectActionData 4+16=20). Keep Own-based alt when longer
+            // (PlaySoundActionData count 22 = 4+18 Own) for incomplete wire_order exports.
+            MpMember[] leafWire = type.Wire.Length > 0 ? type.Wire : type.Own;
+            var wireNames = new HashSet<string>(leafWire.Select(m => m.Name), StringComparer.Ordinal);
+            type.AbilityPayload = abilityBase.Where(m => !wireNames.Contains(m.Name)).Concat(leafWire).ToArray();
+            if (type.Own.Length > leafWire.Length)
+            {
+                var ownNames = new HashSet<string>(type.Own.Select(m => m.Name), StringComparer.Ordinal);
+                type.AbilityPayloadAlt = abilityBase.Where(m => !ownNames.Contains(m.Name)).Concat(type.Own).ToArray();
+            }
             concretes.Add(type);
         }
 
@@ -555,6 +566,7 @@ public sealed class MemoryPackSchema
             Wire = baseList[0].Wire,
             Own = baseList[0].Own,
             AbilityPayload = source.AbilityPayload,
+            AbilityPayloadAlt = source.AbilityPayloadAlt,
             MinFieldOffset = source.MinFieldOffset,
             SerializeMarker = source.SerializeMarker,
         };
@@ -563,6 +575,131 @@ public sealed class MemoryPackSchema
 
 
     /// <summary>
+    /// ActionHeader concretes (ScriptEvent/EntityEvent/…) inherit NodeBase + ActionHeader fields,
+    /// not ActionBase._nextID alone. OnLeaderEnterTriggerVolume native count is 18 =
+    /// NodeBase(7) + ActionHeader(7) + ScriptEventHeader(2) + leaf(2).
+    /// </summary>
+    private static void SynthesizeActionHeaderWires(
+        Dictionary<string, List<MpType>> byTarget,
+        List<(MpType Type, List<(string Name, string Type)> Extras)> pending,
+        Dictionary<string, string> kinds)
+    {
+        MpMember[] nodePrefix = BuildNodeBasePrefix(kinds);
+        MpMember[] actionHeader = UnderscoreMembers(
+            [
+                ("_filterLevel", "Beyond.Gameplay.Actions.FilterLevel"),
+                ("_filterMask", "Beyond.Gameplay.Actions.FilterMask"),
+                ("_filterMode", "bool"),
+                ("_nextID", "int"),
+                ("_priority", "int"),
+                ("_triggerActiveDuring", "Beyond.Gameplay.Actions.TriggerActiveDuring"),
+                ("_validate", "Beyond.Gameplay.Actions.Param`1<bool>"),
+            ],
+            kinds
+        );
+        MpMember[] scriptEvent = UnderscoreMembers(
+            [
+                ("_targetScript", "Beyond.Gameplay.Actions.Param`1<Beyond.Gameplay.Core.LevelScriptPtr>"),
+                ("_triggerTarget", "TriggerTarget"),
+            ],
+            kinds
+        );
+        MpMember[] entityEvent = UnderscoreMembers(
+            [
+                ("_targetEntity", "Beyond.Gameplay.Actions.Param`1<Beyond.Gameplay.Core.EntityPtr>"),
+                ("_targetEntityList", "Beyond.Gameplay.Actions.Param`1<System.Collections.Generic.List`1<Beyond.Gameplay.Core.EntityPtr>>"),
+                ("_targetEntityListOutput", "Beyond.Gameplay.Actions.ParamOutput`1<Beyond.Gameplay.Core.EntityPtr>"),
+                ("_triggerTarget", "TriggerTarget"),
+            ],
+            kinds
+        );
+
+        var extrasByType = new Dictionary<MpType, List<(string Name, string Type)>>();
+        foreach (var (type, extras) in pending)
+            extrasByType[type] = extras;
+
+        foreach (var group in byTarget.Values)
+        {
+            foreach (MpType type in group)
+            {
+                if (!type.HasDeserialize || !IsActionHeaderLineage(type.TargetType))
+                    continue;
+                if (type.TargetType is "Beyond.Gameplay.Actions.ActionHeader"
+                    or "Beyond.Gameplay.Actions.ScriptEventHeader"
+                    or "Beyond.Gameplay.Actions.EntityEventHeader"
+                    or "Beyond.Gameplay.Actions.LevelEventHeader"
+                    or "Beyond.Gameplay.Actions.MissionEventHeader")
+                    continue;
+
+                extrasByType.TryGetValue(type, out List<(string Name, string Type)>? extras);
+                extras ??= [];
+                var wireNames = new HashSet<string>(type.Wire.Select(m => m.Name), StringComparer.Ordinal);
+                MpMember[] leafUnderscore = extras
+                    .Where(e => e.Name.Length > 1
+                        && e.Name[0] == '_'
+                        && e.Name[1] != '_'
+                        && !e.Name.StartsWith("m_", StringComparison.Ordinal)
+                        && !wireNames.Contains(e.Name))
+                    .OrderBy(e => e.Name.ToLowerInvariant(), StringComparer.Ordinal)
+                    .Select(e => new MpMember
+                    {
+                        Name = e.Name,
+                        Type = e.Type,
+                        Kind = Classify(e.Type, kinds),
+                    })
+                    .ToArray();
+
+                MpMember[] intermediate =
+                    type.TargetType.Contains(".ScriptEvent.", StringComparison.Ordinal) ? scriptEvent
+                    : type.TargetType.Contains(".EntityEvent.", StringComparison.Ordinal) ? entityEvent
+                    : [];
+
+                var synthesized = new MpMember[
+                    nodePrefix.Length + actionHeader.Length + intermediate.Length
+                    + leafUnderscore.Length + type.Wire.Length];
+                int at = 0;
+                Array.Copy(nodePrefix, 0, synthesized, at, nodePrefix.Length);
+                at += nodePrefix.Length;
+                Array.Copy(actionHeader, 0, synthesized, at, actionHeader.Length);
+                at += actionHeader.Length;
+                Array.Copy(intermediate, 0, synthesized, at, intermediate.Length);
+                at += intermediate.Length;
+                Array.Copy(leafUnderscore, 0, synthesized, at, leafUnderscore.Length);
+                at += leafUnderscore.Length;
+                Array.Copy(type.Wire, 0, synthesized, at, type.Wire.Length);
+                type.Wire = synthesized;
+                type.Own = synthesized;
+            }
+        }
+    }
+
+    private static MpMember[] BuildNodeBasePrefix(Dictionary<string, string> kinds) =>
+        UnderscoreMembers(
+            [
+                ("_dontLogWarning", "bool"),
+                ("_ID", "int"),
+                ("_releaseWhenExecutionFinished", "bool"),
+                ("_uid", "string"),
+                ("scopeMask", "Beyond.GEnums.ScopeName"),
+                ("useCurrentScope", "bool"),
+                ("useGraphScope", "bool"),
+            ],
+            kinds
+        );
+
+    private static MpMember[] UnderscoreMembers(
+        (string Name, string Type)[] members,
+        Dictionary<string, string> kinds) =>
+        members
+            .Select(m => new MpMember
+            {
+                Name = m.Name,
+                Type = m.Type,
+                Kind = Classify(m.Type, kinds),
+            })
+            .ToArray();
+
+        /// <summary>
     /// Recover ActionBase MemoryPack wire for wrappers whose schemas.json wire_order is empty
     /// or only lists leaf props. Confirmed against WaitForSeconds/Split/CallServer/SwitchInt/
     /// IfElseAction/StartDialogAction formatter Deserialize (memberCount + setter order).
@@ -643,6 +780,8 @@ public sealed class MemoryPackSchema
             return false;
         if (targetType is "Beyond.Gameplay.Actions.ActionBase" or "Beyond.Gameplay.Actions.NodeBase")
             return false;
+        if (IsActionHeaderLineage(targetType))
+            return false;
         if (targetType.Contains("ActionSerializedMap", StringComparison.Ordinal)
             || targetType.Contains("ActionMapAssetRaw", StringComparison.Ordinal)
             || targetType.Contains("ActionNodePtr", StringComparison.Ordinal)
@@ -655,6 +794,18 @@ public sealed class MemoryPackSchema
             return false;
         return true;
     }
+
+    private static bool IsActionHeaderLineage(string targetType) =>
+        targetType is "Beyond.Gameplay.Actions.ActionHeader"
+            or "Beyond.Gameplay.Actions.ScriptEventHeader"
+            or "Beyond.Gameplay.Actions.EntityEventHeader"
+            or "Beyond.Gameplay.Actions.LevelEventHeader"
+            or "Beyond.Gameplay.Actions.MissionEventHeader"
+        || targetType.Contains(".ScriptEvent.", StringComparison.Ordinal)
+        || targetType.Contains(".EntityEvent.", StringComparison.Ordinal)
+        || targetType.Contains(".LevelEvent.", StringComparison.Ordinal)
+        || targetType.Contains(".MissionEvent.", StringComparison.Ordinal)
+        || targetType.StartsWith("Beyond.Gameplay.Actions.On", StringComparison.Ordinal);
 
     private static bool IsAbilityConcrete(MpType type)
     {

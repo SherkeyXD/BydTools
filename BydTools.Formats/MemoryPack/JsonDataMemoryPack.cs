@@ -3,6 +3,7 @@ using System.Linq;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 
 namespace BydTools.Formats.MemoryPack;
 
@@ -51,6 +52,7 @@ public static class JsonDataMemoryPack
     {
         WriteIndented = true,
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals,
     };
 
     private static readonly (string PathSuffix, string TypeName)[] FolderHints =
@@ -310,6 +312,7 @@ public static class JsonDataMemoryPack
         foreach (var (suffix, typeName) in FolderHints)
         {
             if (directory.Equals(suffix, StringComparison.OrdinalIgnoreCase)
+                || directory.StartsWith(suffix + "/", StringComparison.OrdinalIgnoreCase)
                 || directory.EndsWith("/" + suffix, StringComparison.OrdinalIgnoreCase)
                 || directory.Contains("/" + suffix + "/", StringComparison.OrdinalIgnoreCase))
                 return typeName;
