@@ -6,9 +6,11 @@ namespace BydTools.Formats.MemoryPack;
 /// <summary>
 /// Decodes a Beyond.MemoryPack payload using <c>schemas.json</c> wire_order.
 /// Object header: byte count, 255 null, 250 then int32 for wide counts.
-/// Strings are StringPool int32 ids. AbilityActionData is a MemoryPack union
-/// (tag, then the concrete object). Concrete ability payloads are the four
-/// AbilityActionData members followed by that wrapper's wire_order.
+/// memberCount 0 with a non-empty wire yields defaults; count below wire length
+/// reads a prefix (MemoryPack versioning). Strings are StringPool int32 ids.
+/// AbilityActionData / ActionBase are MemoryPack unions (tag, then concrete).
+/// Concrete ability payloads are AbilityActionData members plus wrapper wire_order.
+/// UnityEngine.AnimationCurve left unmapped (FAnimationCurve alias unsafe on game data).
 /// </summary>
 public sealed class MemoryPackDecoder
 {
@@ -19,12 +21,11 @@ public sealed class MemoryPackDecoder
     public MemoryPackDecoder(
         MemoryPackSchema schema,
         BeyondStringPool? pool = null,
-        IReadOnlyDictionary<string, IReadOnlyDictionary<int, string>>? unionMaps = null
-    )
+        IReadOnlyDictionary<string, IReadOnlyDictionary<int, string>>? unionMaps = null)
     {
         _schema = schema;
         _pool = pool;
-        _unionMaps = new Dictionary<string, Dictionary<int, string>>(StringComparer.Ordinal);
+        _unionMaps = [];
         if (unionMaps == null)
             return;
         foreach (var (key, tags) in unionMaps)
@@ -120,8 +121,10 @@ public sealed class MemoryPackDecoder
             case MpKind.Nullable:
                 return ReadNullable(cursor, InnerType(type), depth, sandbox);
             case MpKind.AnimationCurve:
+                // Beyond.FAnimationCurve exists, but aliasing UnityEngine.AnimationCurve to it
+                // mis-reads payloads (FKeyframe memberCount garbage). Leave unmapped.
                 throw new MemoryPackTypeException(
-                    $"UnityEngine.AnimationCurve has no Beyond wrapper (offset {cursor.Position}). U8/Webview and AnimationCurve blobs are out of scope."
+                    $"UnityEngine.AnimationCurve has no safe Beyond wire mapping (offset {cursor.Position})."
                 );
             default:
                 MpType resolved = _schema.Require(type, hint);
@@ -188,12 +191,9 @@ public sealed class MemoryPackDecoder
             return null;
 
         if (TryMappedConcrete(staticType, tag.Value, out MpType mappedType))
-        {
             return staticType == "AbilityActionData"
                 ? ReadConcrete(cursor, mappedType, depth, sandbox)
                 : ReadObject(cursor, mappedType, abilityPayload: false, depth, sandbox);
-        }
-
         if (staticType == "AbilityActionData" && _schema.FindAbilityTag(tag.Value) is MpType cached)
             return ReadConcrete(cursor, cached, depth, sandbox);
 
@@ -280,13 +280,18 @@ public sealed class MemoryPackDecoder
             members = type.Wire;
         else if (count == type.Own.Length)
             members = type.Own;
-        else if (count == 0
-            && type.Wire.Length > 0
-            && (type.TargetType.StartsWith("Beyond.Optional`1<", StringComparison.Ordinal)
-                || type.TargetType.StartsWith("Beyond.Gameplay.Actions.Param`1<", StringComparison.Ordinal)))
+        else if (count == 0 && type.Wire.Length > 0 && AllowsEmptyMemberCount(type, sandbox))
         {
-            // Optional / graph Param default instance is written as memberCount 0.
+            // MemoryPack empty instance / Optional-Param defaults.
+            // In union sandbox, only known empty-capable types may match on count 0 —
+            // otherwise every wrapper with a non-empty wire falsely accepts the byte.
             return new JsonObject();
+        }
+        else if (count > 0 && count < type.Wire.Length && !sandbox)
+        {
+            // MemoryPack versioning: older payloads wrote a prefix of wire_order.
+            // Disabled in union sandbox so partial fits do not create false matches.
+            members = type.Wire[..count.Value];
         }
         else
         {
@@ -301,6 +306,16 @@ public sealed class MemoryPackDecoder
         foreach (MpMember member in members)
             obj[member.Name] = ReadValue(cursor, member.Type, member.Name, depth + 1, sandbox);
         return obj;
+    }
+
+
+    private static bool AllowsEmptyMemberCount(MpType type, bool sandbox)
+    {
+        if (!sandbox)
+            return true;
+        return type.TargetType.StartsWith("Beyond.Optional`1<", StringComparison.Ordinal)
+            || type.TargetType.StartsWith("Beyond.Gameplay.Actions.Param`1<", StringComparison.Ordinal)
+            || type.TargetType == "Beyond.Montage.AnimationClipAsyncInfo";
     }
 
     private JsonNode? ReadList(Cursor cursor, string element, string? hint, int depth, bool sandbox)
