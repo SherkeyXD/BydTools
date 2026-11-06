@@ -50,6 +50,13 @@ public sealed class MemoryPackDecoder
         if (depth > 64)
             throw new InvalidDataException($"MemoryPack nesting is deeper than 64 at offset {cursor.Position}.");
 
+        if (type == "GUIDProxy" || type.EndsWith(".GUIDProxy", StringComparison.Ordinal))
+            return ReadGuidProxy(cursor);
+        if (type.StartsWith("Beyond.Optional`1<", StringComparison.Ordinal))
+            return ReadBeyondOptional(cursor, type, depth, sandbox);
+        if (IsTaggedUnion(type))
+            return ReadTaggedUnion(cursor, type, hint, depth, sandbox);
+
         MpKind kind = _schema.KindOf(type);
         switch (kind)
         {
@@ -92,33 +99,89 @@ public sealed class MemoryPackDecoder
                     $"UnityEngine.AnimationCurve has no Beyond wrapper (offset {cursor.Position}). U8/Webview and AnimationCurve blobs are out of scope."
                 );
             default:
-                if (type == "AbilityActionData")
-                    return ReadAbilityUnion(cursor, depth, sandbox);
                 MpType resolved = _schema.Require(type, hint);
                 return ReadObject(cursor, resolved, abilityPayload: false, depth, sandbox);
         }
     }
 
-    private JsonNode? ReadAbilityUnion(Cursor cursor, int depth, bool sandbox)
+    private static bool IsTaggedUnion(string type) =>
+        type is "AbilityActionData"
+            or "Beyond.Gameplay.Actions.ActionBase"
+            or "Beyond.Gameplay.Actions.PureGetter"
+            or "Beyond.Gameplay.Actions.ActionHeader"
+            or "Beyond.Gameplay.Core.ModelViewStateController.AbstractBehaviorData"
+            or "Beyond.Gameplay.Core.DamageProcessorBase"
+            or "Beyond.Gameplay.ConditionRuntimeBase"
+            or "Data";
+
+    /// <summary>
+    /// GUIDProxy is a 16-byte blittable payload (4× uint32) with no object header.
+    /// A leading 255 is null when the field is a reference.
+    /// </summary>
+    private static JsonNode? ReadGuidProxy(Cursor cursor)
+    {
+        if (cursor.Remaining > 0 && cursor.Buffer[cursor.Position] == 255)
+        {
+            cursor.U8();
+            return null;
+        }
+
+        return new JsonObject
+        {
+            ["val0"] = JsonValue.Create(unchecked((uint)cursor.I32())),
+            ["val1"] = JsonValue.Create(unchecked((uint)cursor.I32())),
+            ["val2"] = JsonValue.Create(unchecked((uint)cursor.I32())),
+            ["val3"] = JsonValue.Create(unchecked((uint)cursor.I32())),
+        };
+    }
+
+    private JsonNode? ReadBeyondOptional(Cursor cursor, string type, int depth, bool sandbox)
+    {
+        int origin = cursor.Position;
+        int? count = ReadHeader(cursor);
+        if (count == null)
+            return null;
+        // A disabled Optional is written as an empty object (memberCount 0).
+        if (count == 0)
+            return null;
+        if (count != 2)
+        {
+            throw new InvalidDataException(
+                $"memberCount {count} at offset {origin} does not match {type} (wire 2, merged 2)."
+            );
+        }
+
+        cursor.Position = origin;
+        return ReadObject(cursor, _schema.Require(type, hint: null), abilityPayload: false, depth, sandbox);
+    }
+
+    private JsonNode? ReadTaggedUnion(Cursor cursor, string staticType, string? hint, int depth, bool sandbox)
     {
         int origin = cursor.Position;
         int? tag = ReadUnionTag(cursor);
         if (tag == null)
             return null;
 
-        if (_abilityMap.TryGetValue(tag.Value, out string? mapped))
-            return ReadConcrete(cursor, _schema.ResolveNamed(mapped), depth, sandbox);
-        if (_schema.FindAbilityTag(tag.Value) is MpType cached)
-            return ReadConcrete(cursor, cached, depth, sandbox);
+        if (staticType == "AbilityActionData")
+        {
+            if (_abilityMap.TryGetValue(tag.Value, out string? mapped))
+                return ReadConcrete(cursor, _schema.ResolveNamed(mapped), depth, sandbox);
+            if (_schema.FindAbilityTag(tag.Value) is MpType cached)
+                return ReadConcrete(cursor, cached, depth, sandbox);
+        }
 
         int afterTag = cursor.Position;
+        IReadOnlyList<MpType> candidates = _schema.UnionCandidates(staticType, hint);
         var matches = new List<(MpType Type, int End, JsonObject Value)>();
-        foreach (MpType candidate in _schema.AbilityConcretes)
+        foreach (MpType candidate in candidates)
         {
             var fork = cursor.Fork(afterTag);
             try
             {
-                if (ReadConcrete(fork, candidate, depth + 1, sandbox: true) is not JsonObject obj)
+                JsonNode? node = staticType == "AbilityActionData"
+                    ? ReadConcrete(fork, candidate, depth + 1, sandbox: true)
+                    : ReadObject(fork, candidate, abilityPayload: false, depth + 1, sandbox: true);
+                if (node is not JsonObject obj)
                     continue;
                 matches.Add((candidate, fork.Position, obj));
             }
@@ -139,9 +202,11 @@ public sealed class MemoryPackDecoder
         if (ends.Count == 1 && ambiguousEnds.Count == 0)
         {
             var chosen = ends.Values.First();
-            if (!sandbox)
+            if (!sandbox && staticType == "AbilityActionData")
                 _schema.RememberAbilityTag(tag.Value, chosen.Type);
             cursor.Position = ends.Keys.First();
+            if (!chosen.Value.ContainsKey("$type"))
+                chosen.Value["$type"] = ShortName(chosen.Type);
             chosen.Value["$tag"] = tag.Value;
             return chosen.Value;
         }
@@ -154,9 +219,9 @@ public sealed class MemoryPackDecoder
         int? header = afterTag < cursor.Length ? cursor.Buffer[afterTag] : null;
         throw new MemoryPackUnionException(
             ends.Count == 0
-                ? $"AbilityActionData union tag {tag.Value} at offset {origin} matched no concrete wrapper (header byte {header})."
-                : $"AbilityActionData union tag {tag.Value} at offset {origin} matches {matches.Count} concrete types.",
-            "AbilityActionData",
+                ? $"{staticType} union tag {tag.Value} at offset {origin} matched no concrete wrapper (header byte {header})."
+                : $"{staticType} union tag {tag.Value} at offset {origin} matches {matches.Count} concrete types.",
+            staticType,
             origin,
             tag,
             header,
@@ -188,6 +253,14 @@ public sealed class MemoryPackDecoder
             members = type.Wire;
         else if (count == type.Own.Length)
             members = type.Own;
+        else if (count == 0
+            && type.Wire.Length > 0
+            && (type.TargetType.StartsWith("Beyond.Optional`1<", StringComparison.Ordinal)
+                || type.TargetType.StartsWith("Beyond.Gameplay.Actions.Param`1<", StringComparison.Ordinal)))
+        {
+            // Optional / graph Param default instance is written as memberCount 0.
+            return new JsonObject();
+        }
         else
         {
             throw new InvalidDataException(
