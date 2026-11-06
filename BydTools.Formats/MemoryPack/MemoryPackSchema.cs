@@ -54,6 +54,8 @@ public sealed class MemoryPackSchema
     private readonly Dictionary<string, string> _kinds;
     private readonly Dictionary<int, MpType> _abilityTags = [];
     private readonly object _tagGate = new();
+    private readonly Dictionary<string, MpType[]> _unionCandidates = new(StringComparer.Ordinal);
+    private MpType[]? _dataConcretes;
 
     private MemoryPackSchema(
         Dictionary<string, List<MpType>> byTarget,
@@ -233,6 +235,149 @@ public sealed class MemoryPackSchema
     }
 
     public IReadOnlyList<MpType> AbilityConcretes => _abilityConcretes;
+
+    /// <summary>
+    /// Concrete wrappers that may appear under a Beyond MemoryPack union formatter.
+    /// AbilityActionData keeps the ActionData/Data heuristic. ActionBase-like bases use
+    /// same-namespace leaves. Bare <c>Data</c> is narrowed by a finder/validator/processor field hint.
+    /// </summary>
+    public IReadOnlyList<MpType> UnionCandidates(string staticType, string? hint)
+    {
+        if (staticType == "AbilityActionData")
+            return _abilityConcretes;
+
+        if (staticType == "Data")
+            return DataCandidates(hint);
+
+        lock (_tagGate)
+        {
+            if (_unionCandidates.TryGetValue(staticType, out MpType[]? cached))
+                return cached;
+            MpType[] built = BuildNamespaceUnion(staticType);
+            _unionCandidates[staticType] = built;
+            return built;
+        }
+    }
+
+    private MpType[] DataCandidates(string? hint)
+    {
+        lock (_tagGate)
+        {
+            _dataConcretes ??= _byTarget.TryGetValue("Data", out var list)
+                ? list.Where(t => t.HasDeserialize).ToArray()
+                : [];
+        }
+
+        if (string.IsNullOrEmpty(hint))
+            return _dataConcretes;
+
+        string h = hint.ToLowerInvariant();
+        string? role = null;
+        if (h.Contains("finder", StringComparison.Ordinal))
+            role = "finder";
+        else if (h.Contains("validator", StringComparison.Ordinal))
+            role = "validator";
+        else if (h.Contains("postprocessor", StringComparison.Ordinal) || h.Contains("processor", StringComparison.Ordinal))
+            role = "processor";
+        if (role == null)
+            return _dataConcretes;
+
+        MpType[] filtered = _dataConcretes
+            .Where(t =>
+            {
+                string w = t.WrapperType.ToLowerInvariant();
+                return role switch
+                {
+                    "finder" => w.Contains("finder", StringComparison.Ordinal)
+                        && !w.Contains("validator", StringComparison.Ordinal)
+                        && !w.Contains("postprocessor", StringComparison.Ordinal),
+                    "validator" => w.Contains("validator", StringComparison.Ordinal),
+                    _ => w.Contains("processor", StringComparison.Ordinal)
+                        || w.Contains("filter", StringComparison.Ordinal)
+                        || w.Contains("sort", StringComparison.Ordinal)
+                        || w.Contains("convert", StringComparison.Ordinal)
+                        || w.Contains("shuffle", StringComparison.Ordinal)
+                        || w.Contains("replace", StringComparison.Ordinal),
+                };
+            })
+            .ToArray();
+        return filtered.Length > 0 ? filtered : _dataConcretes;
+    }
+
+    private MpType[] BuildNamespaceUnion(string staticType)
+    {
+        var list = new List<MpType>();
+        foreach (var group in _byTarget.Values)
+        {
+            foreach (MpType type in group)
+            {
+                if (!type.HasDeserialize || type.TargetType == staticType)
+                    continue;
+
+                if (staticType.StartsWith("Beyond.Gameplay.Actions.", StringComparison.Ordinal))
+                {
+                    if (!type.TargetType.StartsWith("Beyond.Gameplay.Actions.", StringComparison.Ordinal))
+                        continue;
+                    if (type.TargetType.Contains("ActionSerializedMap", StringComparison.Ordinal)
+                        || type.TargetType.Contains("ActionMapAssetRaw", StringComparison.Ordinal)
+                        || type.TargetType.Contains("ActionNodePtr", StringComparison.Ordinal)
+                        || type.TargetType.StartsWith("Beyond.Gameplay.Actions.Param`1", StringComparison.Ordinal)
+                        || type.TargetType.StartsWith("Beyond.Gameplay.Actions.Getter`1", StringComparison.Ordinal)
+                        || type.TargetType.StartsWith("Beyond.Gameplay.Actions.List", StringComparison.Ordinal)
+                        || type.TargetType.StartsWith("Beyond.Gameplay.Actions.GetInteractiveProperty`1", StringComparison.Ordinal)
+                        || type.TargetType.StartsWith("Beyond.Gameplay.Actions.GetLevelScriptPropertyGeneric`1", StringComparison.Ordinal))
+                        continue;
+                    if (type.Wire.Length == 0
+                        && _byTarget.TryGetValue("Beyond.Gameplay.Actions.ActionBase", out var abases)
+                        && abases.Count == 1
+                        && abases[0].Own.Length > 0)
+                    {
+                        list.Add(new MpType
+                        {
+                            TargetType = type.TargetType,
+                            WrapperType = type.WrapperType,
+                            HasDeserialize = type.HasDeserialize,
+                            Wire = abases[0].Own,
+                            Own = abases[0].Own,
+                            AbilityPayload = type.AbilityPayload,
+                            MinFieldOffset = type.MinFieldOffset,
+                            SerializeMarker = type.SerializeMarker,
+                        });
+                    }
+                    else
+                    {
+                        list.Add(type);
+                    }
+
+                    continue;
+                }
+
+                if (staticType.Contains("ModelViewStateController", StringComparison.Ordinal))
+                {
+                    if (type.TargetType.Contains("ModelViewStateController", StringComparison.Ordinal)
+                        && type.TargetType.Contains("BehaviorData", StringComparison.Ordinal)
+                        && type.Wire.Length > 0)
+                        list.Add(type);
+                    continue;
+                }
+
+                if (staticType.Contains("DamageProcessorBase", StringComparison.Ordinal))
+                {
+                    if (type.TargetType.Contains("DamageProcessor", StringComparison.Ordinal))
+                        list.Add(type);
+                    continue;
+                }
+
+                if (staticType.Contains("ConditionRuntimeBase", StringComparison.Ordinal)
+                    && ((type.TargetType.Contains("Condition", StringComparison.Ordinal)
+                            && type.TargetType.EndsWith("Runtime", StringComparison.Ordinal))
+                        || type.WrapperType.Contains("ConditionRuntime", StringComparison.Ordinal)))
+                    list.Add(type);
+            }
+        }
+
+        return list.ToArray();
+    }
 
     public MpKind KindOf(string type)
     {

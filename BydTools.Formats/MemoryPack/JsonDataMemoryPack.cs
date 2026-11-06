@@ -65,6 +65,9 @@ public static class JsonDataMemoryPack
         ("LevelData", "LevelData"),
         ("BuffData", "BuffData"),
         ("SkillData", "SkillData"),
+        ("AnimationConfig", "AnimationConfigJson"),
+        ("NavMesh", "LunaNavMeshAreaContainer"),
+        ("GPUISystemConfig", "PrefabGroupSerializeData"),
     ];
 
     public static JsonDataDecodeReport DecodeTree(

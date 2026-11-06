@@ -17,9 +17,9 @@
   - Plain UTF-8 JSON (leading `{` / `[`) is copied through
   - StringPool ids (`-1` empty, `-2` null) resolve from `StringPool*.byte` when `--string-pool` is set
   - Tables such as BambooRaft and teleport validation decode fully
-  - Remaining gaps (fail with a typed error, counted in the coverage report):
-    - `AbilityActionData` unions whose tag matches more than one concrete wrapper (Buff/Skill and similar). Pass `--union-map` when the tag is known. A tag is remembered for the run once exactly one concrete type fits.
-    - Abstract formatters other than `AbilityActionData` (`ConditionBase`, `CalculationBase`, `DamageProcessorBase`, …) are not switched
+  - Remaining gaps (each failed file is one row in the coverage report):
+    - Ambiguous union tags on `AbilityActionData` and `ActionBase` (and the other switched bases when more than one concrete fits). Fork-match keeps a tag only when one wrapper fits. Anything else needs `--union-map` or an IL export of the native tag table.
+    - `AnimationClipAsyncInfo` after `GUIDProxy` in NPC montages. The layout is not guessed here; it needs the formatter from IL.
     - `UnityEngine.AnimationCurve` has no wrapper in the export
     - U8, Webview, and Table SparkBuffer are out of scope
 
@@ -113,9 +113,33 @@ BydTools decode-jsondata \
   --string-pool vfs-json/Data/Json/StringPool
 ```
 
-Optional `--union-map unions.json` supplies AbilityActionData tags (`{ "AbilityActionData": { "296": "PlayAnimationActionData" } }`). `--report` overrides the default `<output>/memorypack-report.json`. Exit code `1` means the run finished and at least one file failed; the report still has ok / plain JSON / skipped / failed counts by top-level folder.
+Optional `--union-map unions.json` supplies AbilityActionData tags. `--report` overrides the default `<output>/memorypack-report.json`. Exit code `1` means the run finished and at least one file failed; the report still has ok / plain JSON / skipped / failed counts by top-level folder.
 
-Basename `CommonSysTeleportValidationDataTable` matches the `TeleportValidationDataTable` suffix. Instance-id filenames use the folder hint (`BuffData/`, `SkillData/`, `LevelConfig/`, `LevelData/`, `LevelScriptData/`, `SpawnerConfig` → `SpawnerConfigData`, `AtmosphericNpcData` → `NpcAtmosphericDataTable`, `NPC/MontageJson` → `NPCMontageJson`, `Interactive/ModelViewStateControllerData` → `MVSCModelViewStateControllerData`, `CharInteractPerformCfgs` → `CharInteractPerformRuntimeCfg`). `GameplayConfig/NonGeneratedConfigs` uses the file basename. When several types share a leaf, an `IMemoryPackSerialize` root wins.
+Basename `CommonSysTeleportValidationDataTable` matches the `TeleportValidationDataTable` suffix. Instance-id filenames use the folder hint (`BuffData/`, `SkillData/`, `LevelConfig/`, `LevelData/`, `LevelScriptData/`, `SpawnerConfig` → `SpawnerConfigData`, `AtmosphericNpcData` → `NpcAtmosphericDataTable`, `NPC/MontageJson` → `NPCMontageJson`, `Interactive/ModelViewStateControllerData` → `MVSCModelViewStateControllerData`, `CharInteractPerformCfgs` → `CharInteractPerformRuntimeCfg`, `AnimationConfig` → `AnimationConfigJson`, `NavMesh` → `LunaNavMeshAreaContainer`, `GPUISystemConfig` → `PrefabGroupSerializeData`). `GameplayConfig/NonGeneratedConfigs` uses the file basename. When several types share a leaf, an `IMemoryPackSerialize` root wins.
+
+`GUIDProxy` is 16 bytes (four little-endian uint32s) with no object header; a leading 255 is null. `Beyond.Optional<T>` and `Param<T>` with memberCount 0 are an empty value. Tagged unions (`AbilityActionData`, `ActionBase`, `PureGetter`, `ActionHeader`, `AbstractBehaviorData`, `DamageProcessorBase`, `ConditionRuntimeBase`, and bare `Data`) read a tag and then the concrete wrapper. `ActionBase` leaves whose own wire is empty are tried as `ActionBase`'s 14 merged fields. Bare `Data` is narrowed when the field name contains finder, validator, or processor.
+
+### Failure classes
+
+The report's `failures` array is the coverage list. Messages fall into a few classes:
+
+| Class | What it means |
+| --- | --- |
+| `union tag N … matches K concrete types` | More than one wrapper fits. `AbilityActionData` and `ActionBase` tags are assigned in native formatter IL, which this repo does not have. Pass `--union-map`, or export the tag table from IL. A tag is remembered for the rest of the run only when exactly one concrete type fits. |
+| `union tag N … matched no concrete wrapper` | The tag was read, and every candidate rejected the following bytes. |
+| `memberCount … does not match` | The cursor is on a typed object whose header is not that wrapper's `wire_order` (or the merged private-field list). |
+| `AnimationCurve has no Beyond wrapper` | `UnityEngine.AnimationCurve` is not in the export. |
+| `No type_index basename` | The file name and folder hint did not select a root type. |
+
+The Buff and Skill samples stop on `AbilityActionData` tag **374**, which matches six header-7 wrappers. That tag is not pinned. Tag **296** is `PlayAnimationActionData`; the samples identify it uniquely, and it is checked in at `BydTools.Tests/Fixtures/MemoryPack/ability-action-union-map.json`:
+
+```json
+{ "AbilityActionData": { "296": "PlayAnimationActionData" } }
+```
+
+Pass that file as `--union-map` and add further tags as they are confirmed. Do not guess tags that several wrappers still fit.
+
+TODO: NPC montage JSON gets through `GUIDProxy` and then stops on `AnimationClipAsyncInfo`. That formatter's layout is not in `schemas.json`. Do not invent it; it needs the formatter IL.
 
 String pool files are version-1 `USPC` blocks: magic, version, flags (bit 0 = LZ4), count, raw length, stored length, then the payload. Each string is an int32 byte length and that many UTF-8 bytes, reached through an offset table. Shipped `StringPool0.byte` starts with a little-endian `extraFileCount` and then `USPC`; `StringPool1.byte` and later start at `USPC`. `StringPoolHashIndex.byte` is `SHPI` and is ignored. Global id = `blockIndex * len(StringPool0) + localIndex`.
 
