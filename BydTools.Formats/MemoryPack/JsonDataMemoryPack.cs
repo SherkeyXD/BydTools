@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Linq;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -174,8 +175,8 @@ public static class JsonDataMemoryPack
     }
 
     /// <summary>
-    /// Loads <c>{ "AbilityActionData": { "296": "PlayAnimationActionData" }, "ActionBase": { ... } }</c>.
-    /// A flat <c>{ "296": "..." }</c> object is AbilityActionData only.
+    /// Loads <c>{ "AbilityActionData": { "296": "PlayAnimationActionData", ... }, "ActionBase": { ... } }</c>.
+    /// A flat <c>{ "296": "..." }</c> object is treated as AbilityActionData only (legacy).
     /// </summary>
     public static IReadOnlyDictionary<string, IReadOnlyDictionary<int, string>> LoadUnionMap(string path)
     {
@@ -184,18 +185,19 @@ public static class JsonDataMemoryPack
         if (root.ValueKind != JsonValueKind.Object)
             throw new InvalidDataException("Union map must be a JSON object.");
 
+        var maps = new Dictionary<string, IReadOnlyDictionary<int, string>>(StringComparer.Ordinal);
         bool looksNested = false;
         foreach (var prop in root.EnumerateObject())
         {
-            if (prop.Value.ValueKind != JsonValueKind.Object)
-                continue;
-            if (int.TryParse(prop.Name, out _))
-                continue;
-            if (prop.Value.EnumerateObject().Any(child => int.TryParse(child.Name, out _)))
-                looksNested = true;
+            if (prop.Value.ValueKind == JsonValueKind.Object
+                && prop.Value.EnumerateObject().Any(p => int.TryParse(p.Name, out _)))
+            {
+                // Nested union name → tags, or flat tags (names are integers).
+                if (!int.TryParse(prop.Name, out _))
+                    looksNested = true;
+            }
         }
 
-        var maps = new Dictionary<string, IReadOnlyDictionary<int, string>>(StringComparer.Ordinal);
         if (looksNested)
         {
             foreach (var prop in root.EnumerateObject())
@@ -227,7 +229,6 @@ public static class JsonDataMemoryPack
                 throw new InvalidDataException($"Union tag {tag} has an empty type name.");
             map[tag] = name;
         }
-
         return map;
     }
 

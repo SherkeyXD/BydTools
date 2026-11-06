@@ -37,7 +37,7 @@ public sealed class MpType
     public required string TargetType { get; init; }
     public required string WrapperType { get; init; }
     public required bool HasDeserialize { get; init; }
-    public required MpMember[] Wire { get; init; }
+    public required MpMember[] Wire { get; set; }
     public required MpMember[] Own { get; set; }
     public MpMember[]? AbilityPayload { get; set; }
     public int? MinFieldOffset { get; init; }
@@ -195,6 +195,11 @@ public sealed class MemoryPackSchema
                     })
                     .ToArray();
             }
+
+            // ActionBase concretes omit inherited NodeBase/ActionBase members from wire_order.
+            // Native Deserialize always writes: NodeBase privates + NodeBase wire props + _nextID
+            // + concrete '_' fields (alpha) + concrete wire_order.
+            SynthesizeActionBaseWires(byTarget, pending, kinds);
         }
 
         // AbilityActionData base prefix, then each concrete's own members.
@@ -327,28 +332,7 @@ public sealed class MemoryPackSchema
                         || type.TargetType.StartsWith("Beyond.Gameplay.Actions.GetInteractiveProperty`1", StringComparison.Ordinal)
                         || type.TargetType.StartsWith("Beyond.Gameplay.Actions.GetLevelScriptPropertyGeneric`1", StringComparison.Ordinal))
                         continue;
-                    if (type.Wire.Length == 0
-                        && _byTarget.TryGetValue("Beyond.Gameplay.Actions.ActionBase", out var abases)
-                        && abases.Count == 1
-                        && abases[0].Own.Length > 0)
-                    {
-                        list.Add(new MpType
-                        {
-                            TargetType = type.TargetType,
-                            WrapperType = type.WrapperType,
-                            HasDeserialize = type.HasDeserialize,
-                            Wire = abases[0].Own,
-                            Own = abases[0].Own,
-                            AbilityPayload = type.AbilityPayload,
-                            MinFieldOffset = type.MinFieldOffset,
-                            SerializeMarker = type.SerializeMarker,
-                        });
-                    }
-                    else
-                    {
-                        list.Add(type);
-                    }
-
+                    list.Add(type);
                     continue;
                 }
 
@@ -554,6 +538,101 @@ public sealed class MemoryPackSchema
             SerializeMarker = source.SerializeMarker,
         };
         derivedList[0] = aliased;
+    }
+
+
+    /// <summary>
+    /// Recover ActionBase MemoryPack wire for wrappers whose schemas.json wire_order is empty
+    /// or only lists leaf props. Confirmed against WaitForSeconds/Split/CallServer/SwitchInt/
+    /// IfElseAction/StartDialogAction formatter Deserialize (memberCount + setter order).
+    /// </summary>
+    private static void SynthesizeActionBaseWires(
+        Dictionary<string, List<MpType>> byTarget,
+        List<(MpType Type, List<(string Name, string Type)> Extras)> pending,
+        Dictionary<string, string> kinds)
+    {
+        MpMember[] prefix = BuildActionBasePrefix(kinds);
+        var extrasByType = new Dictionary<MpType, List<(string Name, string Type)>>();
+        foreach (var (type, extras) in pending)
+            extrasByType[type] = extras;
+
+        foreach (var group in byTarget.Values)
+        {
+            foreach (MpType type in group)
+            {
+                if (!IsActionBaseConcrete(type.TargetType, type.HasDeserialize))
+                    continue;
+
+                extrasByType.TryGetValue(type, out List<(string Name, string Type)>? extras);
+                extras ??= [];
+                var wireNames = new HashSet<string>(type.Wire.Select(m => m.Name), StringComparer.Ordinal);
+                MpMember[] underscore = extras
+                    .Where(e => e.Name.Length > 1
+                        && e.Name[0] == '_'
+                        && e.Name[1] != '_'
+                        && !e.Name.StartsWith("m_", StringComparison.Ordinal)
+                        && !wireNames.Contains(e.Name))
+                    .OrderBy(e => e.Name.ToLowerInvariant(), StringComparer.Ordinal)
+                    .Select(e => new MpMember
+                    {
+                        Name = e.Name,
+                        Type = e.Type,
+                        Kind = Classify(e.Type, kinds),
+                    })
+                    .ToArray();
+
+                var synthesized = new MpMember[prefix.Length + underscore.Length + type.Wire.Length];
+                Array.Copy(prefix, 0, synthesized, 0, prefix.Length);
+                Array.Copy(underscore, 0, synthesized, prefix.Length, underscore.Length);
+                Array.Copy(type.Wire, 0, synthesized, prefix.Length + underscore.Length, type.Wire.Length);
+                type.Wire = synthesized;
+                type.Own = synthesized;
+            }
+        }
+    }
+
+    private static MpMember[] BuildActionBasePrefix(Dictionary<string, string> kinds)
+    {
+        (string Name, string Type)[] members =
+        [
+            ("_dontLogWarning", "bool"),
+            ("_ID", "int"),
+            ("_releaseWhenExecutionFinished", "bool"),
+            ("_uid", "string"),
+            ("scopeMask", "Beyond.GEnums.ScopeName"),
+            ("useCurrentScope", "bool"),
+            ("useGraphScope", "bool"),
+            ("_nextID", "int"),
+        ];
+        return members
+            .Select(m => new MpMember
+            {
+                Name = m.Name,
+                Type = m.Type,
+                Kind = Classify(m.Type, kinds),
+            })
+            .ToArray();
+    }
+
+    private static bool IsActionBaseConcrete(string targetType, bool hasDeserialize)
+    {
+        if (!hasDeserialize)
+            return false;
+        if (!targetType.StartsWith("Beyond.Gameplay.Actions.", StringComparison.Ordinal))
+            return false;
+        if (targetType is "Beyond.Gameplay.Actions.ActionBase" or "Beyond.Gameplay.Actions.NodeBase")
+            return false;
+        if (targetType.Contains("ActionSerializedMap", StringComparison.Ordinal)
+            || targetType.Contains("ActionMapAssetRaw", StringComparison.Ordinal)
+            || targetType.Contains("ActionNodePtr", StringComparison.Ordinal)
+            || targetType.StartsWith("Beyond.Gameplay.Actions.Param`1", StringComparison.Ordinal)
+            || targetType.StartsWith("Beyond.Gameplay.Actions.Getter`1", StringComparison.Ordinal)
+            || targetType.StartsWith("Beyond.Gameplay.Actions.List", StringComparison.Ordinal)
+            || targetType.StartsWith("Beyond.Gameplay.Actions.GetInteractiveProperty`1", StringComparison.Ordinal)
+            || targetType.StartsWith("Beyond.Gameplay.Actions.GetLevelScriptPropertyGeneric`1", StringComparison.Ordinal)
+            || targetType.StartsWith("Beyond.Gameplay.Actions.IParam", StringComparison.Ordinal))
+            return false;
+        return true;
     }
 
     private static bool IsAbilityConcrete(MpType type)

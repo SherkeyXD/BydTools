@@ -168,6 +168,31 @@ public class MemoryPackTests
         Assert.Equal("hello", loaded.Format(2));
     }
 
+
+    [Fact]
+    public void FAnimationCurve_memberCount_0_yields_empty_object()
+    {
+        var decoder = new MemoryPackDecoder(Schema());
+        // MemoryPack versioning: count 0 means every wire member is default/omitted.
+        JsonNode? node = decoder.Decode(new byte[] { 0 }, "Beyond.FAnimationCurve");
+        var obj = Assert.IsType<JsonObject>(node);
+        Assert.Empty(obj);
+    }
+
+    [Fact]
+    public void FAnimationCurve_partial_memberCount_reads_wire_prefix()
+    {
+        var decoder = new MemoryPackDecoder(Schema());
+        // wire_order: keys, postWrapMode, preWrapMode — count 1 reads only keys (null array).
+        var payload = new byte[] { 1, 0xFF, 0xFF, 0xFF, 0xFF };
+        JsonNode? node = decoder.Decode(payload, "Beyond.FAnimationCurve");
+        var obj = Assert.IsType<JsonObject>(node);
+        Assert.Single(obj);
+        Assert.Null(obj["keys"]);
+        Assert.False(obj.ContainsKey("postWrapMode"));
+        Assert.False(obj.ContainsKey("preWrapMode"));
+    }
+
     private static void AssertHardSample(MemoryPackDecoder decoder, byte[] data, string root)
     {
         var ex = Assert.Throws<MemoryPackUnionException>(() => decoder.Decode(data, root));

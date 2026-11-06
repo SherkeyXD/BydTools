@@ -18,8 +18,8 @@
   - StringPool ids (`-1` empty, `-2` null) resolve from `StringPool*.byte` when `--string-pool` is set
   - Tables such as BambooRaft and teleport validation decode fully
   - Remaining gaps (each failed file is one row in the coverage report):
-    - With `BydTools.Tests/Fixtures/MemoryPack/union-map.json`, `AbilityActionData` and `ActionBase` tag errors clear. LevelScript files that still fail are Action concretes whose `wire_order` is empty (`memberCount` versus wire 0).
-    - NPC montages often fail on `AnimationClipAsyncInfo` with memberCount 0 (MemoryPack defaults). A follow-up will treat count 0 and partial counts as versioning. That layout is not filled in here.
+    - With `union-map.json`, `AbilityActionData` and `ActionBase` tag errors clear. Common Action memberCounts now include the NodeBase prefix, `_nextID`, and the concrete fields. Headline ok count stays about the same until `Param`, bare `Data`, and `AnimationCurve` are addressed.
+    - `AnimationClipAsyncInfo` memberCount 0 is an empty object (MemoryPack defaults). Montages that still fail do so later (`AnimationCurve` or trailing bytes). Count 0 and partial counts on other types are accepted outside union sandbox; a follow-up can tighten versioning if that over-accepts.
     - `UnityEngine.AnimationCurve` has no wrapper in the export
     - U8, Webview, and Table SparkBuffer are out of scope
 
@@ -117,7 +117,7 @@ BydTools decode-jsondata \
 
 Basename `CommonSysTeleportValidationDataTable` matches the `TeleportValidationDataTable` suffix. Instance-id filenames use the folder hint (`BuffData/`, `SkillData/`, `LevelConfig/`, `LevelData/`, `LevelScriptData/`, `SpawnerConfig` → `SpawnerConfigData`, `AtmosphericNpcData` → `NpcAtmosphericDataTable`, `NPC/MontageJson` → `NPCMontageJson`, `Interactive/ModelViewStateControllerData` → `MVSCModelViewStateControllerData`, `CharInteractPerformCfgs` → `CharInteractPerformRuntimeCfg`, `AnimationConfig` → `AnimationConfigJson`, `NavMesh` → `LunaNavMeshAreaContainer`, `GPUISystemConfig` → `PrefabGroupSerializeData`). `GameplayConfig/NonGeneratedConfigs` uses the file basename. When several types share a leaf, an `IMemoryPackSerialize` root wins.
 
-`GUIDProxy` is 16 bytes (four little-endian uint32s) with no object header; a leading 255 is null. `Beyond.Optional<T>` and `Param<T>` with memberCount 0 are an empty value. Tagged unions (`AbilityActionData`, `ActionBase`, `PureGetter`, `ActionHeader`, `AbstractBehaviorData`, `DamageProcessorBase`, `ConditionRuntimeBase`, and bare `Data`) read a tag and then the concrete wrapper. `ActionBase` leaves whose own wire is empty are tried as `ActionBase`'s 14 merged fields. Bare `Data` is narrowed when the field name contains finder, validator, or processor.
+`GUIDProxy` is 16 bytes (four little-endian uint32s) with no object header; a leading 255 is null. Outside a union sandbox, memberCount 0 on a non-empty wire is an empty object, and a smaller count reads that prefix of `wire_order` (MemoryPack versioning). Inside a sandbox, count 0 is only accepted for `Beyond.Optional<T>`, `Param<T>`, and `AnimationClipAsyncInfo`, so fork-match does not treat every wrapper as a hit. `ActionBase` concretes are read as NodeBase's seven fields, then `_nextID`, then the concrete `_` fields and `wire_order` (confirmed on WaitForSeconds, Split, CallServer, SwitchInt, IfElse, StartDialog, and BlackScreenFadeIn). `UnityEngine.AnimationCurve` is not aliased to `Beyond.FAnimationCurve`. Bare `Data` is narrowed when the field name contains finder, validator, or processor.
 
 ### Failure classes
 
@@ -127,8 +127,8 @@ The report's `failures` array is the coverage list. Messages fall into a few cla
 | --- | --- |
 | `union tag N … matches K concrete types` | More than one wrapper fits and the tag is not in `--union-map`. `AbilityActionData` and `ActionBase` tags in `union-map.json` clear this class. Other unions (`PureGetter`, `DamageProcessorBase`, bare `Data`, …) are still fork-matched. |
 | `union tag N … matched no concrete wrapper` | The tag was read, and every candidate rejected the following bytes. |
-| `memberCount … does not match` | The cursor is on a typed object whose header is not that wrapper's `wire_order`. LevelScript files that remain after the union map are Action concretes with an empty `wire_order` (a non-zero memberCount against wire 0). Those layouts are not invented here. |
-| `AnimationClipAsyncInfo` memberCount 0 | NPC montages often stop here. Count 0 is the MemoryPack default object. A follow-up will treat count 0 and partial counts as versioning. |
+| `memberCount … does not match` | The header is not that wrapper's wire. Common Action graphs now use the IL-confirmed prefix (NodeBase fields, `_nextID`, concrete `_` fields, then `wire_order`). What remains is mostly `Param`, bare `Data`, and `AnimationCurve`, not empty Action wires. |
+| `AnimationClipAsyncInfo` | memberCount 0 is the empty default and is accepted. Later montage fields (`AnimationCurve`, trailing bytes) are the next failures. |
 | `AnimationCurve has no Beyond wrapper` | `UnityEngine.AnimationCurve` is not in the export. |
 | `No type_index basename` | The file name and folder hint did not select a root type. |
 
