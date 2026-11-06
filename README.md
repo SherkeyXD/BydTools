@@ -18,8 +18,8 @@
   - StringPool ids (`-1` empty, `-2` null) resolve from `StringPool*.byte` when `--string-pool` is set
   - Tables such as BambooRaft and teleport validation decode fully
   - Remaining gaps (each failed file is one row in the coverage report):
-    - Ambiguous union tags on `AbilityActionData` and `ActionBase` (and the other switched bases when more than one concrete fits). Fork-match keeps a tag only when one wrapper fits. Anything else needs `--union-map` or an IL export of the native tag table.
-    - `AnimationClipAsyncInfo` after `GUIDProxy` in NPC montages. The layout is not guessed here; it needs the formatter from IL.
+    - With `BydTools.Tests/Fixtures/MemoryPack/union-map.json`, `AbilityActionData` and `ActionBase` tag errors clear. LevelScript files that still fail are Action concretes whose `wire_order` is empty (`memberCount` versus wire 0).
+    - NPC montages often fail on `AnimationClipAsyncInfo` with memberCount 0 (MemoryPack defaults). A follow-up will treat count 0 and partial counts as versioning. That layout is not filled in here.
     - `UnityEngine.AnimationCurve` has no wrapper in the export
     - U8, Webview, and Table SparkBuffer are out of scope
 
@@ -113,7 +113,7 @@ BydTools decode-jsondata \
   --string-pool vfs-json/Data/Json/StringPool
 ```
 
-Optional `--union-map unions.json` supplies AbilityActionData tags. `--report` overrides the default `<output>/memorypack-report.json`. Exit code `1` means the run finished and at least one file failed; the report still has ok / plain JSON / skipped / failed counts by top-level folder.
+`--union-map` for an Endfield dump is `BydTools.Tests/Fixtures/MemoryPack/union-map.json` (447 `AbilityActionData` tags and 1364 `ActionBase` tags, recovered from GameAssembly formatter jumptables; tag 296 is `PlayAnimationActionData`). A flat `{ "296": "PlayAnimationActionData" }` file is still accepted as AbilityActionData only. `--report` overrides the default `<output>/memorypack-report.json`. Exit code `1` means the run finished and at least one file failed; the report still has ok / plain JSON / skipped / failed counts by top-level folder.
 
 Basename `CommonSysTeleportValidationDataTable` matches the `TeleportValidationDataTable` suffix. Instance-id filenames use the folder hint (`BuffData/`, `SkillData/`, `LevelConfig/`, `LevelData/`, `LevelScriptData/`, `SpawnerConfig` → `SpawnerConfigData`, `AtmosphericNpcData` → `NpcAtmosphericDataTable`, `NPC/MontageJson` → `NPCMontageJson`, `Interactive/ModelViewStateControllerData` → `MVSCModelViewStateControllerData`, `CharInteractPerformCfgs` → `CharInteractPerformRuntimeCfg`, `AnimationConfig` → `AnimationConfigJson`, `NavMesh` → `LunaNavMeshAreaContainer`, `GPUISystemConfig` → `PrefabGroupSerializeData`). `GameplayConfig/NonGeneratedConfigs` uses the file basename. When several types share a leaf, an `IMemoryPackSerialize` root wins.
 
@@ -125,21 +125,16 @@ The report's `failures` array is the coverage list. Messages fall into a few cla
 
 | Class | What it means |
 | --- | --- |
-| `union tag N … matches K concrete types` | More than one wrapper fits. `AbilityActionData` and `ActionBase` tags are assigned in native formatter IL, which this repo does not have. Pass `--union-map`, or export the tag table from IL. A tag is remembered for the rest of the run only when exactly one concrete type fits. |
+| `union tag N … matches K concrete types` | More than one wrapper fits and the tag is not in `--union-map`. `AbilityActionData` and `ActionBase` tags in `union-map.json` clear this class. Other unions (`PureGetter`, `DamageProcessorBase`, bare `Data`, …) are still fork-matched. |
 | `union tag N … matched no concrete wrapper` | The tag was read, and every candidate rejected the following bytes. |
-| `memberCount … does not match` | The cursor is on a typed object whose header is not that wrapper's `wire_order` (or the merged private-field list). |
+| `memberCount … does not match` | The cursor is on a typed object whose header is not that wrapper's `wire_order`. LevelScript files that remain after the union map are Action concretes with an empty `wire_order` (a non-zero memberCount against wire 0). Those layouts are not invented here. |
+| `AnimationClipAsyncInfo` memberCount 0 | NPC montages often stop here. Count 0 is the MemoryPack default object. A follow-up will treat count 0 and partial counts as versioning. |
 | `AnimationCurve has no Beyond wrapper` | `UnityEngine.AnimationCurve` is not in the export. |
 | `No type_index basename` | The file name and folder hint did not select a root type. |
 
-The Buff and Skill samples stop on `AbilityActionData` tag **374**, which matches six header-7 wrappers. That tag is not pinned. Tag **296** is `PlayAnimationActionData`; the samples identify it uniquely, and it is checked in at `BydTools.Tests/Fixtures/MemoryPack/ability-action-union-map.json`:
-
-```json
-{ "AbilityActionData": { "296": "PlayAnimationActionData" } }
+```text
+BydTools decode-jsondata ... --union-map BydTools.Tests/Fixtures/MemoryPack/union-map.json
 ```
-
-Pass that file as `--union-map` and add further tags as they are confirmed. Do not guess tags that several wrappers still fit.
-
-TODO: NPC montage JSON gets through `GUIDProxy` and then stops on `AnimationClipAsyncInfo`. That formatter's layout is not in `schemas.json`. Do not invent it; it needs the formatter IL.
 
 String pool files are version-1 `USPC` blocks: magic, version, flags (bit 0 = LZ4), count, raw length, stored length, then the payload. Each string is an int32 byte length and that many UTF-8 bytes, reached through an offset table. Shipped `StringPool0.byte` starts with a little-endian `extraFileCount` and then `USPC`; `StringPool1.byte` and later start at `USPC`. `StringPoolHashIndex.byte` is `SHPI` and is ignored. Global id = `blockIndex * len(StringPool0) + localIndex`.
 

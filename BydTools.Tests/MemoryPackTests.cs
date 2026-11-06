@@ -74,6 +74,22 @@ public class MemoryPackTests
     }
 
     [Fact]
+    public void Union_map_loads_nested_tables_and_a_flat_legacy_object()
+    {
+        var maps = JsonDataMemoryPack.LoadUnionMap(Path.Combine(FixtureRoot(), "union-map.json"));
+        Assert.Equal(447, maps["AbilityActionData"].Count);
+        Assert.Equal(1364, maps["ActionBase"].Count);
+        Assert.Equal("PlayAnimationActionData", maps["AbilityActionData"][296]);
+
+        using var dir = new TempDir();
+        string flat = Path.Combine(dir.Path, "flat.json");
+        File.WriteAllText(flat, """{ "296": "PlayAnimationActionData" }""");
+        var legacy = JsonDataMemoryPack.LoadUnionMap(flat);
+        Assert.Single(legacy);
+        Assert.Equal("PlayAnimationActionData", legacy["AbilityActionData"][296]);
+    }
+
+    [Fact]
     public void Skill_and_buff_fail_with_a_typed_union_error_or_decode()
     {
         var decoder = new MemoryPackDecoder(Schema());
