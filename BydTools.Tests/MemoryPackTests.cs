@@ -78,7 +78,13 @@ public class MemoryPackTests
     {
         var maps = JsonDataMemoryPack.LoadUnionMap(Path.Combine(FixtureRoot(), "union-map.json"));
         Assert.Equal(447, maps["AbilityActionData"].Count);
+        Assert.Equal(447, maps["Data"].Count);
         Assert.Equal(1364, maps["ActionBase"].Count);
+        Assert.Equal(240, maps["ActionHeader"].Count);
+        Assert.Equal(1108, maps["PureGetter"].Count);
+        Assert.Equal(21, maps["AbstractBehaviorData"].Count);
+        Assert.Equal(11, maps["DamageProcessorBase"].Count);
+        Assert.Equal(50, maps["ConditionRuntimeBase"].Count);
         Assert.Equal("PlayAnimationActionData", maps["AbilityActionData"][296]);
 
         using var dir = new TempDir();

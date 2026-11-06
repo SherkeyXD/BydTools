@@ -18,7 +18,7 @@
   - StringPool ids (`-1` empty, `-2` null) resolve from `StringPool*.byte` when `--string-pool` is set
   - Tables such as BambooRaft and teleport validation decode fully
   - Remaining gaps (each failed file is one row in the coverage report):
-    - With `union-map.json`, `AbilityActionData` and `ActionBase` tag errors clear. Common Action memberCounts now include the NodeBase prefix, `_nextID`, and the concrete fields. Headline ok count stays about the same until `Param`, bare `Data`, and `AnimationCurve` are addressed.
+    - `union-map.json` covers `AbilityActionData`, `Data`, `ActionBase`, `ActionHeader`, `PureGetter`, `AbstractBehaviorData`, `DamageProcessorBase`, and `ConditionRuntimeBase`. On the full dump, ok moved from 1241 to 1295. Remaining large buckets: `AnimationClipAsyncInfo` desync, collections and bools, `AnimationCurve`, `GameplayTag`, `EffectActionData`, `OnLeaderEnterTriggerVolume`.
     - `AnimationClipAsyncInfo` memberCount 0 is an empty object (MemoryPack defaults). Montages that still fail do so later (`AnimationCurve` or trailing bytes). Count 0 and partial counts on other types are accepted outside union sandbox; a follow-up can tighten versioning if that over-accepts.
     - `UnityEngine.AnimationCurve` has no wrapper in the export
     - U8, Webview, and Table SparkBuffer are out of scope
@@ -113,7 +113,7 @@ BydTools decode-jsondata \
   --string-pool vfs-json/Data/Json/StringPool
 ```
 
-`--union-map` for an Endfield dump is `BydTools.Tests/Fixtures/MemoryPack/union-map.json` (447 `AbilityActionData` tags and 1364 `ActionBase` tags, recovered from GameAssembly formatter jumptables; tag 296 is `PlayAnimationActionData`). A flat `{ "296": "PlayAnimationActionData" }` file is still accepted as AbilityActionData only. `--report` overrides the default `<output>/memorypack-report.json`. Exit code `1` means the run finished and at least one file failed; the report still has ok / plain JSON / skipped / failed counts by top-level folder.
+`--union-map` for an Endfield dump is `BydTools.Tests/Fixtures/MemoryPack/union-map.json`, recovered from GameAssembly formatter jumptables (tag 296 is `PlayAnimationActionData`). Keys: `AbilityActionData` 447, `Data` 447, `ActionBase` 1364, `ActionHeader` 240, `PureGetter` 1108, `AbstractBehaviorData` 21, `DamageProcessorBase` 11, `ConditionRuntimeBase` 50. A flat `{ "296": "PlayAnimationActionData" }` file is still accepted as AbilityActionData only. Bare `Data` tags that name an ability-action wrapper use the same four base fields plus the leaf `wire_order` as `AbilityActionData`. `CreateBuffActionInput` is `BuffInput`'s three fields plus its own two. `UnityEngine.AnimationCurve` is not given a guessed layout. On the full JsonData dump this map and those two wire fixes moved ok from 1241 to 1295. The large buckets that remain are `AnimationClipAsyncInfo` desync, collections and bools, `AnimationCurve`, `GameplayTag`, `EffectActionData`, and `OnLeaderEnterTriggerVolume`. `--report` overrides the default `<output>/memorypack-report.json`. Exit code `1` means the run finished and at least one file failed; the report still has ok / plain JSON / skipped / failed counts by top-level folder.
 
 Basename `CommonSysTeleportValidationDataTable` matches the `TeleportValidationDataTable` suffix. Instance-id filenames use the folder hint (`BuffData/`, `SkillData/`, `LevelConfig/`, `LevelData/`, `LevelScriptData/`, `SpawnerConfig` → `SpawnerConfigData`, `AtmosphericNpcData` → `NpcAtmosphericDataTable`, `NPC/MontageJson` → `NPCMontageJson`, `Interactive/ModelViewStateControllerData` → `MVSCModelViewStateControllerData`, `CharInteractPerformCfgs` → `CharInteractPerformRuntimeCfg`, `AnimationConfig` → `AnimationConfigJson`, `NavMesh` → `LunaNavMeshAreaContainer`, `GPUISystemConfig` → `PrefabGroupSerializeData`). `GameplayConfig/NonGeneratedConfigs` uses the file basename. When several types share a leaf, an `IMemoryPackSerialize` root wins.
 
@@ -125,7 +125,7 @@ The report's `failures` array is the coverage list. Messages fall into a few cla
 
 | Class | What it means |
 | --- | --- |
-| `union tag N … matches K concrete types` | More than one wrapper fits and the tag is not in `--union-map`. `AbilityActionData` and `ActionBase` tags in `union-map.json` clear this class. Other unions (`PureGetter`, `DamageProcessorBase`, bare `Data`, …) are still fork-matched. |
+| `union tag N … matches K concrete types` | More than one wrapper fits and the tag is not in `--union-map`. The checked-in map covers `AbilityActionData`, `Data`, `ActionBase`, `ActionHeader`, `PureGetter`, `AbstractBehaviorData`, `DamageProcessorBase`, and `ConditionRuntimeBase`. |
 | `union tag N … matched no concrete wrapper` | The tag was read, and every candidate rejected the following bytes. |
 | `memberCount … does not match` | The header is not that wrapper's wire. Common Action graphs now use the IL-confirmed prefix (NodeBase fields, `_nextID`, concrete `_` fields, then `wire_order`). What remains is mostly `Param`, bare `Data`, and `AnimationCurve`, not empty Action wires. |
 | `AnimationClipAsyncInfo` | memberCount 0 is the empty default and is accepted. Later montage fields (`AnimationCurve`, trailing bytes) are the next failures. |
