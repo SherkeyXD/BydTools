@@ -203,6 +203,9 @@ public sealed class MemoryPackSchema
             // + concrete '_' fields (alpha) + concrete wire_order.
             SynthesizeActionBaseWires(byTarget, pending, kinds);
             SynthesizeActionHeaderWires(byTarget, pending, kinds);
+            // GameCondition children start at field offset 144 (after useGraphScope).
+            // wire_order omits the base's four serialized members.
+            SynthesizeGameConditionWires(byTarget, pending, kinds);
         }
 
         // AbilityActionData base prefix, then each concrete's own members.
@@ -233,6 +236,12 @@ public sealed class MemoryPackSchema
         AliasEmpty(byTarget, "BlackboardString", "BlackboardParamBase`2<string, string>");
         // CreateBuffActionInput wire is BuffInput (3) then its own fields (2) = 5.
         PrefixWithBaseWire(byTarget, "Beyond.Gameplay.Core.CreateBuffActionInput", "Beyond.Gameplay.Core.BuffInput");
+        // Level*Data first fields sit at offset 112, immediately after LevelEntityData
+        // (last field keepCrossMap at 106). Native formatters write the base wire, then the leaf.
+        PrefixWithBaseWire(byTarget, "Beyond.Gameplay.LevelInteractiveData", "Beyond.Gameplay.LevelEntityData");
+        PrefixWithBaseWire(byTarget, "Beyond.Gameplay.LevelEnemyData", "Beyond.Gameplay.LevelEntityData");
+        PrefixWithBaseWire(byTarget, "Beyond.Gameplay.LevelFactoryRegionData", "Beyond.Gameplay.LevelEntityData");
+        PrefixWithBaseWire(byTarget, "Beyond.Gameplay.LevelNpcData", "Beyond.Gameplay.LevelEntityData");
 
         var schema = new MemoryPackSchema(byTarget, byWrapper, byBasename, kinds, concretes.ToArray());
         foreach (var name in markers)
@@ -369,6 +378,14 @@ public sealed class MemoryPackSchema
                     && ((type.TargetType.Contains("Condition", StringComparison.Ordinal)
                             && type.TargetType.EndsWith("Runtime", StringComparison.Ordinal))
                         || type.WrapperType.Contains("ConditionRuntime", StringComparison.Ordinal)))
+                {
+                    list.Add(type);
+                    continue;
+                }
+
+                // CalculationBase has no fields of its own. Concretes are *Calculation.
+                if (staticType == "Beyond.Gameplay.Core.CalculationBase"
+                    && type.TargetType.EndsWith("Calculation", StringComparison.Ordinal))
                     list.Add(type);
             }
         }
@@ -528,6 +545,74 @@ public sealed class MemoryPackSchema
         }
 
         return best;
+    }
+
+    /// <summary>
+    /// GameCondition's serializable members are scopeMask, uniqueId, useCurrentScope, useGraphScope.
+    /// Subclass instance fields begin at offset 144, and their wire_order does not repeat the base.
+    /// </summary>
+    private static void SynthesizeGameConditionWires(
+        Dictionary<string, List<MpType>> byTarget,
+        List<(MpType Type, List<(string Name, string Type)> Extras)> pending,
+        Dictionary<string, string> kinds)
+    {
+        if (!byTarget.TryGetValue("Beyond.Gameplay.GameCondition", out var bases) || bases.Count != 1)
+            return;
+        MpMember[] prefix = bases[0].Wire;
+        if (prefix.Length == 0)
+            return;
+
+        var extrasByType = new Dictionary<MpType, List<(string Name, string Type)>>();
+        foreach (var (type, extras) in pending)
+            extrasByType[type] = extras;
+
+        foreach (var group in byTarget.Values)
+        {
+            foreach (MpType type in group)
+            {
+                if (!IsGameConditionConcrete(type))
+                    continue;
+
+                extrasByType.TryGetValue(type, out List<(string Name, string Type)>? extras);
+                extras ??= [];
+                var wireNames = new HashSet<string>(prefix.Select(m => m.Name), StringComparer.Ordinal);
+                foreach (MpMember member in type.Wire)
+                    wireNames.Add(member.Name);
+                MpMember[] underscore = extras
+                    .Where(e => e.Name.Length > 1
+                        && e.Name[0] == '_'
+                        && e.Name[1] != '_'
+                        && !e.Name.StartsWith("m_", StringComparison.Ordinal)
+                        && !wireNames.Contains(e.Name))
+                    .OrderBy(e => e.Name.ToLowerInvariant(), StringComparer.Ordinal)
+                    .Select(e => new MpMember
+                    {
+                        Name = e.Name,
+                        Type = e.Type,
+                        Kind = Classify(e.Type, kinds),
+                    })
+                    .ToArray();
+
+                var synthesized = new MpMember[prefix.Length + underscore.Length + type.Wire.Length];
+                Array.Copy(prefix, 0, synthesized, 0, prefix.Length);
+                Array.Copy(underscore, 0, synthesized, prefix.Length, underscore.Length);
+                Array.Copy(type.Wire, 0, synthesized, prefix.Length + underscore.Length, type.Wire.Length);
+                type.Wire = synthesized;
+                type.Own = synthesized;
+            }
+        }
+    }
+
+    private static bool IsGameConditionConcrete(MpType type)
+    {
+        if (!type.HasDeserialize || type.MinFieldOffset != 144)
+            return false;
+        string target = type.TargetType;
+        if (target.StartsWith("Beyond.Gameplay.Conditions.", StringComparison.Ordinal))
+            return true;
+        return target is "Beyond.Gameplay.CheckActivityConditionalStageStatus"
+            or "Beyond.Gameplay.CombineCondition"
+            or "Beyond.Gameplay.GameConditionServerPlaceHolder";
     }
 
     private static void PrefixWithBaseWire(

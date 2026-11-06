@@ -152,6 +152,7 @@ public sealed class MemoryPackDecoder
             or "Beyond.Gameplay.Core.ModelViewStateController.AbstractBehaviorData"
             or "Beyond.Gameplay.Core.DamageProcessorBase"
             or "Beyond.Gameplay.ConditionRuntimeBase"
+            or "Beyond.Gameplay.Core.CalculationBase"
             or "Data";
 
     /// <summary>

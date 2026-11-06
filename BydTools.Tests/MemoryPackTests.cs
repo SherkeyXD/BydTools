@@ -248,6 +248,125 @@ public class MemoryPackTests
         Assert.False(obj.ContainsKey("preWrapMode"));
     }
 
+    [Fact]
+    public void LevelInteractiveData_includes_LevelEntityData_prefix()
+    {
+        // memberCount 25 = LevelEntityData wire 14 + LevelInteractiveData wire 11.
+        var bytes = new List<byte> { 25 };
+        bytes.AddRange(I32(0)); // aoiRadiusType
+        bytes.AddRange(U64(0)); // belongLevelScriptId
+        bytes.AddRange(I32(0)); // createState
+        bytes.AddRange(U64(0)); // dependencyGroupId
+        bytes.AddRange(I32(-1)); // entityDataIdKey
+        bytes.AddRange(I32(0)); // entityType
+        bytes.Add(0); // forceLoad
+        bytes.Add(1); // keepCrossMap
+        bytes.AddRange(U64(42)); // levelLogicId
+        bytes.Add(0); // overrideSendDieEvent
+        bytes.AddRange(F32(1));
+        bytes.AddRange(F32(2));
+        bytes.AddRange(F32(3)); // position
+        bytes.AddRange(F32(0));
+        bytes.AddRange(F32(0));
+        bytes.AddRange(F32(0)); // rotation
+        bytes.AddRange(F32(1));
+        bytes.AddRange(F32(1));
+        bytes.AddRange(F32(1)); // scale
+        bytes.Add(0); // sendDieEvent
+        bytes.AddRange(I32(0)); // componentProperties
+        bytes.AddRange(I32(0)); // globalIntKeyList
+        bytes.AddRange(I32(0)); // globalProperties
+        bytes.Add(0); // hideInDialog
+        bytes.Add(1); // isClientOnly
+        bytes.Add(1); // isLocked
+        bytes.AddRange(I32(0)); // mapIntKeyList
+        bytes.AddRange(I32(0)); // mapProperties
+        bytes.AddRange(F32(2.5f)); // modelScale
+        bytes.Add(255); // progressLockCondition null
+        bytes.AddRange(I32(0)); // properties
+
+        var decoder = new MemoryPackDecoder(Schema());
+        JsonObject node = Assert.IsType<JsonObject>(
+            decoder.Decode(bytes.ToArray(), "Beyond.Gameplay.LevelInteractiveData")
+        );
+        Assert.Equal(42ul, node["levelLogicId"]!.GetValue<ulong>());
+        Assert.True(node["keepCrossMap"]!.GetValue<bool>());
+        Assert.True(node["isLocked"]!.GetValue<bool>());
+        Assert.True(node["isClientOnly"]!.GetValue<bool>());
+        Assert.Equal(2.5f, node["modelScale"]!.GetValue<float>());
+        Assert.Null(node["progressLockCondition"]);
+        var position = Assert.IsType<JsonArray>(node["position"]);
+        Assert.Equal(1f, position[0]!.GetValue<float>());
+    }
+
+    [Fact]
+    public void CalculationBase_fork_matches_the_unique_wire_length()
+    {
+        // BreakingAttackCalculation is the only *Calculation with memberCount 2.
+        var bytes = new List<byte> { 9, 2 };
+        bytes.AddRange(BlackboardDouble(1.25f, useKey: false));
+        bytes.AddRange(BlackboardDouble(2.5f, useKey: true));
+        var decoder = new MemoryPackDecoder(Schema());
+        JsonObject node = Assert.IsType<JsonObject>(
+            decoder.Decode(bytes.ToArray(), "Beyond.Gameplay.Core.CalculationBase")
+        );
+        Assert.Equal("Beyond.Gameplay.Core.BreakingAttackCalculation", node["$type"]!.GetValue<string>());
+        Assert.Equal(9, node["$tag"]!.GetValue<int>());
+        Assert.Equal(1.25f, Assert.IsType<JsonObject>(node["atkScale"])["value"]!.GetValue<float>());
+        Assert.Equal(2.5f, Assert.IsType<JsonObject>(node["multiplier"])["value"]!.GetValue<float>());
+    }
+
+    [Fact]
+    public void GameCondition_subclass_prefixes_the_base_wire()
+    {
+        // CheckCurrentDungeon: GameCondition's 4 fields, then _dungeonId.
+        var bytes = new List<byte> { 5 };
+        bytes.AddRange(I32(3)); // scopeMask
+        bytes.AddRange(I32(-1)); // uniqueId
+        bytes.Add(1); // useCurrentScope
+        bytes.Add(0); // useGraphScope
+        bytes.Add(0); // Param memberCount 0
+        var decoder = new MemoryPackDecoder(Schema());
+        JsonObject node = Assert.IsType<JsonObject>(
+            decoder.Decode(bytes.ToArray(), "Beyond.Gameplay.Conditions.CheckCurrentDungeon")
+        );
+        Assert.Equal(3, node["scopeMask"]!.GetValue<int>());
+        Assert.Equal("", node["uniqueId"]!.GetValue<string>());
+        Assert.True(node["useCurrentScope"]!.GetValue<bool>());
+        Assert.False(node["useGraphScope"]!.GetValue<bool>());
+        Assert.IsType<JsonObject>(node["_dungeonId"]);
+    }
+
+    private static byte[] BlackboardDouble(float value, bool useKey)
+    {
+        var bytes = new List<byte> { 3 };
+        bytes.AddRange(I32(-1));
+        bytes.Add(useKey ? (byte)1 : (byte)0);
+        bytes.AddRange(F32(value));
+        return bytes.ToArray();
+    }
+
+    private static byte[] I32(int value)
+    {
+        var buf = new byte[4];
+        BitConverter.TryWriteBytes(buf, value);
+        return buf;
+    }
+
+    private static byte[] U64(ulong value)
+    {
+        var buf = new byte[8];
+        BitConverter.TryWriteBytes(buf, value);
+        return buf;
+    }
+
+    private static byte[] F32(float value)
+    {
+        var buf = new byte[4];
+        BitConverter.TryWriteBytes(buf, value);
+        return buf;
+    }
+
     private static void AssertHardSample(MemoryPackDecoder decoder, byte[] data, string root)
     {
         var ex = Assert.Throws<MemoryPackUnionException>(() => decoder.Decode(data, root));
