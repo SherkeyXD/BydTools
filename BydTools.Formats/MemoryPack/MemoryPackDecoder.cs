@@ -132,6 +132,14 @@ public sealed class MemoryPackDecoder
         }
     }
 
+    /// <summary>
+    /// AbilityActionData concretes, and bare <c>Data</c> leaves that share those wrappers,
+    /// carry the four AbilityActionData fields before the leaf wire_order.
+    /// </summary>
+    private static bool UsesAbilityPayload(string staticType, MpType concrete) =>
+        staticType == "AbilityActionData"
+        || (staticType == "Data" && concrete.AbilityPayload != null);
+
     private static bool IsTaggedUnion(string type) =>
         type is "AbilityActionData"
             or "Beyond.Gameplay.Actions.ActionBase"
@@ -191,7 +199,7 @@ public sealed class MemoryPackDecoder
             return null;
 
         if (TryMappedConcrete(staticType, tag.Value, out MpType mappedType))
-            return staticType == "AbilityActionData"
+            return UsesAbilityPayload(staticType, mappedType)
                 ? ReadConcrete(cursor, mappedType, depth, sandbox)
                 : ReadObject(cursor, mappedType, abilityPayload: false, depth, sandbox);
         if (staticType == "AbilityActionData" && _schema.FindAbilityTag(tag.Value) is MpType cached)
@@ -205,7 +213,7 @@ public sealed class MemoryPackDecoder
             var fork = cursor.Fork(afterTag);
             try
             {
-                JsonNode? node = staticType == "AbilityActionData"
+                JsonNode? node = UsesAbilityPayload(staticType, candidate)
                     ? ReadConcrete(fork, candidate, depth + 1, sandbox: true)
                     : ReadObject(fork, candidate, abilityPayload: false, depth + 1, sandbox: true);
                 if (node is not JsonObject obj)

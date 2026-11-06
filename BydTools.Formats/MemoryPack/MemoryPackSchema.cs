@@ -220,6 +220,8 @@ public sealed class MemoryPackSchema
         AliasEmpty(byTarget, "BlackboardDouble", "BlackboardParamBase`2<float, double>");
         AliasEmpty(byTarget, "BlackboardInt", "BlackboardParamBase`2<int, int>");
         AliasEmpty(byTarget, "BlackboardString", "BlackboardParamBase`2<string, string>");
+        // CreateBuffActionInput wire is BuffInput (3) then its own fields (2) = 5.
+        PrefixWithBaseWire(byTarget, "Beyond.Gameplay.Core.CreateBuffActionInput", "Beyond.Gameplay.Core.BuffInput");
 
         var schema = new MemoryPackSchema(byTarget, byWrapper, byBasename, kinds, concretes.ToArray());
         foreach (var name in markers)
@@ -515,6 +517,25 @@ public sealed class MemoryPackSchema
         }
 
         return best;
+    }
+
+    private static void PrefixWithBaseWire(
+        Dictionary<string, List<MpType>> byTarget,
+        string derived,
+        string baseName)
+    {
+        if (!byTarget.TryGetValue(derived, out var derivedList) || derivedList.Count != 1)
+            return;
+        if (!byTarget.TryGetValue(baseName, out var baseList) || baseList.Count != 1)
+            return;
+        MpType d = derivedList[0];
+        MpType b = baseList[0];
+        if (b.Wire.Length == 0)
+            return;
+        var names = new HashSet<string>(d.Wire.Select(m => m.Name), StringComparer.Ordinal);
+        MpMember[] merged = b.Wire.Where(m => !names.Contains(m.Name)).Concat(d.Wire).ToArray();
+        d.Wire = merged;
+        d.Own = merged;
     }
 
     private static void AliasEmpty(Dictionary<string, List<MpType>> byTarget, string derived, string baseName)
