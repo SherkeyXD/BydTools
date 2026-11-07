@@ -58,6 +58,7 @@ public static class JsonDataMemoryPack
     private static readonly (string PathSuffix, string TypeName)[] FolderHints =
     [
         ("Interactive/ModelViewStateControllerData", "MVSCModelViewStateControllerData"),
+        ("Interactive/InteractiveData", "LevelInteractiveData"),
         ("NPC/MontageJson", "NPCMontageJson"),
         ("CharInteractPerformCfgs", "CharInteractPerformRuntimeCfg"),
         ("AtmosphericNpcData", "NpcAtmosphericDataTable"),
