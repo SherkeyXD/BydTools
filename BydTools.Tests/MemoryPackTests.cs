@@ -87,6 +87,9 @@ public class MemoryPackTests
         Assert.Equal(50, maps["ConditionRuntimeBase"].Count);
         Assert.Equal(6, maps["CalculationBase"].Count);
         Assert.Equal("Beyond.Gameplay.Core.DefiniteValueCalculation", maps["CalculationBase"][2]);
+        Assert.Equal(
+            "Beyond.MemoryPack.Beyond_Gameplay_Core_Selector_HitBoxFinder_DataForMemoryPack",
+            maps["Finder"][7]);
         Assert.Equal("PlayAnimationActionData", maps["AbilityActionData"][296]);
 
         using var dir = new TempDir();
@@ -395,6 +398,45 @@ public class MemoryPackTests
             hint: null);
         Assert.Equal(31, anim.Wire.Length);
         Assert.Equal("actorIndex", anim.Wire[15].Name);
+    }
+
+    [Fact]
+    public void Finder_tag_7_is_HitBox_not_Ability_Data()
+    {
+        MemoryPackSchema schema = Schema();
+        MpType hitBox = schema.ResolveNamed(
+            "Beyond.MemoryPack.Beyond_Gameplay_Core_Selector_HitBoxFinder_DataForMemoryPack");
+        Assert.Equal(8, hitBox.Wire.Length);
+        Assert.Equal(
+            new[]
+            {
+                "autoSetTargetFaction", "checkAlive", "containsUnMarkable", "factionTarget", "targetFactionType",
+                "checkIntUnSelectableTag", "shapeList", "targetObjectType",
+            },
+            hitBox.Wire.Select(m => m.Name).ToArray());
+
+        var maps = JsonDataMemoryPack.LoadUnionMap(Path.Combine(FixtureRoot(), "union-map.json"));
+        var decoder = new MemoryPackDecoder(schema, unionMaps: maps);
+        // SelectorData: finderData tag 7, then empty post/validator lists.
+        // Ability Data tag 7 is AddAIMarker; Finder tag 7 is HitBox (count 8 = TargetFinder 5 + leaf 3).
+        byte[] payload =
+        [
+            3,
+            7, 8,
+            0, 0, 0,
+            0, 0, 0, 0,
+            0, 0, 0, 0,
+            0,
+            0, 0, 0, 0,
+            1, 0, 0, 0,
+            0, 0, 0, 0,
+            0, 0, 0, 0,
+        ];
+        JsonObject node = Assert.IsType<JsonObject>(decoder.Decode(payload, "SelectorData"));
+        JsonObject finder = Assert.IsType<JsonObject>(node["finderData"]);
+        Assert.Equal(7, finder["$tag"]!.GetValue<int>());
+        Assert.Contains("HitBoxFinder", finder["$type"]!.GetValue<string>(), StringComparison.Ordinal);
+        Assert.Equal(1, finder["targetObjectType"]!.GetValue<int>());
     }
 
     [Fact]

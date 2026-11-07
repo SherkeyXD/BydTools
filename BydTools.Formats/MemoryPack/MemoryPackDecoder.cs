@@ -34,13 +34,30 @@ public sealed class MemoryPackDecoder
             _unionMaps[key] = new Dictionary<int, string>(tags);
     }
 
-    private bool TryMappedConcrete(string staticType, int tag, out MpType concrete)
+    private bool TryMappedConcrete(string staticType, int tag, string? hint, out MpType concrete)
     {
         concrete = null!;
-        if (LookupUnionMap(staticType) is not { } map || !map.TryGetValue(tag, out string? mapped))
+        // SelectorData.finderData is Finder.Data. The schema collapses that to bare Data,
+        // so the Ability Data jumptable must not answer finder/validator/processor fields.
+        string key = DataRoleKey(staticType, hint) ?? staticType;
+        if (LookupUnionMap(key) is not { } map || !map.TryGetValue(tag, out string? mapped))
             return false;
         concrete = _schema.ResolveNamed(mapped);
         return true;
+    }
+
+    private static string? DataRoleKey(string staticType, string? hint)
+    {
+        if (staticType != "Data" || string.IsNullOrEmpty(hint))
+            return null;
+        string h = hint.ToLowerInvariant();
+        if (h.Contains("finder", StringComparison.Ordinal))
+            return "Finder";
+        if (h.Contains("validator", StringComparison.Ordinal))
+            return "Validator";
+        if (h.Contains("postprocessor", StringComparison.Ordinal) || h.Contains("processor", StringComparison.Ordinal))
+            return "PostProcessor";
+        return null;
     }
 
     private Dictionary<int, string>? LookupUnionMap(string staticType)
@@ -406,7 +423,7 @@ public sealed class MemoryPackDecoder
         if (tag == null)
             return null;
 
-        if (TryMappedConcrete(staticType, tag.Value, out MpType mappedType))
+        if (TryMappedConcrete(staticType, tag.Value, hint, out MpType mappedType))
         {
             JsonNode? mapped = UsesAbilityPayload(staticType, mappedType)
                 ? ReadConcrete(cursor, mappedType, depth, sandbox)
