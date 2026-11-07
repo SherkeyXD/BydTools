@@ -363,6 +363,41 @@ public class MemoryPackTests
     }
 
     [Fact]
+    public void V10_bucket_wires_match_native_counts()
+    {
+        MemoryPackSchema schema = Schema();
+        MpType vulnerable = schema.ResolveNamed(
+            "Beyond.MemoryPack.Beyond_Gameplay_Core_VulnerableAction_DataForMemoryPack");
+        MpType weak = schema.ResolveNamed(
+            "Beyond.MemoryPack.Beyond_Gameplay_Core_WeakAction_DataForMemoryPack");
+        Assert.Equal(14, vulnerable.AbilityPayload!.Length);
+        Assert.Equal(13, weak.AbilityPayload!.Length);
+        Assert.Equal("subType", vulnerable.AbilityPayload[^1].Name);
+
+        MpType effect = schema.Require("EffectActionData", hint: null);
+        Assert.Equal(20, effect.AbilityPayload!.Length);
+
+        MpType step = schema.Require("PlayAnimationWithStepData", hint: null);
+        Assert.Equal(30, step.AbilityPayload!.Length);
+        Assert.Equal("animName", step.AbilityPayload[4].Name);
+
+        MpType radio = schema.Require("Beyond.Gameplay.Actions.PlayRadioAndWait", hint: null);
+        Assert.Equal(13, radio.Wire.Length);
+        Assert.Contains(radio.Wire, m => m.Name == "_radioId");
+
+        MpType mvsc = schema.Require(
+            "Beyond.Gameplay.Core.ModelViewStateController.MVSCEffectBehaviorData",
+            hint: null);
+        Assert.Equal(17, mvsc.Wire.Length);
+
+        MpType anim = schema.Require(
+            "Beyond.Gameplay.Core.CharInteractPerform.CharAnimActionData",
+            hint: null);
+        Assert.Equal(31, anim.Wire.Length);
+        Assert.Equal("actorIndex", anim.Wire[15].Name);
+    }
+
+    [Fact]
     public void AdditiveEffectType_is_a_signed_int16()
     {
         var decoder = new MemoryPackDecoder(Schema());
