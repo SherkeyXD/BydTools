@@ -452,6 +452,56 @@ public class MemoryPackTests
     }
 
     [Fact]
+    public void V12_effect_line_bundle_condition_and_dict_presence()
+    {
+        MemoryPackSchema schema = Schema();
+        MpType line = schema.ResolveNamed(
+            "Beyond.MemoryPack.Beyond_Gameplay_EffectLineCenterAction_DataForMemoryPack");
+        Assert.NotNull(line.AbilityPayload);
+        Assert.Equal(21, line.AbilityPayload!.Length);
+        Assert.Equal("isEnable", line.AbilityPayload[0].Name);
+        Assert.Equal("effectCenter", line.AbilityPayload[^1].Name);
+
+        MpType bundle = schema.Require("Beyond.Gameplay.InventoryItemBundleWithInfinite", hint: null);
+        Assert.Equal(3, bundle.Wire.Length);
+        Assert.Equal(new[] { "count", "id", "infinite" }, bundle.Wire.Select(m => m.Name).ToArray());
+
+        var decoder = new MemoryPackDecoder(schema);
+        byte[] condition =
+        [
+            1, 0, 0, 0,
+            0, 0, 0xC0, 0x3F,
+            7, 0, 0, 0,
+            2, 0, 0, 0,
+        ];
+        JsonObject value = Assert.IsType<JsonObject>(
+            decoder.Decode(condition, "Beyond.Gameplay.Core.ModelViewStateController.ConditionValue"));
+        Assert.Equal(2, value["type"]!.GetValue<int>());
+        JsonObject union = Assert.IsType<JsonObject>(value["conditionValue"]);
+        Assert.True(union["boolValue"]!.GetValue<bool>());
+        Assert.Equal(1.5f, union["floatValue"]!.GetValue<float>());
+        Assert.Equal(7, union["intValue"]!.GetValue<int>());
+
+        // Dictionary<string, BambooRaftQuestConfig> value is prefixed with presence 0x01
+        // because the next byte is the wire memberCount (2).
+        byte[] task =
+        [
+            2,
+            1, 0, 0, 0,
+            0xFF, 0xFF, 0xFF, 0xFF,
+            1, 2,
+            0xFF, 0xFF, 0xFF, 0xFF,
+            3, 0, 0, 0,
+            9, 0, 0, 0, 0, 0, 0, 0,
+        ];
+        JsonObject row = Assert.IsType<JsonObject>(decoder.Decode(task, "Beyond.Gameplay.BambooRaftTaskData"));
+        Assert.Equal(9ul, row["raftId"]!.GetValue<ulong>());
+        JsonObject configs = Assert.IsType<JsonObject>(row["questConfigs"]);
+        JsonObject quest = Assert.IsType<JsonObject>(configs[""]);
+        Assert.Equal(3, quest["state"]!.GetValue<int>());
+    }
+
+    [Fact]
     public void AdditiveEffectType_is_a_signed_int16()
     {
         var decoder = new MemoryPackDecoder(Schema());

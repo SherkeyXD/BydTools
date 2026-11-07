@@ -264,6 +264,10 @@ public sealed class MemoryPackSchema
         ApplyKeywordActionMiddles(byTarget, byWrapper);
         // PlayAnimationWithStep = ability base + PlayAnimationActionData + its own 14.
         PrefixPlayAnimationWithStep(byTarget, abilityBase);
+        // EffectLineCenterAction.Data : EffectActionData. Native count 21 = 4 + 16 + effectCenter.
+        PrefixEffectLineCenter(byTarget, byWrapper, abilityBase);
+        // InventoryItemBundleWithInfinite is the two bundle fields plus infinite.
+        PrefixWithBaseWire(byTarget, "Beyond.Gameplay.InventoryItemBundleWithInfinite", "Beyond.Gameplay.InventoryItemBundle");
         // PlayRadioAndWait serializes the same 13 members as PlayRadio.
         CopyWire(byTarget, "Beyond.Gameplay.Actions.PlayRadioAndWait", "Beyond.Gameplay.Actions.PlayRadio");
         // MVSC behaviors start at offset 40, after MVSCBehaviorData (6). Effect is 6+11=17.
@@ -752,6 +756,25 @@ public sealed class MemoryPackSchema
             .Concat(type.Wire)
             .ToArray();
         type.AbilityPayload = payload;
+    }
+
+    private static void PrefixEffectLineCenter(
+        Dictionary<string, List<MpType>> byTarget,
+        Dictionary<string, MpType> byWrapper,
+        MpMember[] abilityBase)
+    {
+        if (abilityBase.Length == 0)
+            return;
+        if (!byTarget.TryGetValue("EffectActionData", out var effect) || effect.Count != 1)
+            return;
+        const string wrapper = "Beyond.MemoryPack.Beyond_Gameplay_EffectLineCenterAction_DataForMemoryPack";
+        if (!byWrapper.TryGetValue(wrapper, out MpType? type))
+            return;
+        var leafNames = new HashSet<string>(type.Wire.Select(m => m.Name), StringComparer.Ordinal);
+        type.AbilityPayload = abilityBase
+            .Concat(effect[0].Wire.Where(m => !leafNames.Contains(m.Name)))
+            .Concat(type.Wire)
+            .ToArray();
     }
 
     private static void CopyWire(Dictionary<string, List<MpType>> byTarget, string derived, string sourceName)
