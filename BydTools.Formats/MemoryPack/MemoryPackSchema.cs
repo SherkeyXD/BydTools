@@ -271,6 +271,9 @@ public sealed class MemoryPackSchema
         // Char interact acts at offset 120 are ActionData (15) + leaf.
         // Acts at 128 also take ActorActData.actorIndex. CharAnim is 15+1+15=31.
         PrefixCharInteractPerform(byTarget);
+        // HitBoxFinder fields start at offset 32, after TargetFinder (5). Native count 8 = 5+3.
+        // ShapeFinder is the same boundary.
+        PrefixTargetFinderChildren(byWrapper);
         // BuffData lists were exported as List<Data>; native elements are *Modifier.Data.
         RewriteBuffModifierDataLists(byTarget, byWrapper);
         SynthesizeBuffIconConfigWire(byTarget, kinds);
@@ -817,6 +820,28 @@ public sealed class MemoryPackSchema
         }
     }
 
+    private static void PrefixTargetFinderChildren(Dictionary<string, MpType> byWrapper)
+    {
+        const string targetFinder = "Beyond.MemoryPack.Beyond_Gameplay_Core_Selector_TargetFinder_DataForMemoryPack";
+        if (!byWrapper.TryGetValue(targetFinder, out MpType? parent) || parent.Wire.Length == 0)
+            return;
+        foreach (MpType type in byWrapper.Values)
+        {
+            if (type.MinFieldOffset != 32)
+                continue;
+            if (!type.WrapperType.Contains("_Selector_", StringComparison.Ordinal)
+                || !type.WrapperType.Contains("Finder_DataForMemoryPack", StringComparison.Ordinal))
+                continue;
+            if (type.WrapperType == targetFinder)
+                continue;
+            var names = new HashSet<string>(type.Wire.Select(m => m.Name), StringComparer.Ordinal);
+            MpMember[] merged = parent.Wire.Where(m => !names.Contains(m.Name)).Concat(type.Wire).ToArray();
+            type.Wire = merged;
+            type.Own = merged;
+            type.AbilityPayload = null;
+        }
+    }
+
     private static void PrefixFindTargetData(
         Dictionary<string, List<MpType>> byTarget,
         Dictionary<string, MpType> byWrapper,
@@ -1238,6 +1263,13 @@ public sealed class MemoryPackSchema
             || wrapper.Contains("Beyond_Gameplay_AI_", StringComparison.Ordinal))
             return false;
         if (type.MinFieldOffset is int offset && offset < 32)
+            return false;
+        // Finder/Validator/PostProcessor Data is not AbilityActionData, even when the
+        // schema collapsed the nested type to bare Data.
+        if (type.WrapperType.Contains("_Selector_", StringComparison.Ordinal)
+            && (type.WrapperType.Contains("Finder", StringComparison.Ordinal)
+                || type.WrapperType.Contains("Validator", StringComparison.Ordinal)
+                || type.WrapperType.Contains("Processor", StringComparison.Ordinal)))
             return false;
         return type.TargetType == "Data" || type.TargetType.EndsWith("ActionData", StringComparison.Ordinal);
     }

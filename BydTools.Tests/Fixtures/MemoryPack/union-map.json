@@ -3710,5 +3710,8 @@
     "3": "Beyond.Gameplay.Core.MultiplyAttributeCalculation",
     "4": "Beyond.Gameplay.Core.NormalAttackPoiseCalculation",
     "5": "Beyond.Gameplay.Core.PrimaryAttrCalculation"
+  },
+  "Finder": {
+    "7": "Beyond.MemoryPack.Beyond_Gameplay_Core_Selector_HitBoxFinder_DataForMemoryPack"
   }
 }
