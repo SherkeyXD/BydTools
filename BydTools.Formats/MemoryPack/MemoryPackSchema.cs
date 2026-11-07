@@ -273,7 +273,10 @@ public sealed class MemoryPackSchema
         PrefixCharInteractPerform(byTarget);
         // HitBoxFinder fields start at offset 32, after TargetFinder (5). Native count 8 = 5+3.
         // ShapeFinder is the same boundary.
+        RewriteSelectorDataUnions(byTarget);
         PrefixTargetFinderChildren(byWrapper);
+        ClearSelectorAbilityPayloads(byWrapper);
+        DisambiguateShapeDataTypes(byWrapper);
         // BuffData lists were exported as List<Data>; native elements are *Modifier.Data.
         RewriteBuffModifierDataLists(byTarget, byWrapper);
         SynthesizeBuffIconConfigWire(byTarget, kinds);
@@ -820,6 +823,41 @@ public sealed class MemoryPackSchema
         }
     }
 
+    /// <summary>
+    /// SelectorData fields were exported as bare Data. Native finderData is Finder.Data.
+    /// </summary>
+    private static void RewriteSelectorDataUnions(Dictionary<string, List<MpType>> byTarget)
+    {
+        if (!byTarget.TryGetValue("SelectorData", out var list) || list.Count != 1)
+            return;
+        MpType type = list[0];
+        type.Wire = type.Wire.Select(RewriteSelectorMember).ToArray();
+        type.Own = type.Wire;
+    }
+
+    private static MpMember RewriteSelectorMember(MpMember member)
+    {
+        string type = member.Type switch
+        {
+            "Data" when member.Name == "finderData" => "Finder.Data",
+            "System.Collections.Generic.List`1<Data>" when member.Name == "validatorData"
+                => "System.Collections.Generic.List`1<Validator.Data>",
+            "System.Collections.Generic.List`1<Data>" when member.Name == "postProcessorData"
+                => "System.Collections.Generic.List`1<PostProcessor.Data>",
+            _ => member.Type,
+        };
+        if (type == member.Type)
+            return member;
+        return new MpMember
+        {
+            Name = member.Name,
+            Type = type,
+            Kind = type.StartsWith("System.Collections.Generic.List`1<", StringComparison.Ordinal)
+                ? MpKind.List
+                : MpKind.Object,
+        };
+    }
+
     private static void PrefixTargetFinderChildren(Dictionary<string, MpType> byWrapper)
     {
         const string targetFinder = "Beyond.MemoryPack.Beyond_Gameplay_Core_Selector_TargetFinder_DataForMemoryPack";
@@ -827,19 +865,88 @@ public sealed class MemoryPackSchema
             return;
         foreach (MpType type in byWrapper.Values)
         {
-            if (type.MinFieldOffset != 32)
-                continue;
-            if (!type.WrapperType.Contains("_Selector_", StringComparison.Ordinal)
-                || !type.WrapperType.Contains("Finder_DataForMemoryPack", StringComparison.Ordinal))
-                continue;
-            if (type.WrapperType == targetFinder)
+            if (!IsTargetFinderChild(type.WrapperType))
                 continue;
             var names = new HashSet<string>(type.Wire.Select(m => m.Name), StringComparer.Ordinal);
             MpMember[] merged = parent.Wire.Where(m => !names.Contains(m.Name)).Concat(type.Wire).ToArray();
             type.Wire = merged;
             type.Own = merged;
-            type.AbilityPayload = null;
         }
+    }
+
+    private static bool IsTargetFinderChild(string wrapperType)
+    {
+        ReadOnlySpan<string> children =
+        [
+            "Selector_HitBoxFinder_DataForMemoryPack",
+            "Selector_ShapeFinder_DataForMemoryPack",
+            "Selector_InteractiveShapeFinder_DataForMemoryPack",
+            "Selector_InFightEnemyFinder_DataForMemoryPack",
+            "Selector_CharacterTeamFinder_DataForMemoryPack",
+            "Selector_MainTargetFinder_DataForMemoryPack",
+            "Selector_SmartTargetFinder_DataForMemoryPack",
+            "Selector_GuardAITargetFinder_DataForMemoryPack",
+            "Selector_AbilityEntityTargetFinder_DataForMemoryPack",
+            "Selector_GodEntityFinder_DataForMemoryPack",
+            "Selector_OwnerPartsFinder_DataForMemoryPack",
+            "Selector_OwnerSoulFinder_DataForMemoryPack",
+            "Selector_OwnerSpawnedEntityFinder_DataForMemoryPack",
+            "Selector_ProjectileFinder_DataForMemoryPack",
+            "Selector_TyphoeaArcherySelectedFinder_DataForMemoryPack",
+        ];
+        foreach (string child in children)
+        {
+            if (wrapperType.EndsWith(child, StringComparison.Ordinal))
+                return true;
+        }
+        return false;
+    }
+
+    private static void ClearSelectorAbilityPayloads(Dictionary<string, MpType> byWrapper)
+    {
+        foreach (MpType type in byWrapper.Values)
+        {
+            if (!type.WrapperType.Contains("Selector_", StringComparison.Ordinal))
+                continue;
+            type.AbilityPayload = null;
+            type.AbilityPayloadAlt = null;
+        }
+    }
+
+    private static void DisambiguateShapeDataTypes(Dictionary<string, MpType> byWrapper)
+    {
+        RewriteMemberType(
+            byWrapper,
+            "Beyond.MemoryPack.Beyond_Gameplay_Core_Selector_HitBoxFinder_DataForMemoryPack",
+            "shapeList",
+            "System.Collections.Generic.List`1<Beyond.MemoryPack.Beyond_Gameplay_Core_Selector_HitBoxFinder_ShapeDataForMemoryPack>");
+        RewriteMemberType(
+            byWrapper,
+            "Beyond.MemoryPack.Beyond_Gameplay_Core_ProjectileComponentDataForMemoryPack",
+            "shapeData",
+            "Beyond.MemoryPack.Beyond_Gameplay_Core_ProjectileComponentData_ShapeDataForMemoryPack");
+    }
+
+    private static void RewriteMemberType(
+        Dictionary<string, MpType> byWrapper,
+        string wrapperName,
+        string memberName,
+        string newType)
+    {
+        if (!byWrapper.TryGetValue(wrapperName, out MpType? type))
+            return;
+        type.Wire = type.Wire.Select(m =>
+            m.Name == memberName
+                ? new MpMember
+                {
+                    Name = m.Name,
+                    Type = newType,
+                    Kind = newType.StartsWith("System.Collections.Generic.List", StringComparison.Ordinal)
+                        ? MpKind.List
+                        : MpKind.Object,
+                }
+                : m).ToArray();
+        type.Own = type.Wire;
     }
 
     private static void PrefixFindTargetData(
