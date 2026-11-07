@@ -106,6 +106,9 @@ public sealed class MemoryPackDecoder
         if (type == "Beyond.Gameplay.Core.ModelViewStateController.ConditionValue"
             || type.EndsWith(".ConditionValue", StringComparison.Ordinal))
             return ReadConditionValue(cursor);
+        if (type == "Beyond.Gameplay.Audio.Utils.AudioBlackScreenBehaviour"
+            || type.EndsWith(".AudioBlackScreenBehaviour", StringComparison.Ordinal))
+            return ReadAudioBlackScreenBehaviour(cursor);
         if (type == "Beyond.Montage.AnimationClipAsyncInfo")
             return ReadAnimationClipAsyncInfo(cursor);
         if (type == "Beyond.Montage.FMontageTransitionInfo")
@@ -291,6 +294,40 @@ public sealed class MemoryPackDecoder
                 ["intValue"] = JsonValue.Create(cursor.I32()),
             },
             ["type"] = JsonValue.Create(cursor.I32()),
+        };
+    }
+
+    /// <summary>
+    /// AudioBlackScreenBehaviour is 16 unmanaged bytes: two byte enums, then each
+    /// override bool is followed by padding and a float. No object header.
+    /// </summary>
+    private static JsonNode ReadAudioBlackScreenBehaviour(Cursor cursor)
+    {
+        if (cursor.Remaining < 16)
+        {
+            throw new InvalidDataException(
+                $"AudioBlackScreenBehaviour needs 16 bytes at offset {cursor.Position}, have {cursor.Remaining}."
+            );
+        }
+
+        int presetBehaviour = cursor.U8();
+        int customRetainFlags = cursor.U8();
+        bool fadeIn = cursor.U8() != 0;
+        cursor.U8();
+        float fadeInSeconds = cursor.F32();
+        bool fadeOut = cursor.U8() != 0;
+        cursor.U8();
+        cursor.U8();
+        cursor.U8();
+        float fadeOutSeconds = cursor.F32();
+        return new JsonObject
+        {
+            ["presetBehaviour"] = JsonValue.Create(presetBehaviour),
+            ["customRetainFlags"] = JsonValue.Create(customRetainFlags),
+            ["isOverrideFadeInTime"] = JsonValue.Create(fadeIn),
+            ["overrideFadeInTimeSeconds"] = JsonValue.Create(fadeInSeconds),
+            ["isOverrideFadeOutTime"] = JsonValue.Create(fadeOut),
+            ["overrideFadeOutTimeSeconds"] = JsonValue.Create(fadeOutSeconds),
         };
     }
 
