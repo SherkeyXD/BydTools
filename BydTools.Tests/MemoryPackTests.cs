@@ -91,6 +91,9 @@ public class MemoryPackTests
         Assert.Equal(26, maps["Beyond.Gameplay.Core.Selector.Finder.Data"].Count);
         Assert.Equal(14, maps["Validator.Data"].Count);
         Assert.Equal(11, maps["PostProcessor.Data"].Count);
+        Assert.Equal(344, maps["GameCondition"].Count);
+        Assert.Equal(344, maps["Beyond.Gameplay.GameCondition"].Count);
+        Assert.Equal("Beyond.Gameplay.CharMaxLevel", maps["GameCondition"][9]);
         Assert.Equal(
             "Beyond.MemoryPack.Beyond_Gameplay_Core_Selector_HitBoxFinder_DataForMemoryPack",
             maps["Finder.Data"][7]);
@@ -531,6 +534,40 @@ public class MemoryPackTests
         Assert.Equal(0.5f, node["overrideFadeInTimeSeconds"]!.GetValue<float>());
         Assert.False(node["isOverrideFadeOutTime"]!.GetValue<bool>());
         Assert.Equal(2f, node["overrideFadeOutTimeSeconds"]!.GetValue<float>());
+    }
+
+    [Fact]
+    public void GameCondition_union_targets_get_base_prefix_and_ancestors()
+    {
+        MemoryPackSchema schema = Schema();
+        MpType gender = schema.Require("Beyond.Gameplay.CheckPlayerGender", hint: null);
+        Assert.Equal(4, gender.Wire.Length);
+
+        MpType hasItem = schema.Require("Beyond.Gameplay.HasItemCount", hint: null);
+        Assert.Equal(7, hasItem.Wire.Length);
+        Assert.Equal("_compareOperator", hasItem.Wire[4].Name);
+        Assert.Equal("_itemId", hasItem.Wire[5].Name);
+        Assert.Equal("_progressToCompare", hasItem.Wire[6].Name);
+    }
+
+    [Fact]
+    public void GameCondition_tagged_union_routes_by_tag()
+    {
+        var maps = JsonDataMemoryPack.LoadUnionMap(Path.Combine(FixtureRoot(), "union-map.json"));
+        var decoder = new MemoryPackDecoder(Schema(), unionMaps: maps);
+        // tag 208 = CheckCurrentDungeon; wire 5 = GameCondition(4) + _dungeonId.
+        var bytes = new List<byte> { 208, 5 };
+        bytes.AddRange(I32(3));
+        bytes.AddRange(I32(-1));
+        bytes.Add(1);
+        bytes.Add(0);
+        bytes.Add(0);
+        JsonObject node = Assert.IsType<JsonObject>(
+            decoder.Decode(bytes.ToArray(), "Beyond.Gameplay.GameCondition"));
+        Assert.Contains("CheckCurrentDungeon", node["$type"]!.GetValue<string>(), StringComparison.Ordinal);
+        Assert.Equal(208, node["$tag"]!.GetValue<int>());
+        Assert.Equal(3, node["scopeMask"]!.GetValue<int>());
+        Assert.True(node["useCurrentScope"]!.GetValue<bool>());
     }
 
     [Fact]

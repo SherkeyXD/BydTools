@@ -181,6 +181,7 @@ public sealed class MemoryPackDecoder
             or "Beyond.Gameplay.Core.ModelViewStateController.AbstractBehaviorData"
             or "Beyond.Gameplay.Core.DamageProcessorBase"
             or "Beyond.Gameplay.ConditionRuntimeBase"
+            or "Beyond.Gameplay.GameCondition"
             or "Beyond.Gameplay.Core.CalculationBase"
             or "CalculationBase"
             or "Finder.Data"

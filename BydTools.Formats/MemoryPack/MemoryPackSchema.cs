@@ -602,7 +602,9 @@ public sealed class MemoryPackSchema
 
     /// <summary>
     /// GameCondition's serializable members are scopeMask, uniqueId, useCurrentScope, useGraphScope.
-    /// Subclass instance fields begin at offset 144, and their wire_order does not repeat the base.
+    /// Subclass instance fields begin at offset 144; wire_order omits the base. Intermediate bases
+    /// (CompareOperator / SoilPersistentCount) contribute additional '_' fields. Empty leaves keep
+    /// only the 4-field prefix.
     /// </summary>
     private static void SynthesizeGameConditionWires(
         Dictionary<string, List<MpType>> byTarget,
@@ -615,9 +617,16 @@ public sealed class MemoryPackSchema
         if (prefix.Length == 0)
             return;
 
-        var extrasByType = new Dictionary<MpType, List<(string Name, string Type)>>();
+        var extrasByTarget = new Dictionary<string, List<(string Name, string Type)>>(StringComparer.Ordinal);
         foreach (var (type, extras) in pending)
-            extrasByType[type] = extras;
+        {
+            if (!extrasByTarget.TryGetValue(type.TargetType, out var list))
+            {
+                list = [];
+                extrasByTarget[type.TargetType] = list;
+            }
+            list.AddRange(extras);
+        }
 
         foreach (var group in byTarget.Values)
         {
@@ -626,17 +635,37 @@ public sealed class MemoryPackSchema
                 if (!IsGameConditionConcrete(type))
                     continue;
 
-                extrasByType.TryGetValue(type, out List<(string Name, string Type)>? extras);
-                extras ??= [];
+                var combined = new List<(string Name, string Type)>();
+                var seen = new HashSet<string>(StringComparer.Ordinal);
+                void AddExtras(string target)
+                {
+                    if (!extrasByTarget.TryGetValue(target, out var list))
+                        return;
+                    foreach (var extra in list)
+                    {
+                        if (!seen.Add(extra.Name))
+                            continue;
+                        combined.Add(extra);
+                    }
+                }
+
+                if (type.TargetType is "Beyond.Gameplay.CheckFacSoilFertilizingCount"
+                    or "Beyond.Gameplay.CheckFacSoilWateringCount")
+                    AddExtras("Beyond.Gameplay.CheckFacSoilPersistentCountBase");
+                else if (NeedsCompareOperatorPrefix(type.TargetType))
+                    AddExtras("Beyond.Gameplay.GameConditionServerCareScopeWithCompareOperator");
+
+                AddExtras(type.TargetType);
+
                 var wireNames = new HashSet<string>(prefix.Select(m => m.Name), StringComparer.Ordinal);
                 foreach (MpMember member in type.Wire)
                     wireNames.Add(member.Name);
-                MpMember[] underscore = extras
-                    .Where(e => e.Name.Length > 1
-                        && e.Name[0] == '_'
-                        && e.Name[1] != '_'
-                        && !e.Name.StartsWith("m_", StringComparison.Ordinal)
-                        && !wireNames.Contains(e.Name))
+
+                MpMember[] leafExtras = combined
+                    .Where(e => !e.Name.StartsWith("m_", StringComparison.Ordinal)
+                        && !wireNames.Contains(e.Name)
+                        && (e.Name.StartsWith("_", StringComparison.Ordinal)
+                            || e.Type.StartsWith("Beyond.Gameplay.Actions.Param`1", StringComparison.Ordinal)))
                     .OrderBy(e => e.Name.ToLowerInvariant(), StringComparer.Ordinal)
                     .Select(e => new MpMember
                     {
@@ -646,26 +675,42 @@ public sealed class MemoryPackSchema
                     })
                     .ToArray();
 
-                var synthesized = new MpMember[prefix.Length + underscore.Length + type.Wire.Length];
+                var synthesized = new MpMember[prefix.Length + leafExtras.Length + type.Wire.Length];
                 Array.Copy(prefix, 0, synthesized, 0, prefix.Length);
-                Array.Copy(underscore, 0, synthesized, prefix.Length, underscore.Length);
-                Array.Copy(type.Wire, 0, synthesized, prefix.Length + underscore.Length, type.Wire.Length);
+                Array.Copy(leafExtras, 0, synthesized, prefix.Length, leafExtras.Length);
+                Array.Copy(type.Wire, 0, synthesized, prefix.Length + leafExtras.Length, type.Wire.Length);
                 type.Wire = synthesized;
                 type.Own = synthesized;
             }
         }
     }
 
+    private static bool NeedsCompareOperatorPrefix(string targetType) =>
+        targetType is "Beyond.Gameplay.CheckAliveCharNumInCurTeam"
+            or "Beyond.Gameplay.CheckCharFavorability"
+            or "Beyond.Gameplay.CheckFacSoilPlacedInPanel"
+            or "Beyond.Gameplay.CheckLiquidInBag"
+            or "Beyond.Gameplay.CheckMissionDaysNumAfterComplete"
+            or "Beyond.Gameplay.DungeonKeptTime"
+            or "Beyond.Gameplay.FacBattleBuildingCurEnergy"
+            or "Beyond.Gameplay.FacBoxConveyorLengthSum"
+            or "Beyond.Gameplay.FacBuildingCountInScene"
+            or "Beyond.Gameplay.FacBuildingFluidContainerHasItem"
+            or "Beyond.Gameplay.FacBuildingProducingCountInScene"
+            or "Beyond.Gameplay.FacPowerCostSum"
+            or "Beyond.Gameplay.FacProducingFormulaCountInScene"
+            or "Beyond.Gameplay.FacStatisticItemGen"
+            or "Beyond.Gameplay.FacStatisticItemGenRate"
+            or "Beyond.Gameplay.FacStorageBoxHasItems"
+            or "Beyond.Gameplay.HasItemCount";
+
     private static bool IsGameConditionConcrete(MpType type)
     {
-        if (!type.HasDeserialize || type.MinFieldOffset != 144)
+        if (!type.HasDeserialize)
             return false;
-        string target = type.TargetType;
-        if (target.StartsWith("Beyond.Gameplay.Conditions.", StringComparison.Ordinal))
-            return true;
-        return target is "Beyond.Gameplay.CheckActivityConditionalStageStatus"
-            or "Beyond.Gameplay.CombineCondition"
-            or "Beyond.Gameplay.GameConditionServerPlaceHolder";
+        if (type.TargetType == "Beyond.Gameplay.GameCondition")
+            return false;
+        return GameConditionUnionTargets.Targets.Contains(type.TargetType);
     }
 
     private static void AppendDuplicateChildField(
