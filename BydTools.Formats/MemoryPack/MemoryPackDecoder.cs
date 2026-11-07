@@ -84,6 +84,8 @@ public sealed class MemoryPackDecoder
             return ReadGameplayTag(cursor);
         if (type == "Beyond.Gameplay.Core.DispelConfig" || type == "DispelConfig")
             return ReadDispelConfig(cursor);
+        if (type == "OrderPriorityConfig" || type.EndsWith(".OrderPriorityConfig", StringComparison.Ordinal))
+            return ReadOrderPriorityConfig(cursor);
         if (type == "Beyond.Montage.AnimationClipAsyncInfo")
             return ReadAnimationClipAsyncInfo(cursor);
         if (type == "Beyond.Montage.FMontageTransitionInfo")
@@ -102,8 +104,9 @@ public sealed class MemoryPackDecoder
                     throw new InvalidDataException($"Boolean {flag} at offset {cursor.Position - 1}.");
                 return JsonValue.Create(flag != 0);
             case MpKind.Int32:
-            case MpKind.Enum:
                 return JsonValue.Create(cursor.I32());
+            case MpKind.Enum:
+                return JsonValue.Create(ReadEnum(cursor, type));
             case MpKind.Int64:
                 return JsonValue.Create(cursor.I64());
             case MpKind.UInt64:
@@ -208,6 +211,47 @@ public sealed class MemoryPackDecoder
             ["canBeDispelled"] = JsonValue.Create(canBeDispelled),
             ["dispelledLevel"] = JsonValue.Create(cursor.I32()),
         };
+    }
+
+    /// <summary>
+    /// OrderPriorityConfig is a 12-byte unmanaged struct inside BuffIconConfig:
+    /// bool useDirectoryValue, 3 pad, int priorityValue, int priorityEnum.
+    /// A leading 0 is the bool, not an object memberCount.
+    /// </summary>
+    private static JsonNode ReadOrderPriorityConfig(Cursor cursor)
+    {
+        if (cursor.Remaining < 12)
+        {
+            throw new InvalidDataException(
+                $"OrderPriorityConfig needs 12 bytes at offset {cursor.Position}, have {cursor.Remaining}."
+            );
+        }
+
+        bool useDirectoryValue = cursor.U8() != 0;
+        cursor.U8();
+        cursor.U8();
+        cursor.U8();
+        return new JsonObject
+        {
+            ["useDirectoryValue"] = JsonValue.Create(useDirectoryValue),
+            ["priorityValue"] = JsonValue.Create(cursor.I32()),
+            ["priorityEnum"] = JsonValue.Create(cursor.I32()),
+        };
+    }
+
+    /// <summary>
+    /// Most MemoryPack enums are int32. These three match the managed layout and the
+    /// BuffData samples: LifeType and IdentifierType are bytes, StackingType is int16.
+    /// </summary>
+    private static int ReadEnum(Cursor cursor, string type)
+    {
+        int dot = type.LastIndexOf('.');
+        string leaf = dot >= 0 ? type[(dot + 1)..] : type;
+        if (leaf is "LifeType" or "IdentifierType")
+            return cursor.U8();
+        if (leaf == "StackingType")
+            return cursor.U16();
+        return cursor.I32();
     }
 
     /// <summary>
