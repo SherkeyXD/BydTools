@@ -363,6 +363,26 @@ public class MemoryPackTests
     }
 
     [Fact]
+    public void AdditiveEffectType_is_a_signed_int16()
+    {
+        var decoder = new MemoryPackDecoder(Schema());
+        // memberCount 4: constValue = -1 (FF FF), idRef 0, paramSource 0, path -1.
+        byte[] payload =
+        [
+            4, 0xFF, 0xFF,
+            0, 0, 0, 0,
+            0, 0, 0, 0,
+            0xFF, 0xFF, 0xFF, 0xFF,
+        ];
+        JsonObject node = Assert.IsType<JsonObject>(
+            decoder.Decode(payload, "Beyond.Gameplay.Actions.Param`1<AdditiveEffectType>")
+        );
+        Assert.Equal(-1, node["constValue"]!.GetValue<int>());
+        Assert.Equal(0, node["idRef"]!.GetValue<int>());
+        Assert.Equal("", node["path"]!.GetValue<string>());
+    }
+
+    [Fact]
     public void DispelConfig_reads_unmanaged_8_bytes()
     {
         var decoder = new MemoryPackDecoder(Schema());

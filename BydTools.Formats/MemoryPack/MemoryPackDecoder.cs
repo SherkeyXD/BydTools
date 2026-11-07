@@ -240,8 +240,9 @@ public sealed class MemoryPackDecoder
     }
 
     /// <summary>
-    /// Most MemoryPack enums are int32. These three match the managed layout and the
-    /// BuffData samples: LifeType and IdentifierType are bytes, StackingType is int16.
+    /// Most MemoryPack enums are int32. LifeType and IdentifierType are bytes.
+    /// StackingType and AdditiveEffectType are signed int16. Reading them as int32
+    /// shifts the next field and turns a later memberCount 3 into Boolean 3.
     /// </summary>
     private static int ReadEnum(Cursor cursor, string type)
     {
@@ -249,8 +250,8 @@ public sealed class MemoryPackDecoder
         string leaf = dot >= 0 ? type[(dot + 1)..] : type;
         if (leaf is "LifeType" or "IdentifierType")
             return cursor.U8();
-        if (leaf == "StackingType")
-            return cursor.U16();
+        if (leaf is "StackingType" or "AdditiveEffectType")
+            return (short)cursor.U16();
         return cursor.I32();
     }
 
