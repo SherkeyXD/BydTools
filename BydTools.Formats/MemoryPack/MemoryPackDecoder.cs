@@ -103,6 +103,9 @@ public sealed class MemoryPackDecoder
             return ReadDispelConfig(cursor);
         if (type == "OrderPriorityConfig" || type.EndsWith(".OrderPriorityConfig", StringComparison.Ordinal))
             return ReadOrderPriorityConfig(cursor);
+        if (type == "Beyond.Gameplay.Core.ModelViewStateController.ConditionValue"
+            || type.EndsWith(".ConditionValue", StringComparison.Ordinal))
+            return ReadConditionValue(cursor);
         if (type == "Beyond.Montage.AnimationClipAsyncInfo")
             return ReadAnimationClipAsyncInfo(cursor);
         if (type == "Beyond.Montage.FMontageTransitionInfo")
@@ -259,6 +262,35 @@ public sealed class MemoryPackDecoder
             ["useDirectoryValue"] = JsonValue.Create(useDirectoryValue),
             ["priorityValue"] = JsonValue.Create(cursor.I32()),
             ["priorityEnum"] = JsonValue.Create(cursor.I32()),
+        };
+    }
+
+    /// <summary>
+    /// ConditionValue is a 16-byte unmanaged struct: ValueUnion (bool, pad3, float, int) then DataType.
+    /// There is no object header. Interactive ModelView data writes it with a raw move.
+    /// </summary>
+    private static JsonNode ReadConditionValue(Cursor cursor)
+    {
+        if (cursor.Remaining < 16)
+        {
+            throw new InvalidDataException(
+                $"ConditionValue needs 16 bytes at offset {cursor.Position}, have {cursor.Remaining}."
+            );
+        }
+
+        bool boolValue = cursor.U8() != 0;
+        cursor.U8();
+        cursor.U8();
+        cursor.U8();
+        return new JsonObject
+        {
+            ["conditionValue"] = new JsonObject
+            {
+                ["boolValue"] = JsonValue.Create(boolValue),
+                ["floatValue"] = JsonValue.Create(cursor.F32()),
+                ["intValue"] = JsonValue.Create(cursor.I32()),
+            },
+            ["type"] = JsonValue.Create(cursor.I32()),
         };
     }
 
@@ -601,6 +633,16 @@ public sealed class MemoryPackDecoder
         for (int i = 0; i < count; i++)
         {
             JsonNode? keyNode = ReadValue(cursor, key, null, depth + 1, sandbox);
+            // Class values are sometimes prefixed with a presence bool 0x01. Consume it only
+            // when the next byte is that type's wire memberCount, so a real memberCount of 1
+            // is left alone unless the following byte also matches.
+            if (_schema.TryResolve(value, null, out MpType? valueType, out _)
+                && valueType != null
+                && valueType.Wire.Length is int wireLen and > 0 and <= 255
+                && cursor.Remaining >= 2
+                && cursor.Buffer[cursor.Position] == 1
+                && cursor.Buffer[cursor.Position + 1] == wireLen)
+                cursor.U8();
             JsonNode? valueNode = ReadValue(cursor, value, null, depth + 1, sandbox);
             if (!objectKeys)
             {
