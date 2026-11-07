@@ -99,6 +99,8 @@ public sealed class MemoryPackDecoder
             return ReadGuidProxy(cursor);
         if (type == "Beyond.Gameplay.Core.GameplayTag" || type == "GameplayTag")
             return ReadGameplayTag(cursor);
+        if (type == "Beyond.Resource.StringPathHash" || type == "StringPathHash")
+            return ReadStringPathHash(cursor);
         if (type == "Beyond.Gameplay.Core.DispelConfig" || type == "DispelConfig")
             return ReadDispelConfig(cursor);
         if (type == "OrderPriorityConfig" || type.EndsWith(".OrderPriorityConfig", StringComparison.Ordinal))
@@ -113,6 +115,8 @@ public sealed class MemoryPackDecoder
             return ReadAnimationClipAsyncInfo(cursor);
         if (type == "Beyond.Montage.FMontageTransitionInfo")
             return ReadFMontageTransitionInfo(cursor);
+        if (type == "Beyond.Optional`1<UnityEngine.Vector3>")
+            return ReadOptionalVector3(cursor);
         if (type.StartsWith("Beyond.Optional`1<", StringComparison.Ordinal))
             return ReadBeyondOptional(cursor, type, depth, sandbox);
         if (IsTaggedUnion(type))
@@ -190,6 +194,10 @@ public sealed class MemoryPackDecoder
             or "Beyond.Gameplay.Core.Selector.Validator.Data"
             or "PostProcessor.Data"
             or "Beyond.Gameplay.Core.Selector.PostProcessor.Data"
+            or "SpawnerPreprocess.Data"
+            or "Beyond.Gameplay.SpawnerPreprocess.Data"
+            or "SpawnerActionData"
+            or "Beyond.Gameplay.SpawnerActionData"
             or "Data";
 
     /// <summary>
@@ -218,6 +226,36 @@ public sealed class MemoryPackDecoder
     /// </summary>
     private static JsonNode ReadGameplayTag(Cursor cursor) =>
         new JsonObject { ["tagId"] = JsonValue.Create(cursor.I32()) };
+
+    /// <summary>
+    /// GameplayTag ForMemoryPack formatter: object header must be 1, then tagId.
+    /// List&lt;GameplayTag&gt; uses this; unmanaged spans write a raw int32.
+    /// </summary>
+    private static JsonNode ReadGameplayTagFormatted(Cursor cursor)
+    {
+        int origin = cursor.Position;
+        int? count = ReadHeader(cursor);
+        if (count == null)
+            throw new InvalidDataException($"GameplayTag null header at offset {origin}.");
+        if (count != 1)
+            throw new InvalidDataException($"GameplayTag memberCount {count} at offset {origin} (expected 1).");
+        return new JsonObject { ["tagId"] = JsonValue.Create(cursor.I32()) };
+    }
+
+    /// <summary>
+    /// StringPathHashFormatter reads a raw int64. KindOf would otherwise treat it as int32.
+    /// </summary>
+    private static JsonNode ReadStringPathHash(Cursor cursor)
+    {
+        if (cursor.Remaining < 8)
+        {
+            throw new InvalidDataException(
+                $"StringPathHash needs 8 bytes at offset {cursor.Position}, have {cursor.Remaining}."
+            );
+        }
+
+        return new JsonObject { ["hash"] = JsonValue.Create(cursor.I64()) };
+    }
 
     /// <summary>
     /// DispelConfig is an unmanaged struct { bool canBeDispelled; pad3; DispelLevel } (8 bytes).
@@ -472,6 +510,34 @@ public sealed class MemoryPackDecoder
         };
     }
 
+    /// <summary>
+    /// Beyond.Optional&lt;Vector3&gt; is 16 unmanaged bytes: enabled u8, 3 pad, xyz float32.
+    /// </summary>
+    private static JsonNode? ReadOptionalVector3(Cursor cursor)
+    {
+        if (cursor.Remaining < 16)
+        {
+            throw new InvalidDataException(
+                $"Optional<Vector3> needs 16 bytes at offset {cursor.Position}, have {cursor.Remaining}."
+            );
+        }
+
+        bool enabled = cursor.U8() != 0;
+        cursor.U8();
+        cursor.U8();
+        cursor.U8();
+        float x = cursor.F32();
+        float y = cursor.F32();
+        float z = cursor.F32();
+        if (!enabled)
+            return null;
+        return new JsonObject
+        {
+            ["enabled"] = true,
+            ["value"] = Vec(x, y, z),
+        };
+    }
+
     private JsonNode? ReadBeyondOptional(Cursor cursor, string type, int depth, bool sandbox)
     {
         int origin = cursor.Position;
@@ -593,11 +659,12 @@ public sealed class MemoryPackDecoder
             throw new InvalidDataException($"Negative member count {count} at offset {origin}.");
 
         MpMember[] members;
-        // Named fields (EffectActionData and other ability leaves) use the same
-        // ability payload as the union path when the header matches it.
-        if (type.AbilityPayload != null && count == type.AbilityPayload.Length)
+        // Named EffectActionData / KeywordAction leaves carry AbilityPayload. Accept it
+        // outside a union sandbox. Inside the sandbox only the union path opts in.
+        bool allowAbility = abilityPayload || !sandbox;
+        if (allowAbility && type.AbilityPayload != null && count == type.AbilityPayload.Length)
             members = type.AbilityPayload;
-        else if (type.AbilityPayloadAlt != null && count == type.AbilityPayloadAlt.Length)
+        else if (allowAbility && type.AbilityPayloadAlt != null && count == type.AbilityPayloadAlt.Length)
             members = type.AbilityPayloadAlt;
         else if (count == type.Wire.Length)
             members = type.Wire;
@@ -651,9 +718,50 @@ public sealed class MemoryPackDecoder
         if (count < 0 || count > 1_000_000)
             throw new InvalidDataException($"List count {count} at offset {cursor.Position - 4}.");
         var array = new JsonArray();
+        bool gameplayTagElement = element is "Beyond.Gameplay.Core.GameplayTag" or "GameplayTag";
         for (int i = 0; i < count; i++)
-            array.Add(ReadValue(cursor, element, hint, depth + 1, sandbox));
+        {
+            if (gameplayTagElement)
+            {
+                // List formatter writes memberCount 1 + tagId. Unmanaged spans write a raw int32.
+                array.Add(
+                    cursor.Remaining > 0 && cursor.Buffer[cursor.Position] == 1
+                        ? ReadGameplayTagFormatted(cursor)
+                        : ReadGameplayTag(cursor));
+            }
+            else
+                array.Add(ReadValue(cursor, element, hint, depth + 1, sandbox));
+        }
         return array;
+    }
+
+    /// <summary>
+    /// Class dictionary values may be prefixed with a presence bool. Consume 0x01 only when
+    /// the next byte matches that type's wire, own, or ability length (or 0 / 255 / 250).
+    /// </summary>
+    private void MaybeConsumeDictionaryValuePresence(Cursor cursor, string valueType)
+    {
+        if (cursor.Remaining < 2 || _schema.KindOf(valueType) != MpKind.Object)
+            return;
+        if (cursor.Buffer[cursor.Position] != 1)
+            return;
+
+        MpType resolved;
+        try
+        {
+            resolved = _schema.ResolveNamed(valueType);
+        }
+        catch (MemoryPackTypeException)
+        {
+            return;
+        }
+
+        byte next = cursor.Buffer[cursor.Position + 1];
+        int ability = resolved.AbilityPayload?.Length ?? -1;
+        int abilityAlt = resolved.AbilityPayloadAlt?.Length ?? -1;
+        if (next == resolved.Wire.Length || next == resolved.Own.Length || next == ability || next == abilityAlt
+            || next == 0 || next == 255 || next == 250)
+            cursor.U8();
     }
 
     private JsonNode? ReadDictionary(Cursor cursor, string type, int depth, bool sandbox)
@@ -671,16 +779,7 @@ public sealed class MemoryPackDecoder
         for (int i = 0; i < count; i++)
         {
             JsonNode? keyNode = ReadValue(cursor, key, null, depth + 1, sandbox);
-            // Class values are sometimes prefixed with a presence bool 0x01. Consume it only
-            // when the next byte is that type's wire memberCount, so a real memberCount of 1
-            // is left alone unless the following byte also matches.
-            if (_schema.TryResolve(value, null, out MpType? valueType, out _)
-                && valueType != null
-                && valueType.Wire.Length is int wireLen and > 0 and <= 255
-                && cursor.Remaining >= 2
-                && cursor.Buffer[cursor.Position] == 1
-                && cursor.Buffer[cursor.Position + 1] == wireLen)
-                cursor.U8();
+            MaybeConsumeDictionaryValuePresence(cursor, value);
             JsonNode? valueNode = ReadValue(cursor, value, null, depth + 1, sandbox);
             if (!objectKeys)
             {

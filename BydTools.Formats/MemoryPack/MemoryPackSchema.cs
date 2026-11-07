@@ -265,6 +265,20 @@ public sealed class MemoryPackSchema
         PrefixPlayAnimationWithStep(byTarget, abilityBase);
         // EffectLineCenterAction.Data : EffectActionData. Native count 21 = 4 + 16 + effectCenter.
         PrefixEffectLineCenter(byTarget, byWrapper, abilityBase);
+        // EnemyWarningActionData : EffectActionData with no leaf fields. Native count 20 = 4+16.
+        PrefixAbilityMiddle(
+            byTarget,
+            byWrapper,
+            "Beyond.MemoryPack.Beyond_Gameplay_Core_EnemyWarningAction_EnemyWarningActionDataForMemoryPack",
+            "EffectActionData",
+            abilityBase);
+        // ChannelingDamageAction.Data : DamageActionData + triggerInterval. Native count 12 = 4+7+1.
+        PrefixAbilityMiddle(
+            byTarget,
+            byWrapper,
+            "Beyond.MemoryPack.Beyond_Gameplay_Core_ChannelingDamageAction_DataForMemoryPack",
+            "DamageActionData",
+            abilityBase);
         // InventoryItemBundleWithInfinite is the two bundle fields plus infinite.
         PrefixWithBaseWire(byTarget, "Beyond.Gameplay.InventoryItemBundleWithInfinite", "Beyond.Gameplay.InventoryItemBundle");
         // PlayRadioAndWait serializes the same 13 members as PlayRadio.
@@ -278,8 +292,16 @@ public sealed class MemoryPackSchema
         // ShapeFinder is the same boundary.
         RewriteSelectorDataUnions(byTarget);
         PrefixTargetFinderChildren(byWrapper);
+        CopyWireFromWrapper(
+            byWrapper,
+            "Beyond.MemoryPack.Beyond_Gameplay_Core_Selector_ShapeFinder_ShapeFinderDataForMemoryPack",
+            "Beyond.MemoryPack.Beyond_Gameplay_Core_Selector_ShapeFinder_DataForMemoryPack");
         ClearSelectorAbilityPayloads(byWrapper);
         DisambiguateShapeDataTypes(byWrapper);
+        RewriteSpawnerPreprocessList(byTarget, byWrapper);
+        ClearSpawnerPreprocessAbilityPayloads(byWrapper);
+        PrefixSpawnerActionDataChildren(byWrapper);
+        ClearSpawnerActionAbilityPayloads(byWrapper);
         // BuffData lists were exported as List<Data>; native elements are *Modifier.Data.
         RewriteBuffModifierDataLists(byTarget, byWrapper);
         SynthesizeBuffIconConfigWire(byTarget, kinds);
@@ -803,6 +825,29 @@ public sealed class MemoryPackSchema
         type.AbilityPayload = payload;
     }
 
+    private static void PrefixAbilityMiddle(
+        Dictionary<string, List<MpType>> byTarget,
+        Dictionary<string, MpType> byWrapper,
+        string wrapperName,
+        string middleTarget,
+        MpMember[] abilityBase)
+    {
+        if (abilityBase.Length == 0)
+            return;
+        if (!byWrapper.TryGetValue(wrapperName, out MpType? type))
+            return;
+        if (!byTarget.TryGetValue(middleTarget, out var bases) || bases.Count != 1)
+            return;
+        MpMember[] middle = bases[0].Wire;
+        if (middle.Length == 0)
+            return;
+        var leafNames = new HashSet<string>(type.Wire.Select(m => m.Name), StringComparer.Ordinal);
+        type.AbilityPayload = abilityBase
+            .Concat(middle.Where(m => !leafNames.Contains(m.Name)))
+            .Concat(type.Wire)
+            .ToArray();
+    }
+
     private static void PrefixEffectLineCenter(
         Dictionary<string, List<MpType>> byTarget,
         Dictionary<string, MpType> byWrapper,
@@ -927,6 +972,109 @@ public sealed class MemoryPackSchema
                 ? MpKind.List
                 : MpKind.Object,
         };
+    }
+
+    private static void CopyWireFromWrapper(
+        Dictionary<string, MpType> byWrapper,
+        string derivedWrapper,
+        string baseWrapper)
+    {
+        if (!byWrapper.TryGetValue(derivedWrapper, out MpType? derived))
+            return;
+        if (!byWrapper.TryGetValue(baseWrapper, out MpType? baseType))
+            return;
+        if (derived.Wire.Length != 0 || baseType.Wire.Length == 0)
+            return;
+        derived.Wire = baseType.Wire;
+        derived.Own = baseType.Own.Length > 0 ? baseType.Own : baseType.Wire;
+        derived.AbilityPayload = null;
+        derived.AbilityPayloadAlt = null;
+    }
+
+    private static void RewriteSpawnerPreprocessList(
+        Dictionary<string, List<MpType>> byTarget,
+        Dictionary<string, MpType> byWrapper)
+    {
+        if (!byTarget.TryGetValue("Beyond.Gameplay.SpawnerConfigData", out var list) || list.Count != 1)
+            return;
+        MpType type = list[0];
+        type.Wire = type.Wire.Select(m =>
+            m.Name == "preprocessList" && m.Type == "System.Collections.Generic.List`1<Data>"
+                ? new MpMember
+                {
+                    Name = m.Name,
+                    Type = "System.Collections.Generic.List`1<SpawnerPreprocess.Data>",
+                    Kind = MpKind.List,
+                }
+                : m).ToArray();
+        type.Own = type.Wire;
+
+        if (!byWrapper.TryGetValue(
+                "Beyond.MemoryPack.Beyond_Gameplay_SpawnerPreprocess_DataForMemoryPack",
+                out MpType? baseData)
+            || baseData.Wire.Length == 0)
+            return;
+
+        ReadOnlySpan<string> children =
+        [
+            "Beyond.MemoryPack.Beyond_Gameplay_SpawnerPreprocess_EnableOrDisableActionForMemoryPack",
+            "Beyond.MemoryPack.Beyond_Gameplay_SpawnerPreprocess_EnableOrDisableGroupForMemoryPack",
+            "Beyond.MemoryPack.Beyond_Gameplay_SpawnerPreprocess_EnableOrDisableWaveForMemoryPack",
+            "Beyond.MemoryPack.Beyond_Gameplay_SpawnerPreprocess_ModifyActionLibraryKeyForMemoryPack",
+            "Beyond.MemoryPack.Beyond_Gameplay_SpawnerPreprocess_ModifyActionTimestampForMemoryPack",
+            "Beyond.MemoryPack.Beyond_Gameplay_SpawnerPreprocess_ModifyGroupTimestampForMemoryPack",
+            "Beyond.MemoryPack.Beyond_Gameplay_SpawnerPreprocess_ModifyWaveTimestampForMemoryPack",
+        ];
+        foreach (string childName in children)
+        {
+            if (!byWrapper.TryGetValue(childName, out MpType? child))
+                continue;
+            var names = new HashSet<string>(child.Wire.Select(m => m.Name), StringComparer.Ordinal);
+            MpMember[] merged = baseData.Wire.Where(m => !names.Contains(m.Name)).Concat(child.Wire).ToArray();
+            child.Wire = merged;
+            child.Own = merged;
+        }
+    }
+
+    private static void ClearSpawnerPreprocessAbilityPayloads(Dictionary<string, MpType> byWrapper)
+    {
+        foreach (MpType type in byWrapper.Values)
+        {
+            if (!type.WrapperType.Contains("SpawnerPreprocess_", StringComparison.Ordinal))
+                continue;
+            type.AbilityPayload = null;
+            type.AbilityPayloadAlt = null;
+        }
+    }
+
+    private static void PrefixSpawnerActionDataChildren(Dictionary<string, MpType> byWrapper)
+    {
+        if (!byWrapper.TryGetValue(
+                "Beyond.MemoryPack.Beyond_Gameplay_SpawnerActionDataForMemoryPack",
+                out MpType? baseType)
+            || baseType.Wire.Length == 0)
+            return;
+
+        foreach (MpType type in byWrapper.Values)
+        {
+            if (!type.WrapperType.Contains("SpawnerActions_", StringComparison.Ordinal))
+                continue;
+            var names = new HashSet<string>(type.Wire.Select(m => m.Name), StringComparer.Ordinal);
+            MpMember[] merged = baseType.Wire.Where(m => !names.Contains(m.Name)).Concat(type.Wire).ToArray();
+            type.Wire = merged;
+            type.Own = merged;
+        }
+    }
+
+    private static void ClearSpawnerActionAbilityPayloads(Dictionary<string, MpType> byWrapper)
+    {
+        foreach (MpType type in byWrapper.Values)
+        {
+            if (!type.WrapperType.Contains("SpawnerAction", StringComparison.Ordinal))
+                continue;
+            type.AbilityPayload = null;
+            type.AbilityPayloadAlt = null;
+        }
     }
 
     private static void PrefixTargetFinderChildren(Dictionary<string, MpType> byWrapper)
