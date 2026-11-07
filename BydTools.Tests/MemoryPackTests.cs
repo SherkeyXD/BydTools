@@ -94,6 +94,11 @@ public class MemoryPackTests
         Assert.Equal(344, maps["GameCondition"].Count);
         Assert.Equal(344, maps["Beyond.Gameplay.GameCondition"].Count);
         Assert.Equal("Beyond.Gameplay.CharMaxLevel", maps["GameCondition"][9]);
+        Assert.Equal(7, maps["SpawnerPreprocess.Data"].Count);
+        Assert.Equal(6, maps["SpawnerActionData"].Count);
+        Assert.Equal(
+            "Beyond.MemoryPack.Beyond_Gameplay_SpawnerPreprocess_EnableOrDisableActionForMemoryPack",
+            maps["SpawnerPreprocess.Data"][0]);
         Assert.Equal(
             "Beyond.MemoryPack.Beyond_Gameplay_Core_Selector_HitBoxFinder_DataForMemoryPack",
             maps["Finder.Data"][7]);
@@ -568,6 +573,63 @@ public class MemoryPackTests
         Assert.Equal(208, node["$tag"]!.GetValue<int>());
         Assert.Equal(3, node["scopeMask"]!.GetValue<int>());
         Assert.True(node["useCurrentScope"]!.GetValue<bool>());
+    }
+
+    [Fact]
+    public void V15_spawner_unions_and_unmanaged_values()
+    {
+        MemoryPackSchema schema = Schema();
+        MpType cfg = schema.Require("Beyond.Gameplay.SpawnerConfigData", hint: null);
+        MpMember list = cfg.Wire.Single(m => m.Name == "preprocessList");
+        Assert.Equal("System.Collections.Generic.List`1<SpawnerPreprocess.Data>", list.Type);
+        MpType child = schema.ResolveNamed(
+            "Beyond.MemoryPack.Beyond_Gameplay_SpawnerPreprocess_EnableOrDisableActionForMemoryPack");
+        Assert.Equal(3, child.Wire.Length);
+        Assert.Contains(child.Wire, m => m.Name == "key");
+        Assert.Null(child.AbilityPayload);
+
+        MpType pause = schema.ResolveNamed(
+            "Beyond.MemoryPack.Beyond_Gameplay_SpawnerActions_PauseForMemoryPack");
+        Assert.Equal(4, pause.Wire.Length);
+        Assert.Contains(pause.Wire, m => m.Name == "actionId");
+
+        MpType shape = schema.ResolveNamed(
+            "Beyond.MemoryPack.Beyond_Gameplay_Core_Selector_ShapeFinder_ShapeFinderDataForMemoryPack");
+        Assert.Equal(11, shape.Wire.Length);
+        Assert.Contains(shape.Wire, m => m.Name == "autoSetTargetFaction");
+
+        MpType warn = schema.ResolveNamed(
+            "Beyond.MemoryPack.Beyond_Gameplay_Core_EnemyWarningAction_EnemyWarningActionDataForMemoryPack");
+        Assert.Equal(20, warn.AbilityPayload!.Length);
+        MpType channel = schema.ResolveNamed(
+            "Beyond.MemoryPack.Beyond_Gameplay_Core_ChannelingDamageAction_DataForMemoryPack");
+        Assert.Equal(12, channel.AbilityPayload!.Length);
+        Assert.Contains(channel.AbilityPayload, m => m.Name == "triggerInterval");
+
+        var decoder = new MemoryPackDecoder(schema);
+        byte[] hash = [1, 0, 0, 0, 0, 0, 0, 0x10];
+        JsonObject path = Assert.IsType<JsonObject>(decoder.Decode(hash, "Beyond.Resource.StringPathHash"));
+        Assert.Equal(0x1000000000000001L, path["hash"]!.GetValue<long>());
+
+        byte[] optional =
+        [
+            1, 0, 0, 0,
+            0, 0, 0x80, 0x3F,
+            0, 0, 0, 0x40,
+            0, 0, 0x40, 0x40,
+        ];
+        JsonObject vec = Assert.IsType<JsonObject>(
+            decoder.Decode(optional, "Beyond.Optional`1<UnityEngine.Vector3>"));
+        Assert.True(vec["enabled"]!.GetValue<bool>());
+        JsonArray xyz = Assert.IsType<JsonArray>(vec["value"]);
+        Assert.Equal(1f, xyz[0]!.GetValue<float>());
+        Assert.Equal(2f, xyz[1]!.GetValue<float>());
+        Assert.Equal(3f, xyz[2]!.GetValue<float>());
+
+        // List<GameplayTag>: leading 1 is the formatter header, not a raw tag id.
+        byte[] tags = [1, 0, 0, 0, 1, 0x2A, 0, 0, 0];
+        JsonArray parsed = Assert.IsType<JsonArray>(decoder.Decode(tags, "Beyond.Gameplay.Core.GameplayTag[]"));
+        Assert.Equal(42, Assert.IsType<JsonObject>(parsed[0])["tagId"]!.GetValue<int>());
     }
 
     [Fact]

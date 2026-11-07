@@ -4516,5 +4516,39 @@
     "341": "Beyond.Gameplay.SystemPoiLevel",
     "342": "Beyond.Gameplay.TaskReachDestination",
     "343": "Beyond.Gameplay.WeekRaidPlayerHasItem"
+  },
+  "SpawnerPreprocess.Data": {
+    "0": "Beyond.MemoryPack.Beyond_Gameplay_SpawnerPreprocess_EnableOrDisableActionForMemoryPack",
+    "1": "Beyond.MemoryPack.Beyond_Gameplay_SpawnerPreprocess_EnableOrDisableGroupForMemoryPack",
+    "2": "Beyond.MemoryPack.Beyond_Gameplay_SpawnerPreprocess_EnableOrDisableWaveForMemoryPack",
+    "3": "Beyond.MemoryPack.Beyond_Gameplay_SpawnerPreprocess_ModifyActionLibraryKeyForMemoryPack",
+    "4": "Beyond.MemoryPack.Beyond_Gameplay_SpawnerPreprocess_ModifyActionTimestampForMemoryPack",
+    "5": "Beyond.MemoryPack.Beyond_Gameplay_SpawnerPreprocess_ModifyGroupTimestampForMemoryPack",
+    "6": "Beyond.MemoryPack.Beyond_Gameplay_SpawnerPreprocess_ModifyWaveTimestampForMemoryPack"
+  },
+  "Beyond.Gameplay.SpawnerPreprocess.Data": {
+    "0": "Beyond.MemoryPack.Beyond_Gameplay_SpawnerPreprocess_EnableOrDisableActionForMemoryPack",
+    "1": "Beyond.MemoryPack.Beyond_Gameplay_SpawnerPreprocess_EnableOrDisableGroupForMemoryPack",
+    "2": "Beyond.MemoryPack.Beyond_Gameplay_SpawnerPreprocess_EnableOrDisableWaveForMemoryPack",
+    "3": "Beyond.MemoryPack.Beyond_Gameplay_SpawnerPreprocess_ModifyActionLibraryKeyForMemoryPack",
+    "4": "Beyond.MemoryPack.Beyond_Gameplay_SpawnerPreprocess_ModifyActionTimestampForMemoryPack",
+    "5": "Beyond.MemoryPack.Beyond_Gameplay_SpawnerPreprocess_ModifyGroupTimestampForMemoryPack",
+    "6": "Beyond.MemoryPack.Beyond_Gameplay_SpawnerPreprocess_ModifyWaveTimestampForMemoryPack"
+  },
+  "SpawnerActionData": {
+    "0": "Beyond.MemoryPack.Beyond_Gameplay_SpawnerActions_PauseForMemoryPack",
+    "1": "Beyond.MemoryPack.Beyond_Gameplay_SpawnerActions_PlayAudioForMemoryPack",
+    "2": "Beyond.MemoryPack.Beyond_Gameplay_SpawnerActions_PreviewRouteForMemoryPack",
+    "3": "Beyond.MemoryPack.Beyond_Gameplay_SpawnerActions_RaiseEventForMemoryPack",
+    "4": "Beyond.MemoryPack.Beyond_Gameplay_SpawnerActions_SpawnInteractiveFromTemplateForMemoryPack",
+    "5": "Beyond.MemoryPack.Beyond_Gameplay_SpawnerActions_SpawnMonsterFromTemplateV2ForMemoryPack"
+  },
+  "Beyond.Gameplay.SpawnerActionData": {
+    "0": "Beyond.MemoryPack.Beyond_Gameplay_SpawnerActions_PauseForMemoryPack",
+    "1": "Beyond.MemoryPack.Beyond_Gameplay_SpawnerActions_PlayAudioForMemoryPack",
+    "2": "Beyond.MemoryPack.Beyond_Gameplay_SpawnerActions_PreviewRouteForMemoryPack",
+    "3": "Beyond.MemoryPack.Beyond_Gameplay_SpawnerActions_RaiseEventForMemoryPack",
+    "4": "Beyond.MemoryPack.Beyond_Gameplay_SpawnerActions_SpawnInteractiveFromTemplateForMemoryPack",
+    "5": "Beyond.MemoryPack.Beyond_Gameplay_SpawnerActions_SpawnMonsterFromTemplateV2ForMemoryPack"
   }
 }
