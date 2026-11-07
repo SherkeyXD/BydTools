@@ -259,6 +259,18 @@ public sealed class MemoryPackSchema
         // Native count 19 = ability base 4 + FindTarget 14 + leaf.
         PrefixFindTargetData(byTarget, byWrapper, "Beyond.MemoryPack.Beyond_Gameplay_Core_ContinuousFindTargetAction_DataForMemoryPack", abilityBase);
         PrefixFindTargetData(byTarget, byWrapper, "Beyond.MemoryPack.Beyond_Gameplay_Core_EffectFindTargetAction_DataForMemoryPack", abilityBase);
+        // KeywordAction middles. Weak/Slow/Speedup/Shelter are ability + Keyword (13).
+        // Vulnerable/Enhanced add KeywordActionWithSubType.subType (14).
+        ApplyKeywordActionMiddles(byTarget, byWrapper);
+        // PlayAnimationWithStep = ability base + PlayAnimationActionData + its own 14.
+        PrefixPlayAnimationWithStep(byTarget, abilityBase);
+        // PlayRadioAndWait serializes the same 13 members as PlayRadio.
+        CopyWire(byTarget, "Beyond.Gameplay.Actions.PlayRadioAndWait", "Beyond.Gameplay.Actions.PlayRadio");
+        // MVSC behaviors start at offset 40, after MVSCBehaviorData (6). Effect is 6+11=17.
+        PrefixMvscBehaviors(byTarget);
+        // Char interact acts at offset 120 are ActionData (15) + leaf.
+        // Acts at 128 also take ActorActData.actorIndex. CharAnim is 15+1+15=31.
+        PrefixCharInteractPerform(byTarget);
         // BuffData lists were exported as List<Data>; native elements are *Modifier.Data.
         RewriteBuffModifierDataLists(byTarget, byWrapper);
         SynthesizeBuffIconConfigWire(byTarget, kinds);
@@ -684,6 +696,125 @@ public sealed class MemoryPackSchema
             return;
         type.Wire = abilityBase.Concat(type.Wire).ToArray();
         type.Own = type.Wire;
+    }
+
+    private static void ApplyKeywordActionMiddles(
+        Dictionary<string, List<MpType>> byTarget,
+        Dictionary<string, MpType> byWrapper)
+    {
+        if (!byTarget.TryGetValue("KeywordActionData", out var keywordList) || keywordList.Count != 1)
+            return;
+        MpMember[] keyword = keywordList[0].AbilityPayload is { Length: > 0 } payload
+            ? payload
+            : keywordList[0].Wire;
+        MpMember[] subType = byTarget.TryGetValue("KeywordActionWithSubTypeData", out var subList) && subList.Count == 1
+            ? subList[0].Wire
+            : [];
+        foreach (MpType type in byWrapper.Values)
+        {
+            string wrapper = type.WrapperType;
+            bool fourteen = wrapper.Contains("VulnerableAction_Data", StringComparison.Ordinal)
+                || wrapper.Contains("EnhancedAction_Data", StringComparison.Ordinal);
+            bool thirteen = wrapper.Contains("WeakAction_Data", StringComparison.Ordinal)
+                || wrapper.Contains("SlowAction_Data", StringComparison.Ordinal)
+                || wrapper.Contains("SpeedupAction_Data", StringComparison.Ordinal)
+                || wrapper.Contains("ShelterAction_Data", StringComparison.Ordinal);
+            if (!fourteen && !thirteen)
+                continue;
+            MpMember[] wire = fourteen ? keyword.Concat(subType).ToArray() : keyword;
+            type.AbilityPayload = wire;
+            type.Wire = wire;
+            type.Own = wire;
+        }
+    }
+
+    private static void PrefixPlayAnimationWithStep(
+        Dictionary<string, List<MpType>> byTarget,
+        MpMember[] abilityBase)
+    {
+        if (abilityBase.Length == 0)
+            return;
+        if (!byTarget.TryGetValue("PlayAnimationActionData", out var anim) || anim.Count != 1)
+            return;
+        if (!byTarget.TryGetValue("PlayAnimationWithStepData", out var step) || step.Count != 1)
+            return;
+        MpType type = step[0];
+        var leafNames = new HashSet<string>(type.Wire.Select(m => m.Name), StringComparer.Ordinal);
+        MpMember[] payload = abilityBase
+            .Concat(anim[0].Wire)
+            .Where(m => !leafNames.Contains(m.Name))
+            .Concat(type.Wire)
+            .ToArray();
+        type.AbilityPayload = payload;
+    }
+
+    private static void CopyWire(Dictionary<string, List<MpType>> byTarget, string derived, string sourceName)
+    {
+        if (!byTarget.TryGetValue(derived, out var derivedList) || derivedList.Count != 1)
+            return;
+        if (!byTarget.TryGetValue(sourceName, out var sourceList) || sourceList.Count != 1)
+            return;
+        if (sourceList[0].Wire.Length == 0)
+            return;
+        MpMember[] wire = sourceList[0].Wire.ToArray();
+        derivedList[0].Wire = wire;
+        derivedList[0].Own = wire;
+    }
+
+    private static void PrefixMvscBehaviors(Dictionary<string, List<MpType>> byTarget)
+    {
+        const string behavior = "Beyond.Gameplay.Core.ModelViewStateController.MVSCBehaviorData";
+        if (!byTarget.TryGetValue(behavior, out var bases) || bases.Count != 1 || bases[0].Wire.Length == 0)
+            return;
+        foreach (var group in byTarget.Values)
+        {
+            foreach (MpType type in group)
+            {
+                if (type.TargetType == behavior || type.MinFieldOffset != 40)
+                    continue;
+                if (!type.TargetType.Contains(".MVSC", StringComparison.Ordinal)
+                    || !type.TargetType.Contains("BehaviorData", StringComparison.Ordinal))
+                    continue;
+                var names = new HashSet<string>(type.Wire.Select(m => m.Name), StringComparer.Ordinal);
+                MpMember[] merged = bases[0].Wire.Where(m => !names.Contains(m.Name)).Concat(type.Wire).ToArray();
+                type.Wire = merged;
+                type.Own = merged;
+            }
+        }
+    }
+
+    private static void PrefixCharInteractPerform(Dictionary<string, List<MpType>> byTarget)
+    {
+        const string action = "Beyond.Gameplay.Core.CharInteractPerform.CharInteractPerformActionData";
+        const string actor = "Beyond.Gameplay.Core.CharInteractPerform.ActorActData";
+        if (!byTarget.TryGetValue(action, out var actionList) || actionList.Count != 1)
+            return;
+        MpMember[] actionWire = actionList[0].Wire;
+        MpMember[] actorWire = byTarget.TryGetValue(actor, out var actorList) && actorList.Count == 1
+            ? actorList[0].Wire
+            : [];
+        foreach (var group in byTarget.Values)
+        {
+            foreach (MpType type in group)
+            {
+                if (!type.TargetType.Contains(".CharInteractPerform.", StringComparison.Ordinal))
+                    continue;
+                if (type.TargetType == action)
+                    continue;
+                MpMember[] prefix = type.MinFieldOffset switch
+                {
+                    128 => actionWire.Concat(actorWire).ToArray(),
+                    120 => actionWire,
+                    _ => [],
+                };
+                if (prefix.Length == 0)
+                    continue;
+                var names = new HashSet<string>(type.Wire.Select(m => m.Name), StringComparer.Ordinal);
+                MpMember[] merged = prefix.Where(m => !names.Contains(m.Name)).Concat(type.Wire).ToArray();
+                type.Wire = merged;
+                type.Own = merged;
+            }
+        }
     }
 
     private static void PrefixFindTargetData(

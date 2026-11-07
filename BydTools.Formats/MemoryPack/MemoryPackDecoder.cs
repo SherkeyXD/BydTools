@@ -500,9 +500,11 @@ public sealed class MemoryPackDecoder
             throw new InvalidDataException($"Negative member count {count} at offset {origin}.");
 
         MpMember[] members;
-        if (abilityPayload && type.AbilityPayload != null && count == type.AbilityPayload.Length)
+        // Named fields (EffectActionData and other ability leaves) use the same
+        // ability payload as the union path when the header matches it.
+        if (type.AbilityPayload != null && count == type.AbilityPayload.Length)
             members = type.AbilityPayload;
-        else if (abilityPayload && type.AbilityPayloadAlt != null && count == type.AbilityPayloadAlt.Length)
+        else if (type.AbilityPayloadAlt != null && count == type.AbilityPayloadAlt.Length)
             members = type.AbilityPayloadAlt;
         else if (count == type.Wire.Length)
             members = type.Wire;
