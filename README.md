@@ -20,9 +20,9 @@
   - Remaining gaps (each failed file is one row in the coverage report):
     - On the full dump, ok moved from 1295 to 5685 after unmanaged `GameplayTag` / `AnimationClipAsyncInfo` / `FMontageTransitionInfo`, native `AnimationCurve` (count 3 and 28-byte keys, not an `FAnimationCurve` alias), `EffectActionData` base+wire, and `ActionHeader` wires for `OnLeaderEnterTriggerVolume`.
     - Full-dump v8 (local tree that includes dispel/buff-modifier work) was ok **6138** / failed 13364 / plain JSON 3824. `BuffData` was still 0/3394. This branch adds that work plus the wires below. It has not been re-run on the 23326-file dump.
-    - `DispelConfig` is 8 unmanaged bytes. Buff modifier lists use the concrete `*Modifier.Data` wrappers, and `BuffIconConfig` is 20 fields (`_orderPriorityConfig`, `_spritePath`, then the 18 exported props).
+    - `DispelConfig` is 8 unmanaged bytes. `OrderPriorityConfig` inside `BuffIconConfig` is 12 unmanaged bytes (bool, pad, `priorityValue`, `priorityEnum`); a leading 0 is that bool, not memberCount 0. `LifeType` and `IdentifierType` are byte enums and `StackingType` is int16. Buff modifier lists use the concrete `*Modifier.Data` wrappers, and `BuffIconConfig` is 20 fields.
     - `ContinuousFindTargetAction.Data` is ability base + `FindTargetActionData` (14) + `findInterval` (19). `ShowHideActorData` is the 4 ability fields + its 6 leaf fields (10). `StartDialogAndTeleportAction` is `StartDialogAction` (15) plus a second `_dialogId` (16).
-    - Remaining large buckets: boolean cascades (BuffData often `Boolean 3` at offset 45), `AbilitySystemReset` garbage counts, `ParamListForGraph` count 2 vs wire 1, non-zero `Param` desyncs, dictionary/list garbage, and basename gaps.
+    - The BuffData `Boolean 3` at offset 45 on the small icon/stack buffs was `duration`'s memberCount. `DispelConfig`'s eight zero bytes were read as an empty object, so `hasIcon` landed on that 3. Those samples now decode. Still open: other boolean cascades, `AbilitySystemReset` garbage counts, `ParamListForGraph` count 2 vs wire 1, non-zero `Param` desyncs, dictionary/list garbage, and basename gaps.
     - U8, Webview, and Table SparkBuffer are out of scope
 
 ## Prerequisites

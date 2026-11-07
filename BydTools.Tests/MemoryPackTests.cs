@@ -340,6 +340,29 @@ public class MemoryPackTests
     }
 
     [Fact]
+    public void Icon_stack_buff_decodes_every_byte()
+    {
+        var decoder = new MemoryPackDecoder(Schema());
+        JsonObject buff = Assert.IsType<JsonObject>(
+            decoder.Decode(Sample("buff_cc_chr_atb_recoverspeed_down_icon.json"), "Beyond.Gameplay.Core.BuffData")
+        );
+        Assert.True(buff["hasIcon"]!.GetValue<bool>());
+        Assert.False(buff["finishOnRepatriate"]!.GetValue<bool>());
+        Assert.Equal(1, buff["lifeType"]!.GetValue<int>());
+        Assert.Equal("#90967", buff["id"]!.GetValue<string>());
+        JsonObject duration = Assert.IsType<JsonObject>(buff["duration"]);
+        Assert.Equal(3f, duration["value"]!.GetValue<float>());
+        JsonObject icon = Assert.IsType<JsonObject>(buff["iconConfig"]);
+        Assert.Equal("#90966", icon["_spritePath"]!.GetValue<string>());
+        JsonObject order = Assert.IsType<JsonObject>(icon["_orderPriorityConfig"]);
+        Assert.Equal(110, order["priorityEnum"]!.GetValue<int>());
+        Assert.Equal(0, order["priorityValue"]!.GetValue<int>());
+        JsonObject stacking = Assert.IsType<JsonObject>(buff["stackingSettings"]);
+        Assert.Equal(1, stacking["maxStackCnt"]!.GetValue<int>());
+        Assert.Equal(-1f, Assert.IsType<JsonObject>(buff["triggerInterval"])["value"]!.GetValue<float>());
+    }
+
+    [Fact]
     public void DispelConfig_reads_unmanaged_8_bytes()
     {
         var decoder = new MemoryPackDecoder(Schema());
