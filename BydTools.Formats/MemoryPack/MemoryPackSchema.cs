@@ -234,8 +234,34 @@ public sealed class MemoryPackSchema
         AliasEmpty(byTarget, "BlackboardDouble", "BlackboardParamBase`2<float, double>");
         AliasEmpty(byTarget, "BlackboardInt", "BlackboardParamBase`2<int, int>");
         AliasEmpty(byTarget, "BlackboardString", "BlackboardParamBase`2<string, string>");
+        // BlackboardCustomWithDropdownIntValue adds useCustomValue after BlackboardInt (native count 4).
+        PrefixWithBaseWire(byTarget, "BlackboardCustomWithDropdownIntValue", "BlackboardInt");
+        AliasDropdownBlackboard(byTarget, "Beyond.Gameplay.Core.BlackboardImpactValue");
+        AliasDropdownBlackboard(byTarget, "Beyond.Gameplay.Core.BlackboardSuperArmorValue");
+        AliasDropdownBlackboard(byTarget, "BlackboardCharBlowOffPriorityValue");
+        AliasEmpty(byTarget, "Beyond.Gameplay.Core.Conditions.BlackboardBuffId", "BlackboardString");
         // CreateBuffActionInput wire is BuffInput (3) then its own fields (2) = 5.
         PrefixWithBaseWire(byTarget, "Beyond.Gameplay.Core.CreateBuffActionInput", "Beyond.Gameplay.Core.BuffInput");
+        // StartDialogAndTeleport extends StartDialogAction. Native count 16 = StartDialog's 15
+        // plus a second _dialogId at offset 272 (the parent already has one at 216).
+        AppendDuplicateChildField(
+            byTarget,
+            "Beyond.Gameplay.Actions.StartDialogAndTeleportAction",
+            "Beyond.Gameplay.Actions.StartDialogAction",
+            "_dialogId"
+        );
+        // ShowHideActorData fields start at offset 32, right after AbilityActionData.
+        // Native memberCount is 10 = 4 base fields + the 6 leaf fields.
+        PrefixAbilityBase(byTarget, "ShowHideActorData", abilityBase);
+        PrefixAbilityBase(byTarget, "FootStepChangeData", abilityBase);
+        PrefixAbilityBase(byTarget, "HideEffectOnTargetExceptTagData", abilityBase);
+        // ContinuousFindTarget / EffectFindTarget are FindTargetActionData (14) + one leaf.
+        // Native count 19 = ability base 4 + FindTarget 14 + leaf.
+        PrefixFindTargetData(byTarget, byWrapper, "Beyond.MemoryPack.Beyond_Gameplay_Core_ContinuousFindTargetAction_DataForMemoryPack", abilityBase);
+        PrefixFindTargetData(byTarget, byWrapper, "Beyond.MemoryPack.Beyond_Gameplay_Core_EffectFindTargetAction_DataForMemoryPack", abilityBase);
+        // BuffData lists were exported as List<Data>; native elements are *Modifier.Data.
+        RewriteBuffModifierDataLists(byTarget, byWrapper);
+        SynthesizeBuffIconConfigWire(byTarget, kinds);
         // Level*Data first fields sit at offset 112, immediately after LevelEntityData
         // (last field keepCrossMap at 106). Native formatters write the base wire, then the leaf.
         PrefixWithBaseWire(byTarget, "Beyond.Gameplay.LevelInteractiveData", "Beyond.Gameplay.LevelEntityData");
@@ -397,7 +423,12 @@ public sealed class MemoryPackSchema
     {
         MpKind kind = Classify(type, _kinds);
         if (kind == MpKind.Object && !_byTarget.ContainsKey(type))
+        {
+            // Wrapper FQCNs are objects. Without this, BuffData list elements are eaten as int32.
+            if (_byWrapper.ContainsKey(type))
+                return MpKind.Object;
             return MpKind.Enum;
+        }
         return kind;
     }
 
@@ -613,6 +644,181 @@ public sealed class MemoryPackSchema
         return target is "Beyond.Gameplay.CheckActivityConditionalStageStatus"
             or "Beyond.Gameplay.CombineCondition"
             or "Beyond.Gameplay.GameConditionServerPlaceHolder";
+    }
+
+    private static void AppendDuplicateChildField(
+        Dictionary<string, List<MpType>> byTarget,
+        string derived,
+        string baseName,
+        string fieldName)
+    {
+        if (!byTarget.TryGetValue(derived, out var derivedList) || derivedList.Count != 1)
+            return;
+        if (!byTarget.TryGetValue(baseName, out var baseList) || baseList.Count != 1)
+            return;
+        MpType child = derivedList[0];
+        MpMember? extra = null;
+        foreach (MpMember member in child.Wire)
+        {
+            if (member.Name == fieldName)
+                extra = member;
+        }
+
+        if (extra == null)
+            return;
+        child.Wire = baseList[0].Wire.Concat([extra]).ToArray();
+        child.Own = child.Wire;
+    }
+
+    private static void PrefixAbilityBase(
+        Dictionary<string, List<MpType>> byTarget,
+        string derived,
+        MpMember[] abilityBase)
+    {
+        if (abilityBase.Length == 0)
+            return;
+        if (!byTarget.TryGetValue(derived, out var list) || list.Count != 1)
+            return;
+        MpType type = list[0];
+        if (type.Wire.Any(m => m.Name == "isEnable"))
+            return;
+        type.Wire = abilityBase.Concat(type.Wire).ToArray();
+        type.Own = type.Wire;
+    }
+
+    private static void PrefixFindTargetData(
+        Dictionary<string, List<MpType>> byTarget,
+        Dictionary<string, MpType> byWrapper,
+        string wrapperName,
+        MpMember[] abilityBase)
+    {
+        if (!byWrapper.TryGetValue(wrapperName, out MpType? type))
+            return;
+        if (!byTarget.TryGetValue("FindTargetActionData", out var bases) || bases.Count != 1)
+            return;
+        MpMember[] middle = bases[0].Wire;
+        if (middle.Length == 0 || abilityBase.Length == 0)
+            return;
+        var leafNames = new HashSet<string>(type.Wire.Select(m => m.Name), StringComparer.Ordinal);
+        MpMember[] payload = abilityBase
+            .Concat(middle)
+            .Where(m => !leafNames.Contains(m.Name))
+            .Concat(type.Wire)
+            .ToArray();
+        type.AbilityPayload = payload;
+    }
+
+    /// <summary>
+    /// Impact/SuperArmor/CharBlowOff inherit BlackboardCustomWithDropdownIntValue:
+    /// BlackboardInt wire (3) + useCustomValue.
+    /// </summary>
+    private static void AliasDropdownBlackboard(Dictionary<string, List<MpType>> byTarget, string derived)
+    {
+        if (byTarget.ContainsKey("BlackboardCustomWithDropdownIntValue")
+            && byTarget["BlackboardCustomWithDropdownIntValue"].Count == 1
+            && byTarget["BlackboardCustomWithDropdownIntValue"][0].Wire.Length > 0)
+        {
+            AliasEmpty(byTarget, derived, "BlackboardCustomWithDropdownIntValue");
+            return;
+        }
+
+        AliasEmpty(byTarget, derived, "BlackboardInt");
+        if (!byTarget.TryGetValue(derived, out var list) || list.Count != 1)
+            return;
+        MpType type = list[0];
+        if (type.Wire.Any(m => m.Name == "useCustomValue"))
+            return;
+        MpMember extra = new()
+        {
+            Name = "useCustomValue",
+            Type = "bool",
+            Kind = MpKind.Bool,
+        };
+        type.Wire = type.Wire.Concat([extra]).ToArray();
+        type.Own = type.Wire;
+    }
+
+    /// <summary>
+    /// schemas.json collapses nested Modifier.Data to bare Data. BuffData modifier lists
+    /// are the concrete Modifier.Data wrappers, not AbilityAction Data unions.
+    /// </summary>
+    private static void RewriteBuffModifierDataLists(
+        Dictionary<string, List<MpType>> byTarget,
+        Dictionary<string, MpType> byWrapper)
+    {
+        if (!byTarget.TryGetValue("Beyond.Gameplay.Core.BuffData", out var list) || list.Count != 1)
+            return;
+        MpType buff = list[0];
+        (string Field, string Wrapper)[] map =
+        [
+            ("damageModifier", "Beyond.MemoryPack.Beyond_Gameplay_Core_DamageModifier_DataForMemoryPack"),
+            ("healModifier", "Beyond.MemoryPack.Beyond_Gameplay_Core_HealModifier_DataForMemoryPack"),
+            ("poiseModifier", "Beyond.MemoryPack.Beyond_Gameplay_Core_PoiseModifier_DataForMemoryPack"),
+            ("globalModifier", "Beyond.MemoryPack.Beyond_Gameplay_Core_GlobalModifier_DataForMemoryPack"),
+        ];
+        var wire = buff.Wire.ToArray();
+        bool changed = false;
+        for (int i = 0; i < wire.Length; i++)
+        {
+            foreach (var (field, wrapper) in map)
+            {
+                if (wire[i].Name != field)
+                    continue;
+                if (!wire[i].Type.Contains("List`1<Data>", StringComparison.Ordinal))
+                    continue;
+                if (!byWrapper.ContainsKey(wrapper))
+                    continue;
+                wire[i] = new MpMember
+                {
+                    Name = wire[i].Name,
+                    Type = $"System.Collections.Generic.List`1<{wrapper}>",
+                    Kind = MpKind.List,
+                };
+                changed = true;
+            }
+        }
+
+        if (!changed)
+            return;
+        buff.Wire = wire;
+        buff.Own = wire;
+    }
+
+    /// <summary>
+    /// BuffIconConfig wrapper exposes _spritePath / _orderPriorityConfig, which the exporter
+    /// skipped. Native count is 20 = those two (alpha) + 18 public wire props.
+    /// </summary>
+    private static void SynthesizeBuffIconConfigWire(
+        Dictionary<string, List<MpType>> byTarget,
+        Dictionary<string, string> kinds)
+    {
+        if (!byTarget.TryGetValue("Beyond.Gameplay.Core.BuffIconConfig", out var list) || list.Count != 1)
+            return;
+        MpType type = list[0];
+        if (type.Wire.Any(m => m.Name is "_spritePath" or "_orderPriorityConfig"))
+            return;
+        string orderType = byTarget.ContainsKey("Beyond.Gameplay.Core.BuffIconConfig.OrderPriorityConfig")
+            ? "Beyond.Gameplay.Core.BuffIconConfig.OrderPriorityConfig"
+            : byTarget.ContainsKey("OrderPriorityConfig")
+                ? "OrderPriorityConfig"
+                : "OrderPriorityConfig";
+        MpMember[] prefix =
+        [
+            new()
+            {
+                Name = "_orderPriorityConfig",
+                Type = orderType,
+                Kind = byTarget.ContainsKey(orderType) ? MpKind.Object : Classify(orderType, kinds),
+            },
+            new()
+            {
+                Name = "_spritePath",
+                Type = "string",
+                Kind = MpKind.String,
+            },
+        ];
+        type.Wire = prefix.Concat(type.Wire).ToArray();
+        type.Own = type.Wire;
     }
 
     private static void PrefixWithBaseWire(
