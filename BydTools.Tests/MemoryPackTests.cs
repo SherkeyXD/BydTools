@@ -87,9 +87,16 @@ public class MemoryPackTests
         Assert.Equal(50, maps["ConditionRuntimeBase"].Count);
         Assert.Equal(6, maps["CalculationBase"].Count);
         Assert.Equal("Beyond.Gameplay.Core.DefiniteValueCalculation", maps["CalculationBase"][2]);
+        Assert.Equal(26, maps["Finder.Data"].Count);
+        Assert.Equal(26, maps["Beyond.Gameplay.Core.Selector.Finder.Data"].Count);
+        Assert.Equal(14, maps["Validator.Data"].Count);
+        Assert.Equal(11, maps["PostProcessor.Data"].Count);
         Assert.Equal(
             "Beyond.MemoryPack.Beyond_Gameplay_Core_Selector_HitBoxFinder_DataForMemoryPack",
-            maps["Finder"][7]);
+            maps["Finder.Data"][7]);
+        Assert.Equal(
+            "Beyond.MemoryPack.Beyond_Gameplay_Core_Selector_TyphoeaArcherySelectedFinder_DataForMemoryPack",
+            maps["Finder.Data"][25]);
         Assert.Equal("PlayAnimationActionData", maps["AbilityActionData"][296]);
 
         using var dir = new TempDir();
@@ -407,6 +414,11 @@ public class MemoryPackTests
         MpType hitBox = schema.ResolveNamed(
             "Beyond.MemoryPack.Beyond_Gameplay_Core_Selector_HitBoxFinder_DataForMemoryPack");
         Assert.Equal(8, hitBox.Wire.Length);
+        Assert.Null(hitBox.AbilityPayload);
+        Assert.Contains(
+            "HitBoxFinder_ShapeDataForMemoryPack",
+            hitBox.Wire.Single(m => m.Name == "shapeList").Type,
+            StringComparison.Ordinal);
         Assert.Equal(
             new[]
             {

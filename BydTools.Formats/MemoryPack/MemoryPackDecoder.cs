@@ -52,11 +52,11 @@ public sealed class MemoryPackDecoder
             return null;
         string h = hint.ToLowerInvariant();
         if (h.Contains("finder", StringComparison.Ordinal))
-            return "Finder";
+            return "Finder.Data";
         if (h.Contains("validator", StringComparison.Ordinal))
-            return "Validator";
+            return "Validator.Data";
         if (h.Contains("postprocessor", StringComparison.Ordinal) || h.Contains("processor", StringComparison.Ordinal))
-            return "PostProcessor";
+            return "PostProcessor.Data";
         return null;
     }
 
@@ -177,6 +177,12 @@ public sealed class MemoryPackDecoder
             or "Beyond.Gameplay.ConditionRuntimeBase"
             or "Beyond.Gameplay.Core.CalculationBase"
             or "CalculationBase"
+            or "Finder.Data"
+            or "Beyond.Gameplay.Core.Selector.Finder.Data"
+            or "Validator.Data"
+            or "Beyond.Gameplay.Core.Selector.Validator.Data"
+            or "PostProcessor.Data"
+            or "Beyond.Gameplay.Core.Selector.PostProcessor.Data"
             or "Data";
 
     /// <summary>
