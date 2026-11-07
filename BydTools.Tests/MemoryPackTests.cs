@@ -502,6 +502,38 @@ public class MemoryPackTests
     }
 
     [Fact]
+    public void V13_param_output_audio_and_destructible()
+    {
+        MemoryPackSchema schema = Schema();
+        MpType output = schema.Require("Beyond.Gameplay.Actions.ParamOutput`1<int>", hint: null);
+        Assert.Equal(2, output.Wire.Length);
+        Assert.Equal(new[] { "paramTarget", "path" }, output.Wire.Select(m => m.Name).ToArray());
+
+        MpType destructible = schema.Require(
+            "Beyond.Gameplay.Core.ModelViewStateController.MVSCDestructibleBehaviorData",
+            hint: null);
+        Assert.Equal(6, destructible.Wire.Length);
+        Assert.Contains(destructible.Wire, m => m.Name == "canLoopActive");
+        Assert.Contains(destructible.Wire, m => m.Name == "normalizedTimeFlowBasedActive");
+
+        byte[] audio =
+        [
+            2, 3, 1, 0,
+            0, 0, 0, 0x3F,
+            0, 0, 0, 0,
+            0, 0, 0, 0x40,
+        ];
+        JsonObject node = Assert.IsType<JsonObject>(
+            new MemoryPackDecoder(schema).Decode(audio, "Beyond.Gameplay.Audio.Utils.AudioBlackScreenBehaviour"));
+        Assert.Equal(2, node["presetBehaviour"]!.GetValue<int>());
+        Assert.Equal(3, node["customRetainFlags"]!.GetValue<int>());
+        Assert.True(node["isOverrideFadeInTime"]!.GetValue<bool>());
+        Assert.Equal(0.5f, node["overrideFadeInTimeSeconds"]!.GetValue<float>());
+        Assert.False(node["isOverrideFadeOutTime"]!.GetValue<bool>());
+        Assert.Equal(2f, node["overrideFadeOutTimeSeconds"]!.GetValue<float>());
+    }
+
+    [Fact]
     public void AdditiveEffectType_is_a_signed_int16()
     {
         var decoder = new MemoryPackDecoder(Schema());
@@ -588,6 +620,7 @@ public class MemoryPackTests
         Assert.Equal(15, dialog.Wire.Length);
         Assert.Equal(16, teleport.Wire.Length);
         Assert.Equal("_dialogId", teleport.Wire[^1].Name);
+        Assert.Contains(teleport.Wire, m => m.Name == "levelIdStr");
     }
 
     private static byte[] BlackboardDouble(float value, bool useKey)

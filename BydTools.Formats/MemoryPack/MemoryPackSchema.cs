@@ -242,12 +242,11 @@ public sealed class MemoryPackSchema
         AliasEmpty(byTarget, "Beyond.Gameplay.Core.Conditions.BlackboardBuffId", "BlackboardString");
         // CreateBuffActionInput wire is BuffInput (3) then its own fields (2) = 5.
         PrefixWithBaseWire(byTarget, "Beyond.Gameplay.Core.CreateBuffActionInput", "Beyond.Gameplay.Core.BuffInput");
-        // StartDialogAndTeleport extends StartDialogAction. Native count 16 = StartDialog's 15
-        // plus a second _dialogId at offset 272 (the parent already has one at 216).
+        // StartDialogAndTeleport extends ClientCutsceneTeleport, then its own _dialogId.
         AppendDuplicateChildField(
             byTarget,
             "Beyond.Gameplay.Actions.StartDialogAndTeleportAction",
-            "Beyond.Gameplay.Actions.StartDialogAction",
+            "Beyond.Gameplay.Actions.ClientCutsceneTeleport",
             "_dialogId"
         );
         // ShowHideActorData fields start at offset 32, right after AbilityActionData.
@@ -397,6 +396,7 @@ public sealed class MemoryPackSchema
                         || type.TargetType.Contains("ActionMapAssetRaw", StringComparison.Ordinal)
                         || type.TargetType.Contains("ActionNodePtr", StringComparison.Ordinal)
                         || type.TargetType.StartsWith("Beyond.Gameplay.Actions.Param`1", StringComparison.Ordinal)
+                        || type.TargetType.StartsWith("Beyond.Gameplay.Actions.ParamOutput`1", StringComparison.Ordinal)
                         || type.TargetType.StartsWith("Beyond.Gameplay.Actions.Getter`1", StringComparison.Ordinal)
                         || type.TargetType.StartsWith("Beyond.Gameplay.Actions.List", StringComparison.Ordinal)
                         || type.TargetType.StartsWith("Beyond.Gameplay.Actions.GetInteractiveProperty`1", StringComparison.Ordinal)
@@ -799,10 +799,13 @@ public sealed class MemoryPackSchema
         {
             foreach (MpType type in group)
             {
-                if (type.TargetType == behavior || type.MinFieldOffset != 40)
+                if (type.TargetType == behavior)
                     continue;
                 if (!type.TargetType.Contains(".MVSC", StringComparison.Ordinal)
                     || !type.TargetType.Contains("BehaviorData", StringComparison.Ordinal))
+                    continue;
+                // DestructibleBehaviorData has an empty leaf and still writes the 6 base fields.
+                if (type.MinFieldOffset != 40 && type.Wire.Length != 0)
                     continue;
                 var names = new HashSet<string>(type.Wire.Select(m => m.Name), StringComparer.Ordinal);
                 MpMember[] merged = bases[0].Wire.Where(m => !names.Contains(m.Name)).Concat(type.Wire).ToArray();
@@ -1351,7 +1354,9 @@ public sealed class MemoryPackSchema
 
     private static bool IsActionBaseConcrete(string targetType, bool hasDeserialize)
     {
-        if (!hasDeserialize)
+        // ClientCutsceneTeleport's wrapper has no Deserialize of its own, but
+        // StartDialogAndTeleport still writes the ActionBase prefix before its 7 fields.
+        if (!hasDeserialize && targetType != "Beyond.Gameplay.Actions.ClientCutsceneTeleport")
             return false;
         if (!targetType.StartsWith("Beyond.Gameplay.Actions.", StringComparison.Ordinal))
             return false;
@@ -1363,6 +1368,7 @@ public sealed class MemoryPackSchema
             || targetType.Contains("ActionMapAssetRaw", StringComparison.Ordinal)
             || targetType.Contains("ActionNodePtr", StringComparison.Ordinal)
             || targetType.StartsWith("Beyond.Gameplay.Actions.Param`1", StringComparison.Ordinal)
+            || targetType.StartsWith("Beyond.Gameplay.Actions.ParamOutput`1", StringComparison.Ordinal)
             || targetType.StartsWith("Beyond.Gameplay.Actions.Getter`1", StringComparison.Ordinal)
             || targetType.StartsWith("Beyond.Gameplay.Actions.List", StringComparison.Ordinal)
             || targetType.StartsWith("Beyond.Gameplay.Actions.GetInteractiveProperty`1", StringComparison.Ordinal)
