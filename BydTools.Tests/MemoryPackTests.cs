@@ -85,6 +85,8 @@ public class MemoryPackTests
         Assert.Equal(21, maps["AbstractBehaviorData"].Count);
         Assert.Equal(11, maps["DamageProcessorBase"].Count);
         Assert.Equal(50, maps["ConditionRuntimeBase"].Count);
+        Assert.Equal(6, maps["CalculationBase"].Count);
+        Assert.Equal("Beyond.Gameplay.Core.DefiniteValueCalculation", maps["CalculationBase"][2]);
         Assert.Equal("PlayAnimationActionData", maps["AbilityActionData"][296]);
 
         using var dir = new TempDir();
@@ -335,6 +337,75 @@ public class MemoryPackTests
         Assert.True(node["useCurrentScope"]!.GetValue<bool>());
         Assert.False(node["useGraphScope"]!.GetValue<bool>());
         Assert.IsType<JsonObject>(node["_dungeonId"]);
+    }
+
+    [Fact]
+    public void DispelConfig_reads_unmanaged_8_bytes()
+    {
+        var decoder = new MemoryPackDecoder(Schema());
+        byte[] payload = [1, 0, 0, 0, 2, 0, 0, 0];
+        JsonObject obj = Assert.IsType<JsonObject>(decoder.Decode(payload, "Beyond.Gameplay.Core.DispelConfig"));
+        Assert.True(obj["canBeDispelled"]!.GetValue<bool>());
+        Assert.Equal(2, obj["dispelledLevel"]!.GetValue<int>());
+    }
+
+    [Fact]
+    public void BlackboardImpactValue_wire_is_int_base_plus_useCustomValue()
+    {
+        MemoryPackSchema schema = Schema();
+        MpType type = schema.Require("Beyond.Gameplay.Core.BlackboardImpactValue", hint: null);
+        Assert.Equal(4, type.Wire.Length);
+        Assert.Equal(
+            new[] { "blackboardKey", "useBlackboardKey", "value", "useCustomValue" },
+            type.Wire.Select(m => m.Name).ToArray()
+        );
+    }
+
+    [Fact]
+    public void BuffData_modifier_lists_use_concrete_wrappers_and_icon_is_20()
+    {
+        MemoryPackSchema schema = Schema();
+        MpType buff = schema.Require("Beyond.Gameplay.Core.BuffData", hint: null);
+        MpMember damage = buff.Wire.First(m => m.Name == "damageModifier");
+        Assert.Contains("DamageModifier_DataForMemoryPack", damage.Type, StringComparison.Ordinal);
+        MpType icon = schema.Require("Beyond.Gameplay.Core.BuffIconConfig", hint: null);
+        Assert.Equal(20, icon.Wire.Length);
+        Assert.Equal("_orderPriorityConfig", icon.Wire[0].Name);
+        Assert.Equal("_spritePath", icon.Wire[1].Name);
+        Assert.Equal(
+            MpKind.Object,
+            schema.KindOf("Beyond.MemoryPack.Beyond_Gameplay_Core_DamageModifier_DataForMemoryPack")
+        );
+    }
+
+    [Fact]
+    public void ContinuousFindTarget_ability_payload_is_19()
+    {
+        MemoryPackSchema schema = Schema();
+        MpType type = schema.ResolveNamed(
+            "Beyond.MemoryPack.Beyond_Gameplay_Core_ContinuousFindTargetAction_DataForMemoryPack"
+        );
+        Assert.NotNull(type.AbilityPayload);
+        Assert.Equal(19, type.AbilityPayload!.Length);
+        Assert.Equal("isEnable", type.AbilityPayload[0].Name);
+        Assert.Equal("findInterval", type.AbilityPayload[^1].Name);
+        Assert.Contains(type.AbilityPayload, m => m.Name == "targetGroupKey");
+    }
+
+    [Fact]
+    public void ShowHideActor_and_start_dialog_teleport_include_inherited_wires()
+    {
+        MemoryPackSchema schema = Schema();
+        MpType show = schema.Require("ShowHideActorData", hint: null);
+        Assert.Equal(10, show.Wire.Length);
+        Assert.Equal("isEnable", show.Wire[0].Name);
+        Assert.Equal("targetSettings", show.Wire[^1].Name);
+
+        MpType dialog = schema.Require("Beyond.Gameplay.Actions.StartDialogAction", hint: null);
+        MpType teleport = schema.Require("Beyond.Gameplay.Actions.StartDialogAndTeleportAction", hint: null);
+        Assert.Equal(15, dialog.Wire.Length);
+        Assert.Equal(16, teleport.Wire.Length);
+        Assert.Equal("_dialogId", teleport.Wire[^1].Name);
     }
 
     private static byte[] BlackboardDouble(float value, bool useKey)

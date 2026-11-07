@@ -82,6 +82,8 @@ public sealed class MemoryPackDecoder
             return ReadGuidProxy(cursor);
         if (type == "Beyond.Gameplay.Core.GameplayTag" || type == "GameplayTag")
             return ReadGameplayTag(cursor);
+        if (type == "Beyond.Gameplay.Core.DispelConfig" || type == "DispelConfig")
+            return ReadDispelConfig(cursor);
         if (type == "Beyond.Montage.AnimationClipAsyncInfo")
             return ReadAnimationClipAsyncInfo(cursor);
         if (type == "Beyond.Montage.FMontageTransitionInfo")
@@ -131,7 +133,8 @@ public sealed class MemoryPackDecoder
             case MpKind.AnimationCurve:
                 return ReadUnityAnimationCurve(cursor);
             default:
-                MpType resolved = _schema.Require(type, hint);
+                // Wrapper FQCNs (BuffData modifier list elements) resolve via byWrapper.
+                MpType resolved = _schema.ResolveNamed(type);
                 return ReadObject(cursor, resolved, abilityPayload: false, depth, sandbox);
         }
     }
@@ -153,6 +156,7 @@ public sealed class MemoryPackDecoder
             or "Beyond.Gameplay.Core.DamageProcessorBase"
             or "Beyond.Gameplay.ConditionRuntimeBase"
             or "Beyond.Gameplay.Core.CalculationBase"
+            or "CalculationBase"
             or "Data";
 
     /// <summary>
@@ -181,6 +185,30 @@ public sealed class MemoryPackDecoder
     /// </summary>
     private static JsonNode ReadGameplayTag(Cursor cursor) =>
         new JsonObject { ["tagId"] = JsonValue.Create(cursor.I32()) };
+
+    /// <summary>
+    /// DispelConfig is an unmanaged struct { bool canBeDispelled; pad3; DispelLevel } (8 bytes).
+    /// BuffData reads it with a raw 8-byte move, not an object header.
+    /// </summary>
+    private static JsonNode ReadDispelConfig(Cursor cursor)
+    {
+        if (cursor.Remaining < 8)
+        {
+            throw new InvalidDataException(
+                $"DispelConfig needs 8 bytes at offset {cursor.Position}, have {cursor.Remaining}."
+            );
+        }
+
+        bool canBeDispelled = cursor.U8() != 0;
+        cursor.U8();
+        cursor.U8();
+        cursor.U8();
+        return new JsonObject
+        {
+            ["canBeDispelled"] = JsonValue.Create(canBeDispelled),
+            ["dispelledLevel"] = JsonValue.Create(cursor.I32()),
+        };
+    }
 
     /// <summary>
     /// AnimationClipAsyncInfo is an unmanaged struct (36 bytes, declaration order).
@@ -334,9 +362,19 @@ public sealed class MemoryPackDecoder
             return null;
 
         if (TryMappedConcrete(staticType, tag.Value, out MpType mappedType))
-            return UsesAbilityPayload(staticType, mappedType)
+        {
+            JsonNode? mapped = UsesAbilityPayload(staticType, mappedType)
                 ? ReadConcrete(cursor, mappedType, depth, sandbox)
                 : ReadObject(cursor, mappedType, abilityPayload: false, depth, sandbox);
+            if (mapped is JsonObject mappedObj)
+            {
+                if (!mappedObj.ContainsKey("$type"))
+                    mappedObj["$type"] = ShortName(mappedType);
+                mappedObj["$tag"] = tag.Value;
+            }
+
+            return mapped;
+        }
         if (staticType == "AbilityActionData" && _schema.FindAbilityTag(tag.Value) is MpType cached)
             return ReadConcrete(cursor, cached, depth, sandbox);
 
