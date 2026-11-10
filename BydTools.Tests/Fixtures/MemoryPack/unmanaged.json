@@ -1,0 +1,109 @@
+[
+  {
+    "type_name": "Beyond.Gameplay.Core.GameplayTag",
+    "payload_size": 4,
+    "native_size": 4,
+    "fields": [
+      { "name": "tagId", "type": "int", "offset": 0, "size": 4 }
+    ]
+  },
+  {
+    "type_name": "Beyond.Resource.StringPathHash",
+    "payload_size": 8,
+    "native_size": 8,
+    "fields": [
+      { "name": "hash", "type": "long", "offset": 0, "size": 8 }
+    ]
+  },
+  {
+    "type_name": "Beyond.Gameplay.Core.DispelConfig",
+    "payload_size": 8,
+    "native_size": 8,
+    "fields": [
+      { "name": "canBeDispelled", "type": "bool", "offset": 0, "size": 1 },
+      { "name": "dispelledLevel", "type": "Beyond.Gameplay.Core.DispelLevel", "offset": 4, "size": 4 }
+    ]
+  },
+  {
+    "type_name": "Beyond.Resource.ManifestData+GUIDProxy",
+    "payload_size": 16,
+    "native_size": 16,
+    "fields": [
+      { "name": "val0", "type": "uint", "offset": 0, "size": 4 },
+      { "name": "val1", "type": "uint", "offset": 4, "size": 4 },
+      { "name": "val2", "type": "uint", "offset": 8, "size": 4 },
+      { "name": "val3", "type": "uint", "offset": 12, "size": 4 }
+    ]
+  },
+  {
+    "type_name": "Beyond.Gameplay.Core.BuffIconConfig+OrderPriorityConfig",
+    "payload_size": 12,
+    "native_size": 12,
+    "fields": [
+      { "name": "useDirectoryValue", "type": "bool", "offset": 0, "size": 1 },
+      { "name": "priorityValue", "type": "int", "offset": 4, "size": 4 },
+      { "name": "priorityEnum", "type": "Beyond.Gameplay.Core.BuffIconConfig+OrderPriority", "offset": 8, "size": 4 }
+    ]
+  },
+  {
+    "type_name": "Beyond.Montage.AnimationClipAsyncInfo",
+    "payload_size": 36,
+    "native_size": 40,
+    "fields": [
+      { "name": "montagePathHash", "type": "long", "offset": 0, "size": 8 },
+      { "name": "length", "type": "float", "offset": 8, "size": 4 },
+      { "name": "framerate", "type": "float", "offset": 12, "size": 4 },
+      { "name": "averageSpeed", "type": "UnityEngine.Vector3", "offset": 16, "size": 12 },
+      { "name": "averageAngularSpeed", "type": "float", "offset": 28, "size": 4 },
+      { "name": "isHumanoid", "type": "bool", "offset": 32, "size": 1 },
+      { "name": "isLooping", "type": "bool", "offset": 33, "size": 1 }
+    ]
+  },
+  {
+    "type_name": "Beyond.Montage.FMontageTransitionInfo",
+    "payload_size": 32,
+    "native_size": 32,
+    "fields": [
+      { "name": "bIsFixedTransitionTime", "type": "bool", "offset": 0, "size": 1 },
+      { "name": "transistionOffset", "type": "float", "offset": 4, "size": 4 },
+      { "name": "transitionDuration", "type": "float", "offset": 8, "size": 4 },
+      { "name": "transitionTime", "type": "float", "offset": 12, "size": 4 },
+      { "name": "fixedTime", "type": "float", "offset": 16, "size": 4 },
+      { "name": "fixedTransitionDuration", "type": "float", "offset": 20, "size": 4 },
+      { "name": "normalizedTransitionTime", "type": "float", "offset": 24, "size": 4 },
+      { "name": "exitTime", "type": "float", "offset": 28, "size": 4 }
+    ]
+  },
+  {
+    "type_name": "Beyond.Gameplay.Audio.Utils.AudioBlackScreenBehaviour",
+    "payload_size": 16,
+    "native_size": 20,
+    "fields": [
+      { "name": "presetBehaviour", "type": "Beyond.Gameplay.Audio.Utils.AudioBlackScreenBehaviour+EPresetBehaviour", "offset": 0, "size": 1 },
+      { "name": "customRetainFlags", "type": "Beyond.Gameplay.Audio.Utils.AudioBlackScreenBehaviour+ERetainFlag", "offset": 1, "size": 1 },
+      { "name": "isOverrideFadeInTime", "type": "bool", "offset": 2, "size": 1 },
+      { "name": "overrideFadeInTimeSeconds", "type": "float", "offset": 4, "size": 4 },
+      { "name": "isOverrideFadeOutTime", "type": "bool", "offset": 8, "size": 1 },
+      { "name": "overrideFadeOutTimeSeconds", "type": "float", "offset": 12, "size": 4 }
+    ]
+  },
+  {
+    "type_name": "Beyond.Gameplay.Core.ModelViewStateController.ConditionValue",
+    "payload_size": 16,
+    "native_size": 16,
+    "fields": [
+      { "name": "conditionValue", "type": "Beyond.Gameplay.Core.ModelViewStateController.ValueUnion", "offset": 0, "size": 12 },
+      { "name": "type", "type": "Beyond.Gameplay.Core.ModelViewStateController.DataType", "offset": 12, "size": 4 }
+    ]
+  },
+  {
+    "type_name": "Beyond.Gameplay.Core.ModelViewStateController.ValueUnion",
+    "payload_size": 12,
+    "native_size": 12,
+    "fields": [
+      { "name": "boolValue", "type": "bool", "offset": 0, "size": 1 },
+      { "name": "floatValue", "type": "float", "offset": 4, "size": 4 },
+      { "name": "intValue", "type": "int", "offset": 8, "size": 4 }
+    ]
+  }
+]

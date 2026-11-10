@@ -1,0 +1,113 @@
+{
+  "data": {
+    "10100020327": {
+      "questConfigs": {
+        "sm2l1m3_q#2": {
+          "questId": "sm2l1m3_q#2",
+          "state": 2
+        },
+        "sm2l1m3_q#8": {
+          "questId": "sm2l1m3_q#8",
+          "state": 2
+        }
+      },
+      "raftId": 0
+    },
+    "10100020341": {
+      "questConfigs": {
+        "e5m1_q#9": {
+          "questId": "e5m1_q#9",
+          "state": 2
+        }
+      },
+      "raftId": 0
+    },
+    "10100020525": {
+      "questConfigs": {
+        "sm2l1m1_q#5": {
+          "questId": "sm2l1m1_q#5",
+          "state": 2
+        },
+        "sm2l1m1_q#6": {
+          "questId": "sm2l1m1_q#6",
+          "state": 2
+        }
+      },
+      "raftId": 0
+    },
+    "10200030029": {
+      "questConfigs": {
+        "e11m1_q#6": {
+          "questId": "e11m1_q#6",
+          "state": 2
+        },
+        "e11m1_q#7": {
+          "questId": "e11m1_q#7",
+          "state": 2
+        }
+      },
+      "raftId": 0
+    },
+    "22800063016": {
+      "questConfigs": {
+        "e6m1_q#2": {
+          "questId": "e6m1_q#2",
+          "state": 2
+        },
+        "e6m1_q#3": {
+          "questId": "e6m1_q#3",
+          "state": 2
+        }
+      },
+      "raftId": 0
+    },
+    "22800063026": {
+      "questConfigs": {
+        "e6m4_q#50": {
+          "questId": "e6m4_q#50",
+          "state": 2
+        },
+        "e6m4_q#51": {
+          "questId": "e6m4_q#51",
+          "state": 2
+        }
+      },
+      "raftId": 0
+    },
+    "23400083063": {
+      "questConfigs": {
+        "e8m2_q#1": {
+          "questId": "e8m2_q#1",
+          "state": 2
+        },
+        "e8m2_q#2": {
+          "questId": "e8m2_q#2",
+          "state": 2
+        }
+      },
+      "raftId": 0
+    },
+    "23400083066": {
+      "questConfigs": {
+        "e8m2_q#10": {
+          "questId": "e8m2_q#10",
+          "state": 2
+        },
+        "e8m2_q#9": {
+          "questId": "e8m2_q#9",
+          "state": 2
+        }
+      },
+      "raftId": 0
+    },
+    "37900000292": {
+      "questConfigs": {
+        "e12m1_q#8": {
+          "questId": "e12m1_q#8",
+          "state": 2
+        }
+      },
+      "raftId": 0
+    }
+  }
+}

@@ -1,0 +1,24 @@
+[package]
+name = "beyond-mp-schema"
+version = "0.1.0"
+edition = "2021"
+description = "Export Endfield Beyond.MemoryPack wrapper schemas (wire_order) for offline JsonData deserialization"
+license = "MIT"
+readme = "README.md"
+
+[lib]
+name = "beyond_mp_schema"
+path = "src/lib.rs"
+
+[[bin]]
+name = "beyond-mp-schema"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0.95"
+clap = { version = "=4.5.23", features = ["derive"] }
+serde = { version = "1.0.217", features = ["derive"] }
+serde_json = { version = "=1.0.134", features = ["preserve_order"] }
+thiserror = "=1.0.69"
+# Keep transitive crates on the Rust 1.83 compiler shipped here.
+indexmap = "=2.6.0"

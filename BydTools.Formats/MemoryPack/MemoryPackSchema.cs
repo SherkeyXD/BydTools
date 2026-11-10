@@ -19,9 +19,11 @@ public enum MpKind
     Vector3Int,
     List,
     Dictionary,
+    DictionaryV2,
     Nullable,
     Object,
     AnimationCurve,
+    Unmanaged,
 }
 
 public sealed class MpMember
@@ -44,6 +46,24 @@ public sealed class MpType
     public MpMember[]? AbilityPayloadAlt { get; set; }
     public int? MinFieldOffset { get; init; }
     public bool SerializeMarker { get; set; }
+    /// <summary>Exporter <c>parent_type</c>. Union fallback collects wrappers with this parent.</summary>
+    public string? ParentType { get; init; }
+}
+
+public sealed class MpUnmanagedField
+{
+    public required string Name { get; init; }
+    public required string Type { get; init; }
+    public required int Offset { get; init; }
+    public int? Size { get; init; }
+}
+
+/// <summary>Valuetype memcpy payload from <c>unmanaged.json</c> (no object header).</summary>
+public sealed class MpUnmanagedLayout
+{
+    public required string TypeName { get; init; }
+    public required int PayloadSize { get; init; }
+    public required MpUnmanagedField[] Fields { get; init; }
 }
 
 public sealed class MemoryPackSchema
@@ -54,6 +74,8 @@ public sealed class MemoryPackSchema
     private readonly Dictionary<string, bool> _marker = new(StringComparer.Ordinal);
     private readonly MpType[] _abilityConcretes;
     private readonly Dictionary<string, string> _kinds;
+    private readonly Dictionary<string, byte> _enumWidth = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, MpUnmanagedLayout> _unmanaged = new(StringComparer.Ordinal);
     private readonly Dictionary<int, MpType> _abilityTags = [];
     private readonly object _tagGate = new();
     private readonly Dictionary<string, MpType[]> _unionCandidates = new(StringComparer.Ordinal);
@@ -132,6 +154,7 @@ public sealed class MemoryPackSchema
 
         var byTarget = new Dictionary<string, List<MpType>>(StringComparer.Ordinal);
         var byWrapper = new Dictionary<string, MpType>(StringComparer.Ordinal);
+        bool inheritedExport = false;
         using (var schemaDoc = JsonDocument.Parse(File.ReadAllBytes(schemasPath)))
         {
             if (!schemaDoc.RootElement.TryGetProperty("wrappers", out var wrappers))
@@ -140,6 +163,9 @@ public sealed class MemoryPackSchema
             var pending = new List<(MpType Type, List<(string Name, string Type)> Extras)>();
             foreach (var wrapper in wrappers.EnumerateArray())
             {
+                if (wrapper.TryGetProperty("wire_includes_base", out var includesBase)
+                    && includesBase.ValueKind == JsonValueKind.True)
+                    inheritedExport = true;
                 string target = Required(wrapper, "target_type");
                 string wrapperType = Required(wrapper, "wrapper_type");
                 bool hasDeserialize = wrapper.TryGetProperty("has_deserialize", out var deser) && deser.ValueKind == JsonValueKind.True;
@@ -162,6 +188,9 @@ public sealed class MemoryPackSchema
                     }
                 }
 
+                string? parentType = wrapper.TryGetProperty("parent_type", out var parentEl)
+                    ? parentEl.GetString()
+                    : null;
                 var typeObj = new MpType
                 {
                     TargetType = target,
@@ -171,6 +200,7 @@ public sealed class MemoryPackSchema
                     Own = wire,
                     MinFieldOffset = minOffset,
                     SerializeMarker = markers.Contains(target),
+                    ParentType = parentType,
                 };
                 pending.Add((typeObj, extras));
                 if (!byTarget.TryGetValue(target, out var list))
@@ -185,7 +215,7 @@ public sealed class MemoryPackSchema
 
             foreach (var (type, extras) in pending)
             {
-                if (extras.Count == 0)
+                if (inheritedExport || extras.Count == 0)
                     continue;
                 type.Own = type.Wire.Select(m => (m.Name, m.Type)).Concat(extras)
                     .OrderBy(m => m.Name.ToLowerInvariant(), StringComparer.Ordinal)
@@ -198,124 +228,240 @@ public sealed class MemoryPackSchema
                     .ToArray();
             }
 
-            // ActionBase concretes omit inherited NodeBase/ActionBase members from wire_order.
-            // Native Deserialize always writes: NodeBase privates + NodeBase wire props + _nextID
-            // + concrete '_' fields (alpha) + concrete wire_order.
-            SynthesizeActionBaseWires(byTarget, pending, kinds);
-            SynthesizeActionHeaderWires(byTarget, pending, kinds);
-            // GameCondition children start at field offset 144 (after useGraphScope).
-            // wire_order omits the base's four serialized members.
-            SynthesizeGameConditionWires(byTarget, pending, kinds);
-        }
-
-        // AbilityActionData base prefix, then each concrete's own members.
-        MpMember[] abilityBase = byTarget.TryGetValue("AbilityActionData", out var bases) && bases.Count == 1
-            ? bases[0].Wire
-            : [];
-        var concretes = new List<MpType>();
-        foreach (var type in byWrapper.Values)
-        {
-            if (!IsAbilityConcrete(type))
-                continue;
-            // Prefer wire_order leaf (EffectActionData 4+16=20). Keep Own-based alt when longer
-            // (PlaySoundActionData count 22 = 4+18 Own) for incomplete wire_order exports.
-            MpMember[] leafWire = type.Wire.Length > 0 ? type.Wire : type.Own;
-            var wireNames = new HashSet<string>(leafWire.Select(m => m.Name), StringComparer.Ordinal);
-            type.AbilityPayload = abilityBase.Where(m => !wireNames.Contains(m.Name)).Concat(leafWire).ToArray();
-            if (type.Own.Length > leafWire.Length)
+            if (!inheritedExport)
             {
-                var ownNames = new HashSet<string>(type.Own.Select(m => m.Name), StringComparer.Ordinal);
-                type.AbilityPayloadAlt = abilityBase.Where(m => !ownNames.Contains(m.Name)).Concat(type.Own).ToArray();
+                // Incomplete exports omit inherited members from wire_order. Recover them.
+                SynthesizeActionBaseWires(byTarget, pending, kinds);
+                SynthesizeActionHeaderWires(byTarget, pending, kinds);
+                SynthesizeGameConditionWires(byTarget, pending, kinds);
             }
-            concretes.Add(type);
         }
 
-        // Blackboard* wrappers ship an empty wire_order; the closed generic base is the payload.
+        MpMember[] abilityBase = AbilityActionBaseWire(byTarget);
+        var concretes = new List<MpType>();
+        if (!inheritedExport)
+        {
+            foreach (var type in byWrapper.Values)
+            {
+                if (!IsAbilityConcrete(type))
+                    continue;
+                MpMember[] leafWire = type.Wire.Length > 0 ? type.Wire : type.Own;
+                var wireNames = new HashSet<string>(leafWire.Select(m => m.Name), StringComparer.Ordinal);
+                type.AbilityPayload = abilityBase.Where(m => !wireNames.Contains(m.Name)).Concat(leafWire).ToArray();
+                if (type.Own.Length > leafWire.Length)
+                {
+                    var ownNames = new HashSet<string>(type.Own.Select(m => m.Name), StringComparer.Ordinal);
+                    type.AbilityPayloadAlt = abilityBase.Where(m => !ownNames.Contains(m.Name)).Concat(type.Own).ToArray();
+                }
+                concretes.Add(type);
+            }
+        }
+
+        // Empty-wire closed generics. Look up short fixture names and v3 nested names.
         AliasEmpty(byTarget, "BlackboardDouble", "BlackboardParamBase`2<float, double>");
         AliasEmpty(byTarget, "BlackboardInt", "BlackboardParamBase`2<int, int>");
         AliasEmpty(byTarget, "BlackboardString", "BlackboardParamBase`2<string, string>");
-        // BlackboardCustomWithDropdownIntValue adds useCustomValue after BlackboardInt (native count 4).
+        AliasEmpty(byTarget, "BlackboardBuffId", "BlackboardString");
         PrefixWithBaseWire(byTarget, "BlackboardCustomWithDropdownIntValue", "BlackboardInt");
         AliasDropdownBlackboard(byTarget, "Beyond.Gameplay.Core.BlackboardImpactValue");
         AliasDropdownBlackboard(byTarget, "Beyond.Gameplay.Core.BlackboardSuperArmorValue");
         AliasDropdownBlackboard(byTarget, "BlackboardCharBlowOffPriorityValue");
-        AliasEmpty(byTarget, "Beyond.Gameplay.Core.Conditions.BlackboardBuffId", "BlackboardString");
-        // CreateBuffActionInput wire is BuffInput (3) then its own fields (2) = 5.
-        PrefixWithBaseWire(byTarget, "Beyond.Gameplay.Core.CreateBuffActionInput", "Beyond.Gameplay.Core.BuffInput");
-        // StartDialogAndTeleport extends ClientCutsceneTeleport, then its own _dialogId.
-        AppendDuplicateChildField(
-            byTarget,
-            "Beyond.Gameplay.Actions.StartDialogAndTeleportAction",
-            "Beyond.Gameplay.Actions.ClientCutsceneTeleport",
-            "_dialogId"
-        );
-        // ShowHideActorData fields start at offset 32, right after AbilityActionData.
-        // Native memberCount is 10 = 4 base fields + the 6 leaf fields.
-        PrefixAbilityBase(byTarget, "ShowHideActorData", abilityBase);
-        PrefixAbilityBase(byTarget, "FootStepChangeData", abilityBase);
-        PrefixAbilityBase(byTarget, "HideEffectOnTargetExceptTagData", abilityBase);
-        // ContinuousFindTarget / EffectFindTarget are FindTargetActionData (14) + one leaf.
-        // Native count 19 = ability base 4 + FindTarget 14 + leaf.
-        PrefixFindTargetData(byTarget, byWrapper, "Beyond.MemoryPack.Beyond_Gameplay_Core_ContinuousFindTargetAction_DataForMemoryPack", abilityBase);
-        PrefixFindTargetData(byTarget, byWrapper, "Beyond.MemoryPack.Beyond_Gameplay_Core_EffectFindTargetAction_DataForMemoryPack", abilityBase);
-        // KeywordAction middles. Weak/Slow/Speedup/Shelter are ability + Keyword (13).
-        // Vulnerable/Enhanced add KeywordActionWithSubType.subType (14).
-        ApplyKeywordActionMiddles(byTarget, byWrapper);
-        // PlayAnimationWithStep = ability base + PlayAnimationActionData + its own 14.
-        PrefixPlayAnimationWithStep(byTarget, abilityBase);
-        // EffectLineCenterAction.Data : EffectActionData. Native count 21 = 4 + 16 + effectCenter.
-        PrefixEffectLineCenter(byTarget, byWrapper, abilityBase);
-        // EnemyWarningActionData : EffectActionData with no leaf fields. Native count 20 = 4+16.
-        PrefixAbilityMiddle(
-            byTarget,
-            byWrapper,
-            "Beyond.MemoryPack.Beyond_Gameplay_Core_EnemyWarningAction_EnemyWarningActionDataForMemoryPack",
-            "EffectActionData",
-            abilityBase);
-        // ChannelingDamageAction.Data : DamageActionData + triggerInterval. Native count 12 = 4+7+1.
-        PrefixAbilityMiddle(
-            byTarget,
-            byWrapper,
-            "Beyond.MemoryPack.Beyond_Gameplay_Core_ChannelingDamageAction_DataForMemoryPack",
-            "DamageActionData",
-            abilityBase);
-        // InventoryItemBundleWithInfinite is the two bundle fields plus infinite.
-        PrefixWithBaseWire(byTarget, "Beyond.Gameplay.InventoryItemBundleWithInfinite", "Beyond.Gameplay.InventoryItemBundle");
-        // PlayRadioAndWait serializes the same 13 members as PlayRadio.
-        CopyWire(byTarget, "Beyond.Gameplay.Actions.PlayRadioAndWait", "Beyond.Gameplay.Actions.PlayRadio");
-        // MVSC behaviors start at offset 40, after MVSCBehaviorData (6). Effect is 6+11=17.
-        PrefixMvscBehaviors(byTarget);
-        // Char interact acts at offset 120 are ActionData (15) + leaf.
-        // Acts at 128 also take ActorActData.actorIndex. CharAnim is 15+1+15=31.
-        PrefixCharInteractPerform(byTarget);
-        // HitBoxFinder fields start at offset 32, after TargetFinder (5). Native count 8 = 5+3.
-        // ShapeFinder is the same boundary.
-        RewriteSelectorDataUnions(byTarget);
-        PrefixTargetFinderChildren(byWrapper);
-        CopyWireFromWrapper(
-            byWrapper,
-            "Beyond.MemoryPack.Beyond_Gameplay_Core_Selector_ShapeFinder_ShapeFinderDataForMemoryPack",
-            "Beyond.MemoryPack.Beyond_Gameplay_Core_Selector_ShapeFinder_DataForMemoryPack");
-        ClearSelectorAbilityPayloads(byWrapper);
-        DisambiguateShapeDataTypes(byWrapper);
-        RewriteSpawnerPreprocessList(byTarget, byWrapper);
-        ClearSpawnerPreprocessAbilityPayloads(byWrapper);
-        PrefixSpawnerActionDataChildren(byWrapper);
-        ClearSpawnerActionAbilityPayloads(byWrapper);
-        // BuffData lists were exported as List<Data>; native elements are *Modifier.Data.
-        RewriteBuffModifierDataLists(byTarget, byWrapper);
-        SynthesizeBuffIconConfigWire(byTarget, kinds);
-        // Level*Data first fields sit at offset 112, immediately after LevelEntityData
-        // (last field keepCrossMap at 106). Native formatters write the base wire, then the leaf.
-        PrefixWithBaseWire(byTarget, "Beyond.Gameplay.LevelInteractiveData", "Beyond.Gameplay.LevelEntityData");
-        PrefixWithBaseWire(byTarget, "Beyond.Gameplay.LevelEnemyData", "Beyond.Gameplay.LevelEntityData");
-        PrefixWithBaseWire(byTarget, "Beyond.Gameplay.LevelFactoryRegionData", "Beyond.Gameplay.LevelEntityData");
-        PrefixWithBaseWire(byTarget, "Beyond.Gameplay.LevelNpcData", "Beyond.Gameplay.LevelEntityData");
+
+        if (!inheritedExport)
+        {
+            PrefixWithBaseWire(byTarget, "Beyond.Gameplay.Core.CreateBuffActionInput", "Beyond.Gameplay.Core.BuffInput");
+            AppendDuplicateChildField(
+                byTarget,
+                "Beyond.Gameplay.Actions.StartDialogAndTeleportAction",
+                "Beyond.Gameplay.Actions.ClientCutsceneTeleport",
+                "_dialogId"
+            );
+            PrefixAbilityBase(byTarget, "ShowHideActorData", abilityBase);
+            PrefixAbilityBase(byTarget, "FootStepChangeData", abilityBase);
+            PrefixAbilityBase(byTarget, "HideEffectOnTargetExceptTagData", abilityBase);
+            PrefixFindTargetData(byTarget, byWrapper, "Beyond.MemoryPack.Beyond_Gameplay_Core_ContinuousFindTargetAction_DataForMemoryPack", abilityBase);
+            PrefixFindTargetData(byTarget, byWrapper, "Beyond.MemoryPack.Beyond_Gameplay_Core_EffectFindTargetAction_DataForMemoryPack", abilityBase);
+            ApplyKeywordActionMiddles(byTarget, byWrapper);
+            PrefixPlayAnimationWithStep(byTarget, abilityBase);
+            PrefixEffectLineCenter(byTarget, byWrapper, abilityBase);
+            PrefixAbilityMiddle(
+                byTarget,
+                byWrapper,
+                "Beyond.MemoryPack.Beyond_Gameplay_Core_EnemyWarningAction_EnemyWarningActionDataForMemoryPack",
+                "EffectActionData",
+                abilityBase);
+            PrefixAbilityMiddle(
+                byTarget,
+                byWrapper,
+                "Beyond.MemoryPack.Beyond_Gameplay_Core_ChannelingDamageAction_DataForMemoryPack",
+                "DamageActionData",
+                abilityBase);
+            PrefixWithBaseWire(byTarget, "Beyond.Gameplay.InventoryItemBundleWithInfinite", "Beyond.Gameplay.InventoryItemBundle");
+            CopyWire(byTarget, "Beyond.Gameplay.Actions.PlayRadioAndWait", "Beyond.Gameplay.Actions.PlayRadio");
+            PrefixMvscBehaviors(byTarget);
+            PrefixCharInteractPerform(byTarget);
+            RewriteSelectorDataUnions(byTarget);
+            PrefixTargetFinderChildren(byWrapper);
+            CopyWireFromWrapper(
+                byWrapper,
+                "Beyond.MemoryPack.Beyond_Gameplay_Core_Selector_ShapeFinder_ShapeFinderDataForMemoryPack",
+                "Beyond.MemoryPack.Beyond_Gameplay_Core_Selector_ShapeFinder_DataForMemoryPack");
+            ClearSelectorAbilityPayloads(byWrapper);
+            DisambiguateShapeDataTypes(byWrapper);
+            RewriteSpawnerPreprocessList(byTarget, byWrapper);
+            ClearSpawnerPreprocessAbilityPayloads(byWrapper);
+            PrefixSpawnerActionDataChildren(byWrapper);
+            ClearSpawnerActionAbilityPayloads(byWrapper);
+            RewriteBuffModifierDataLists(byTarget, byWrapper);
+            SynthesizeBuffIconConfigWire(byTarget, kinds);
+            PrefixWithBaseWire(byTarget, "Beyond.Gameplay.LevelInteractiveData", "Beyond.Gameplay.LevelEntityData");
+            PrefixWithBaseWire(byTarget, "Beyond.Gameplay.LevelEnemyData", "Beyond.Gameplay.LevelEntityData");
+            PrefixWithBaseWire(byTarget, "Beyond.Gameplay.LevelFactoryRegionData", "Beyond.Gameplay.LevelEntityData");
+            PrefixWithBaseWire(byTarget, "Beyond.Gameplay.LevelNpcData", "Beyond.Gameplay.LevelEntityData");
+        }
 
         var schema = new MemoryPackSchema(byTarget, byWrapper, byBasename, kinds, concretes.ToArray());
         foreach (var name in markers)
             schema._marker[name] = true;
+        LoadEnumWidths(schema, schemasPath);
+        LoadUnmanaged(schema, schemasPath);
         return schema;
+    }
+
+    private static MpMember[] AbilityActionBaseWire(Dictionary<string, List<MpType>> byTarget)
+    {
+        foreach (string name in new[]
+        {
+            "AbilityActionData",
+            "Beyond.Gameplay.Core.AbilityAction+AbilityActionData",
+            "Beyond.Gameplay.Core.AbilityActionData",
+        })
+        {
+            if (byTarget.TryGetValue(name, out var bases) && bases.Count == 1)
+                return bases[0].Wire;
+        }
+        return [];
+    }
+
+    private static void LoadEnumWidths(MemoryPackSchema schema, string schemasPath)
+    {
+        string? dir = Path.GetDirectoryName(schemasPath);
+        if (string.IsNullOrEmpty(dir))
+            return;
+        string enumsPath = Path.Combine(dir, "enums.json");
+        if (!File.Exists(enumsPath))
+            return;
+        using var doc = JsonDocument.Parse(File.ReadAllBytes(enumsPath));
+        if (doc.RootElement.ValueKind != JsonValueKind.Array)
+            return;
+        foreach (var item in doc.RootElement.EnumerateArray())
+        {
+            string? name = item.TryGetProperty("type_name", out var nameEl) ? nameEl.GetString() : null;
+            if (name == null || !item.TryGetProperty("width", out var widthEl) || !widthEl.TryGetInt32(out int width))
+                continue;
+            if (width is not (1 or 2 or 4 or 8))
+                continue;
+            byte w = (byte)width;
+            schema._enumWidth[name] = w;
+            int sep = name.LastIndexOfAny(['.', '+']);
+            if (sep >= 0)
+                schema._enumWidth.TryAdd(name[(sep + 1)..], w);
+        }
+    }
+
+    public bool TryEnumWidth(string type, out byte width) =>
+        _enumWidth.TryGetValue(type, out width);
+
+    public bool TryUnmanaged(string type, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out MpUnmanagedLayout? layout)
+    {
+        foreach (string key in UnmanagedLookupKeys(type))
+        {
+            if (_unmanaged.TryGetValue(key, out layout))
+                return true;
+        }
+
+        layout = null;
+        return false;
+    }
+
+    public bool HasWrapper(string type)
+    {
+        if (_byTarget.ContainsKey(type) || _byWrapper.ContainsKey(type))
+            return true;
+        foreach (string key in UnmanagedLookupKeys(type))
+        {
+            if (_byTarget.ContainsKey(key) || _byWrapper.ContainsKey(key))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static IEnumerable<string> UnmanagedLookupKeys(string type)
+    {
+        yield return type;
+        string dotted = type.Replace('+', '.');
+        if (dotted != type)
+            yield return dotted;
+        string plused = type.Replace('.', '+');
+        if (plused != type)
+            yield return plused;
+        int sep = type.LastIndexOfAny(['.', '+']);
+        if (sep >= 0)
+            yield return type[(sep + 1)..];
+    }
+
+    private static void LoadUnmanaged(MemoryPackSchema schema, string schemasPath)
+    {
+        string? dir = Path.GetDirectoryName(schemasPath);
+        if (string.IsNullOrEmpty(dir))
+            return;
+        string path = Path.Combine(dir, "unmanaged.json");
+        if (!File.Exists(path))
+            return;
+        using var doc = JsonDocument.Parse(File.ReadAllBytes(path));
+        if (doc.RootElement.ValueKind != JsonValueKind.Array)
+            return;
+        foreach (var item in doc.RootElement.EnumerateArray())
+        {
+            string? name = item.TryGetProperty("type_name", out var nameEl) ? nameEl.GetString() : null;
+            if (name == null || !item.TryGetProperty("payload_size", out var sizeEl) || !sizeEl.TryGetInt32(out int payload) || payload <= 0)
+                continue;
+            var fields = new List<MpUnmanagedField>();
+            if (item.TryGetProperty("fields", out var fieldsEl) && fieldsEl.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var field in fieldsEl.EnumerateArray())
+                {
+                    string? fname = field.TryGetProperty("name", out var fn) ? fn.GetString() : null;
+                    string? fty = field.TryGetProperty("type", out var ft) ? ft.GetString() : null;
+                    if (fname == null || fty == null || !field.TryGetProperty("offset", out var offEl) || !offEl.TryGetInt32(out int offset))
+                        continue;
+                    int? size = field.TryGetProperty("size", out var szEl)
+                        && szEl.ValueKind == JsonValueKind.Number
+                        && szEl.TryGetInt32(out int sz)
+                            ? sz
+                            : null;
+                    fields.Add(new MpUnmanagedField
+                    {
+                        Name = fname,
+                        Type = fty,
+                        Offset = offset,
+                        Size = size,
+                    });
+                }
+            }
+
+            var layout = new MpUnmanagedLayout
+            {
+                TypeName = name,
+                PayloadSize = payload,
+                Fields = fields.ToArray(),
+            };
+            schema._unmanaged[name] = layout;
+            int sep = name.LastIndexOfAny(['.', '+']);
+            if (sep >= 0)
+                schema._unmanaged.TryAdd(name[(sep + 1)..], layout);
+        }
     }
 
     public MpType? FindAbilityTag(int tag)
@@ -339,7 +485,9 @@ public sealed class MemoryPackSchema
     /// </summary>
     public IReadOnlyList<MpType> UnionCandidates(string staticType, string? hint)
     {
-        if (staticType == "AbilityActionData")
+        if (staticType == "AbilityActionData"
+            || staticType.EndsWith("+AbilityActionData", StringComparison.Ordinal)
+            || staticType.EndsWith(".AbilityActionData", StringComparison.Ordinal))
             return _abilityConcretes;
 
         if (staticType == "Data")
@@ -457,15 +605,34 @@ public sealed class MemoryPackSchema
                 if (staticType == "Beyond.Gameplay.Core.CalculationBase"
                     && type.TargetType.EndsWith("Calculation", StringComparison.Ordinal))
                     list.Add(type);
+
+                if (!string.IsNullOrEmpty(type.ParentType)
+                    && ParentNameMatches(type.ParentType, staticType)
+                    && !list.Contains(type))
+                    list.Add(type);
             }
         }
 
         return list.ToArray();
     }
 
+    private static bool ParentNameMatches(string parent, string staticType)
+    {
+        if (parent == staticType)
+            return true;
+        return parent.EndsWith("." + staticType, StringComparison.Ordinal)
+            || parent.EndsWith("+" + staticType, StringComparison.Ordinal)
+            || staticType.EndsWith("." + parent, StringComparison.Ordinal)
+            || staticType.EndsWith("+" + parent, StringComparison.Ordinal);
+    }
+
     public MpKind KindOf(string type)
     {
         MpKind kind = Classify(type, _kinds);
+        if (kind is not MpKind.Object and not MpKind.Enum)
+            return kind;
+        if (TryUnmanaged(type, out _))
+            return MpKind.Unmanaged;
         if (kind == MpKind.Object && !_byTarget.ContainsKey(type))
         {
             // Wrapper FQCNs are objects. Without this, BuffData list elements are eaten as int32.
@@ -1196,16 +1363,14 @@ public sealed class MemoryPackSchema
     /// </summary>
     private static void AliasDropdownBlackboard(Dictionary<string, List<MpType>> byTarget, string derived)
     {
-        if (byTarget.ContainsKey("BlackboardCustomWithDropdownIntValue")
-            && byTarget["BlackboardCustomWithDropdownIntValue"].Count == 1
-            && byTarget["BlackboardCustomWithDropdownIntValue"][0].Wire.Length > 0)
-        {
-            AliasEmpty(byTarget, derived, "BlackboardCustomWithDropdownIntValue");
+        PrefixWithBaseWire(byTarget, derived, "BlackboardCustomWithDropdownIntValue");
+        if (ResolveTargetList(byTarget, derived) is { Count: 1 } filled
+            && filled[0].Wire.Any(m => m.Name == "useCustomValue")
+            && filled[0].Wire.Length >= 4)
             return;
-        }
 
-        AliasEmpty(byTarget, derived, "BlackboardInt");
-        if (!byTarget.TryGetValue(derived, out var list) || list.Count != 1)
+        PrefixWithBaseWire(byTarget, derived, "BlackboardInt");
+        if (ResolveTargetList(byTarget, derived) is not { Count: 1 } list)
             return;
         MpType type = list[0];
         if (type.Wire.Any(m => m.Name == "useCustomValue"))
@@ -1308,9 +1473,9 @@ public sealed class MemoryPackSchema
         string derived,
         string baseName)
     {
-        if (!byTarget.TryGetValue(derived, out var derivedList) || derivedList.Count != 1)
+        if (ResolveTargetList(byTarget, derived) is not { Count: 1 } derivedList)
             return;
-        if (!byTarget.TryGetValue(baseName, out var baseList) || baseList.Count != 1)
+        if (ResolveTargetList(byTarget, baseName) is not { Count: 1 } baseList)
             return;
         MpType d = derivedList[0];
         MpType b = baseList[0];
@@ -1324,26 +1489,37 @@ public sealed class MemoryPackSchema
 
     private static void AliasEmpty(Dictionary<string, List<MpType>> byTarget, string derived, string baseName)
     {
-        if (!byTarget.TryGetValue(derived, out var derivedList) || derivedList.Count != 1)
+        if (ResolveTargetList(byTarget, derived) is not { Count: 1 } derivedList)
             return;
-        if (!byTarget.TryGetValue(baseName, out var baseList) || baseList.Count != 1)
+        if (ResolveTargetList(byTarget, baseName) is not { Count: 1 } baseList)
             return;
         var source = derivedList[0];
         if (source.Wire.Length != 0)
             return;
-        var aliased = new MpType
+        source.Wire = baseList[0].Wire;
+        source.Own = baseList[0].Own.Length > 0 ? baseList[0].Own : baseList[0].Wire;
+    }
+
+    /// Fixture schemas use leaf names; v3 exports use `Ns.Outer+Leaf`.
+    private static List<MpType>? ResolveTargetList(Dictionary<string, List<MpType>> byTarget, string name)
+    {
+        if (byTarget.TryGetValue(name, out var exact) && exact.Count > 0)
+            return exact;
+
+        List<MpType>? found = null;
+        foreach (var (key, list) in byTarget)
         {
-            TargetType = source.TargetType,
-            WrapperType = source.WrapperType,
-            HasDeserialize = source.HasDeserialize,
-            Wire = baseList[0].Wire,
-            Own = baseList[0].Own,
-            AbilityPayload = source.AbilityPayload,
-            AbilityPayloadAlt = source.AbilityPayloadAlt,
-            MinFieldOffset = source.MinFieldOffset,
-            SerializeMarker = source.SerializeMarker,
-        };
-        derivedList[0] = aliased;
+            if (list.Count == 0)
+                continue;
+            if (!key.EndsWith("+" + name, StringComparison.Ordinal)
+                && !key.EndsWith("." + name, StringComparison.Ordinal))
+                continue;
+            if (found != null)
+                return null;
+            found = list;
+        }
+
+        return found;
     }
 
 
@@ -1585,7 +1761,9 @@ public sealed class MemoryPackSchema
 
     private static bool IsAbilityConcrete(MpType type)
     {
-        if (type.TargetType == "AbilityActionData")
+        if (type.TargetType == "AbilityActionData"
+            || type.TargetType.EndsWith("+AbilityActionData", StringComparison.Ordinal)
+            || type.TargetType.EndsWith(".AbilityActionData", StringComparison.Ordinal))
             return false;
         string wrapper = type.WrapperType;
         if (wrapper.Contains("Beyond_Gameplay_Actions_", StringComparison.Ordinal)
@@ -1659,8 +1837,9 @@ public sealed class MemoryPackSchema
 
         if (type.EndsWith("[]", StringComparison.Ordinal) || type.StartsWith("System.Collections.Generic.List`1<", StringComparison.Ordinal))
             return MpKind.List;
-        if (type.StartsWith("System.Collections.Generic.Dictionary`2<", StringComparison.Ordinal)
-            || type.StartsWith("Beyond.SerializeFieldDictionary`2<", StringComparison.Ordinal))
+        if (type.StartsWith("Beyond.SerializeFieldDictionary`2<", StringComparison.Ordinal))
+            return MpKind.DictionaryV2;
+        if (type.StartsWith("System.Collections.Generic.Dictionary`2<", StringComparison.Ordinal))
             return MpKind.Dictionary;
         if (type.StartsWith("System.Nullable`1<", StringComparison.Ordinal))
             return MpKind.Nullable;
@@ -1669,6 +1848,10 @@ public sealed class MemoryPackSchema
         {
             if (kind == "enum")
                 return MpKind.Enum;
+            if (kind == "unmanaged")
+                return MpKind.Unmanaged;
+            if (kind == "dictionary_v2")
+                return MpKind.DictionaryV2;
             if (kind is "int32" or "uint32")
                 return MpKind.Int32;
             if (kind == "float32")
