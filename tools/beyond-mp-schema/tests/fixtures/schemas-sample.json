@@ -1,0 +1,639 @@
+{
+  "note": "Stripped fixture from a full Endfield export (5025 wrappers / 41 markers / 934 orders_differ). Wrapper objects are unchanged.",
+  "reference_full_export": {
+    "serialize_markers": 41,
+    "wrappers": 5025,
+    "wrappers_orders_differ_from_target_fields": 934,
+    "wrappers_with_formatter": 5025
+  },
+  "wire_order_rule": "wrapper __name__ property metadata order (confirmed = native Deserialize call order)",
+  "order_caveat": "wire_order / members_from_wrapper_props is the canonical binary member order (GameAssembly Deserialize matches these setters, often alphabetical). members_from_target_fields is declaration/layout order only — NOT wire order.",
+  "custom_attributes": "not used — Endfield AttributeDataRange is MethodDef index lists, not classic CA blobs",
+  "counts": {
+    "wrappers": 6,
+    "serialize_markers": 2,
+    "wrappers_orders_differ_from_target_fields": 3,
+    "wrappers_with_formatter": 6
+  },
+  "wrappers": [
+    {
+      "assembly": "MemoryPack.Beyond.dll",
+      "formatter_type": "Beyond_AABBForMemoryPackFormatter",
+      "formatter_typedef": 56407,
+      "has_deserialize": true,
+      "has_formatter": true,
+      "has_register_formatter": true,
+      "interfaces": [
+        "Beyond.MemoryPack.IMemoryPackDeSerializeWrapper",
+        "Beyond.MemoryPack.IMemoryPackDeSerializeWrapper`1<Beyond.AABB>",
+        "Beyond.MemoryPack.IMemoryPackDeSerializeType"
+      ],
+      "members_from_target_fields": [
+        {
+          "field_index": 0,
+          "is_public": true,
+          "name": "min",
+          "note": "reference only — instance field declaration / offset layout; NOT MemoryPack wire order",
+          "offset": 16,
+          "type": "UnityEngine.Vector2"
+        },
+        {
+          "field_index": 1,
+          "is_public": true,
+          "name": "max",
+          "note": "reference only — instance field declaration / offset layout; NOT MemoryPack wire order",
+          "offset": 24,
+          "type": "UnityEngine.Vector2"
+        }
+      ],
+      "members_from_wrapper_props": [
+        {
+          "has_getter": false,
+          "has_setter": true,
+          "name": "max",
+          "property_index": 1,
+          "raw_property": "__max__",
+          "type": "UnityEngine.Vector2"
+        },
+        {
+          "has_getter": false,
+          "has_setter": true,
+          "name": "min",
+          "property_index": 2,
+          "raw_property": "__min__",
+          "type": "UnityEngine.Vector2"
+        }
+      ],
+      "order_note": "wire_order / members_from_wrapper_props is the canonical binary member order (GameAssembly Deserialize matches these setters, often alphabetical). members_from_target_fields is declaration/layout order only — NOT wire order.",
+      "orders_differ": true,
+      "target_assembly": "Common.Beyond.dll",
+      "target_type": "Beyond.AABB",
+      "target_typedef_index": 59981,
+      "typedef_index": 56408,
+      "wire_order": [
+        {
+          "has_getter": false,
+          "has_setter": true,
+          "name": "max",
+          "property_index": 1,
+          "raw_property": "__max__",
+          "type": "UnityEngine.Vector2"
+        },
+        {
+          "has_getter": false,
+          "has_setter": true,
+          "name": "min",
+          "property_index": 2,
+          "raw_property": "__min__",
+          "type": "UnityEngine.Vector2"
+        }
+      ],
+      "wire_order_source": "wrapper __name__ property metadata order (confirmed = native Deserialize call order)",
+      "wrapper_type": "Beyond.MemoryPack.Beyond_AABBForMemoryPack"
+    },
+    {
+      "assembly": "MemoryPack.Beyond.dll",
+      "formatter_type": "Beyond_Gameplay_BambooRaftQuestConfigForMemoryPackFormatter",
+      "formatter_typedef": 47717,
+      "has_deserialize": true,
+      "has_formatter": true,
+      "has_register_formatter": true,
+      "interfaces": [
+        "Beyond.MemoryPack.IMemoryPackDeSerializeWrapper",
+        "Beyond.MemoryPack.IMemoryPackDeSerializeWrapper`1<Beyond.Gameplay.BambooRaftQuestConfig>",
+        "Beyond.MemoryPack.IMemoryPackDeSerializeType"
+      ],
+      "members_from_target_fields": [
+        {
+          "field_index": 0,
+          "is_public": true,
+          "name": "questId",
+          "note": "reference only — instance field declaration / offset layout; NOT MemoryPack wire order",
+          "offset": 16,
+          "type": "string"
+        },
+        {
+          "field_index": 1,
+          "is_public": true,
+          "name": "state",
+          "note": "reference only — instance field declaration / offset layout; NOT MemoryPack wire order",
+          "offset": 24,
+          "type": "QuestState"
+        }
+      ],
+      "members_from_wrapper_props": [
+        {
+          "has_getter": false,
+          "has_setter": true,
+          "name": "questId",
+          "property_index": 1,
+          "raw_property": "__questId__",
+          "type": "string"
+        },
+        {
+          "has_getter": false,
+          "has_setter": true,
+          "name": "state",
+          "property_index": 2,
+          "raw_property": "__state__",
+          "type": "QuestState"
+        }
+      ],
+      "order_note": "wire_order / members_from_wrapper_props is the canonical binary member order (GameAssembly Deserialize matches these setters, often alphabetical). members_from_target_fields is declaration/layout order only — NOT wire order.",
+      "orders_differ": false,
+      "target_assembly": "Gameplay.Beyond.dll",
+      "target_type": "Beyond.Gameplay.BambooRaftQuestConfig",
+      "target_typedef_index": 689,
+      "typedef_index": 47718,
+      "wire_order": [
+        {
+          "has_getter": false,
+          "has_setter": true,
+          "name": "questId",
+          "property_index": 1,
+          "raw_property": "__questId__",
+          "type": "string"
+        },
+        {
+          "has_getter": false,
+          "has_setter": true,
+          "name": "state",
+          "property_index": 2,
+          "raw_property": "__state__",
+          "type": "QuestState"
+        }
+      ],
+      "wire_order_source": "wrapper __name__ property metadata order (confirmed = native Deserialize call order)",
+      "wrapper_type": "Beyond.MemoryPack.Beyond_Gameplay_BambooRaftQuestConfigForMemoryPack"
+    },
+    {
+      "assembly": "MemoryPack.Beyond.dll",
+      "formatter_type": "Beyond_Gameplay_BambooRaftTaskDataForMemoryPackFormatter",
+      "formatter_typedef": 47437,
+      "has_deserialize": true,
+      "has_formatter": true,
+      "has_register_formatter": true,
+      "interfaces": [
+        "Beyond.MemoryPack.IMemoryPackDeSerializeWrapper",
+        "Beyond.MemoryPack.IMemoryPackDeSerializeWrapper`1<Beyond.Gameplay.BambooRaftTaskData>",
+        "Beyond.MemoryPack.IMemoryPackDeSerializeType"
+      ],
+      "members_from_target_fields": [
+        {
+          "field_index": 0,
+          "is_public": true,
+          "name": "raftId",
+          "note": "reference only — instance field declaration / offset layout; NOT MemoryPack wire order",
+          "offset": 16,
+          "type": "ulong"
+        },
+        {
+          "field_index": 1,
+          "is_public": true,
+          "name": "questConfigs",
+          "note": "reference only — instance field declaration / offset layout; NOT MemoryPack wire order",
+          "offset": 24,
+          "type": "System.Collections.Generic.Dictionary`2<string, Beyond.Gameplay.BambooRaftQuestConfig>"
+        }
+      ],
+      "members_from_wrapper_props": [
+        {
+          "has_getter": false,
+          "has_setter": true,
+          "name": "questConfigs",
+          "property_index": 1,
+          "raw_property": "__questConfigs__",
+          "type": "System.Collections.Generic.Dictionary`2<string, Beyond.Gameplay.BambooRaftQuestConfig>"
+        },
+        {
+          "has_getter": false,
+          "has_setter": true,
+          "name": "raftId",
+          "property_index": 2,
+          "raw_property": "__raftId__",
+          "type": "ulong"
+        }
+      ],
+      "order_note": "wire_order / members_from_wrapper_props is the canonical binary member order (GameAssembly Deserialize matches these setters, often alphabetical). members_from_target_fields is declaration/layout order only — NOT wire order.",
+      "orders_differ": true,
+      "target_assembly": "Gameplay.Beyond.dll",
+      "target_type": "Beyond.Gameplay.BambooRaftTaskData",
+      "target_typedef_index": 688,
+      "typedef_index": 47438,
+      "wire_order": [
+        {
+          "has_getter": false,
+          "has_setter": true,
+          "name": "questConfigs",
+          "property_index": 1,
+          "raw_property": "__questConfigs__",
+          "type": "System.Collections.Generic.Dictionary`2<string, Beyond.Gameplay.BambooRaftQuestConfig>"
+        },
+        {
+          "has_getter": false,
+          "has_setter": true,
+          "name": "raftId",
+          "property_index": 2,
+          "raw_property": "__raftId__",
+          "type": "ulong"
+        }
+      ],
+      "wire_order_source": "wrapper __name__ property metadata order (confirmed = native Deserialize call order)",
+      "wrapper_type": "Beyond.MemoryPack.Beyond_Gameplay_BambooRaftTaskDataForMemoryPack"
+    },
+    {
+      "assembly": "MemoryPack.Beyond.dll",
+      "formatter_type": "Beyond_Gameplay_BambooRaftTaskTableForMemoryPackFormatter",
+      "formatter_typedef": 47359,
+      "has_deserialize": true,
+      "has_formatter": true,
+      "has_register_formatter": true,
+      "interfaces": [
+        "Beyond.MemoryPack.IMemoryPackDeSerializeWrapper",
+        "Beyond.MemoryPack.IMemoryPackDeSerializeWrapper`1<Beyond.Gameplay.BambooRaftTaskTable>",
+        "Beyond.MemoryPack.IMemoryPackDeSerializeType"
+      ],
+      "members_from_target_fields": [
+        {
+          "field_index": 0,
+          "is_public": true,
+          "name": "data",
+          "note": "reference only — instance field declaration / offset layout; NOT MemoryPack wire order",
+          "offset": 16,
+          "type": "System.Collections.Generic.Dictionary`2<ulong, Beyond.Gameplay.BambooRaftTaskData>"
+        }
+      ],
+      "members_from_wrapper_props": [
+        {
+          "has_getter": false,
+          "has_setter": true,
+          "name": "data",
+          "property_index": 1,
+          "raw_property": "__data__",
+          "type": "System.Collections.Generic.Dictionary`2<ulong, Beyond.Gameplay.BambooRaftTaskData>"
+        }
+      ],
+      "order_note": "wire_order / members_from_wrapper_props is the canonical binary member order (GameAssembly Deserialize matches these setters, often alphabetical). members_from_target_fields is declaration/layout order only — NOT wire order.",
+      "orders_differ": false,
+      "target_assembly": "Gameplay.Beyond.dll",
+      "target_type": "Beyond.Gameplay.BambooRaftTaskTable",
+      "target_typedef_index": 687,
+      "typedef_index": 47360,
+      "wire_order": [
+        {
+          "has_getter": false,
+          "has_setter": true,
+          "name": "data",
+          "property_index": 1,
+          "raw_property": "__data__",
+          "type": "System.Collections.Generic.Dictionary`2<ulong, Beyond.Gameplay.BambooRaftTaskData>"
+        }
+      ],
+      "wire_order_source": "wrapper __name__ property metadata order (confirmed = native Deserialize call order)",
+      "wrapper_type": "Beyond.MemoryPack.Beyond_Gameplay_BambooRaftTaskTableForMemoryPack"
+    },
+    {
+      "assembly": "MemoryPack.Beyond.dll",
+      "formatter_type": "Beyond_Gameplay_TeleportValidationDataForMemoryPackFormatter",
+      "formatter_typedef": 47581,
+      "has_deserialize": true,
+      "has_formatter": true,
+      "has_register_formatter": true,
+      "interfaces": [
+        "Beyond.MemoryPack.IMemoryPackDeSerializeWrapper",
+        "Beyond.MemoryPack.IMemoryPackDeSerializeWrapper`1<Beyond.Gameplay.TeleportValidationData>",
+        "Beyond.MemoryPack.IMemoryPackDeSerializeType"
+      ],
+      "members_from_target_fields": [
+        {
+          "field_index": 5,
+          "is_public": true,
+          "name": "subDataParentId",
+          "note": "reference only — instance field declaration / offset layout; NOT MemoryPack wire order",
+          "offset": 16,
+          "type": "ulong"
+        },
+        {
+          "field_index": 6,
+          "is_public": true,
+          "name": "id",
+          "note": "reference only — instance field declaration / offset layout; NOT MemoryPack wire order",
+          "offset": 24,
+          "type": "string"
+        },
+        {
+          "field_index": 7,
+          "is_public": true,
+          "name": "teleportReason",
+          "note": "reference only — instance field declaration / offset layout; NOT MemoryPack wire order",
+          "offset": 32,
+          "type": "Beyond.GEnums.C2STeleportReason"
+        },
+        {
+          "field_index": 8,
+          "is_public": true,
+          "name": "sceneId",
+          "note": "reference only — instance field declaration / offset layout; NOT MemoryPack wire order",
+          "offset": 40,
+          "type": "string"
+        },
+        {
+          "field_index": 9,
+          "is_public": true,
+          "name": "position",
+          "note": "reference only — instance field declaration / offset layout; NOT MemoryPack wire order",
+          "offset": 48,
+          "type": "UnityEngine.Vector3"
+        },
+        {
+          "field_index": 10,
+          "is_public": true,
+          "name": "rotationEuler",
+          "note": "reference only — instance field declaration / offset layout; NOT MemoryPack wire order",
+          "offset": 60,
+          "type": "UnityEngine.Vector3"
+        },
+        {
+          "field_index": 11,
+          "is_public": true,
+          "name": "uiTypeOut",
+          "note": "reference only — instance field declaration / offset layout; NOT MemoryPack wire order",
+          "offset": 72,
+          "type": "Beyond.Gameplay.TeleportUIType"
+        },
+        {
+          "field_index": 12,
+          "is_public": true,
+          "name": "deviation",
+          "note": "reference only — instance field declaration / offset layout; NOT MemoryPack wire order",
+          "offset": 76,
+          "type": "float"
+        },
+        {
+          "field_index": 13,
+          "is_public": true,
+          "name": "keepAnim",
+          "note": "reference only — instance field declaration / offset layout; NOT MemoryPack wire order",
+          "offset": 80,
+          "type": "bool"
+        },
+        {
+          "field_index": 14,
+          "is_public": true,
+          "name": "keepCam",
+          "note": "reference only — instance field declaration / offset layout; NOT MemoryPack wire order",
+          "offset": 81,
+          "type": "bool"
+        }
+      ],
+      "members_from_wrapper_props": [
+        {
+          "has_getter": false,
+          "has_setter": true,
+          "name": "deviation",
+          "property_index": 1,
+          "raw_property": "__deviation__",
+          "type": "float"
+        },
+        {
+          "has_getter": false,
+          "has_setter": true,
+          "name": "id",
+          "property_index": 2,
+          "raw_property": "__id__",
+          "type": "string"
+        },
+        {
+          "has_getter": false,
+          "has_setter": true,
+          "name": "keepAnim",
+          "property_index": 3,
+          "raw_property": "__keepAnim__",
+          "type": "bool"
+        },
+        {
+          "has_getter": false,
+          "has_setter": true,
+          "name": "keepCam",
+          "property_index": 4,
+          "raw_property": "__keepCam__",
+          "type": "bool"
+        },
+        {
+          "has_getter": false,
+          "has_setter": true,
+          "name": "position",
+          "property_index": 5,
+          "raw_property": "__position__",
+          "type": "UnityEngine.Vector3"
+        },
+        {
+          "has_getter": false,
+          "has_setter": true,
+          "name": "rotationEuler",
+          "property_index": 6,
+          "raw_property": "__rotationEuler__",
+          "type": "UnityEngine.Vector3"
+        },
+        {
+          "has_getter": false,
+          "has_setter": true,
+          "name": "sceneId",
+          "property_index": 7,
+          "raw_property": "__sceneId__",
+          "type": "string"
+        },
+        {
+          "has_getter": false,
+          "has_setter": true,
+          "name": "subDataParentId",
+          "property_index": 8,
+          "raw_property": "__subDataParentId__",
+          "type": "ulong"
+        },
+        {
+          "has_getter": false,
+          "has_setter": true,
+          "name": "teleportReason",
+          "property_index": 9,
+          "raw_property": "__teleportReason__",
+          "type": "Beyond.GEnums.C2STeleportReason"
+        },
+        {
+          "has_getter": false,
+          "has_setter": true,
+          "name": "uiTypeOut",
+          "property_index": 10,
+          "raw_property": "__uiTypeOut__",
+          "type": "Beyond.Gameplay.TeleportUIType"
+        }
+      ],
+      "order_note": "wire_order / members_from_wrapper_props is the canonical binary member order (GameAssembly Deserialize matches these setters, often alphabetical). members_from_target_fields is declaration/layout order only — NOT wire order.",
+      "orders_differ": true,
+      "target_assembly": "Gameplay.Beyond.dll",
+      "target_type": "Beyond.Gameplay.TeleportValidationData",
+      "target_typedef_index": 1407,
+      "typedef_index": 47582,
+      "wire_order": [
+        {
+          "has_getter": false,
+          "has_setter": true,
+          "name": "deviation",
+          "property_index": 1,
+          "raw_property": "__deviation__",
+          "type": "float"
+        },
+        {
+          "has_getter": false,
+          "has_setter": true,
+          "name": "id",
+          "property_index": 2,
+          "raw_property": "__id__",
+          "type": "string"
+        },
+        {
+          "has_getter": false,
+          "has_setter": true,
+          "name": "keepAnim",
+          "property_index": 3,
+          "raw_property": "__keepAnim__",
+          "type": "bool"
+        },
+        {
+          "has_getter": false,
+          "has_setter": true,
+          "name": "keepCam",
+          "property_index": 4,
+          "raw_property": "__keepCam__",
+          "type": "bool"
+        },
+        {
+          "has_getter": false,
+          "has_setter": true,
+          "name": "position",
+          "property_index": 5,
+          "raw_property": "__position__",
+          "type": "UnityEngine.Vector3"
+        },
+        {
+          "has_getter": false,
+          "has_setter": true,
+          "name": "rotationEuler",
+          "property_index": 6,
+          "raw_property": "__rotationEuler__",
+          "type": "UnityEngine.Vector3"
+        },
+        {
+          "has_getter": false,
+          "has_setter": true,
+          "name": "sceneId",
+          "property_index": 7,
+          "raw_property": "__sceneId__",
+          "type": "string"
+        },
+        {
+          "has_getter": false,
+          "has_setter": true,
+          "name": "subDataParentId",
+          "property_index": 8,
+          "raw_property": "__subDataParentId__",
+          "type": "ulong"
+        },
+        {
+          "has_getter": false,
+          "has_setter": true,
+          "name": "teleportReason",
+          "property_index": 9,
+          "raw_property": "__teleportReason__",
+          "type": "Beyond.GEnums.C2STeleportReason"
+        },
+        {
+          "has_getter": false,
+          "has_setter": true,
+          "name": "uiTypeOut",
+          "property_index": 10,
+          "raw_property": "__uiTypeOut__",
+          "type": "Beyond.Gameplay.TeleportUIType"
+        }
+      ],
+      "wire_order_source": "wrapper __name__ property metadata order (confirmed = native Deserialize call order)",
+      "wrapper_type": "Beyond.MemoryPack.Beyond_Gameplay_TeleportValidationDataForMemoryPack"
+    },
+    {
+      "assembly": "MemoryPack.Beyond.dll",
+      "formatter_type": "Beyond_Gameplay_TeleportValidationDataTableForMemoryPackFormatter",
+      "formatter_typedef": 47393,
+      "has_deserialize": true,
+      "has_formatter": true,
+      "has_register_formatter": true,
+      "interfaces": [
+        "Beyond.MemoryPack.IMemoryPackDeSerializeWrapper",
+        "Beyond.MemoryPack.IMemoryPackDeSerializeWrapper`1<Beyond.Gameplay.TeleportValidationDataTable>",
+        "Beyond.MemoryPack.IMemoryPackDeSerializeType"
+      ],
+      "members_from_target_fields": [
+        {
+          "field_index": 0,
+          "is_public": true,
+          "name": "teleportValidationDatas",
+          "note": "reference only — instance field declaration / offset layout; NOT MemoryPack wire order",
+          "offset": 16,
+          "type": "System.Collections.Generic.Dictionary`2<string, Beyond.Gameplay.TeleportValidationData>"
+        }
+      ],
+      "members_from_wrapper_props": [
+        {
+          "has_getter": false,
+          "has_setter": true,
+          "name": "teleportValidationDatas",
+          "property_index": 1,
+          "raw_property": "__teleportValidationDatas__",
+          "type": "System.Collections.Generic.Dictionary`2<string, Beyond.Gameplay.TeleportValidationData>"
+        }
+      ],
+      "order_note": "wire_order / members_from_wrapper_props is the canonical binary member order (GameAssembly Deserialize matches these setters, often alphabetical). members_from_target_fields is declaration/layout order only — NOT wire order.",
+      "orders_differ": false,
+      "target_assembly": "Gameplay.Beyond.dll",
+      "target_type": "Beyond.Gameplay.TeleportValidationDataTable",
+      "target_typedef_index": 1408,
+      "typedef_index": 47394,
+      "wire_order": [
+        {
+          "has_getter": false,
+          "has_setter": true,
+          "name": "teleportValidationDatas",
+          "property_index": 1,
+          "raw_property": "__teleportValidationDatas__",
+          "type": "System.Collections.Generic.Dictionary`2<string, Beyond.Gameplay.TeleportValidationData>"
+        }
+      ],
+      "wire_order_source": "wrapper __name__ property metadata order (confirmed = native Deserialize call order)",
+      "wrapper_type": "Beyond.MemoryPack.Beyond_Gameplay_TeleportValidationDataTableForMemoryPack"
+    }
+  ],
+  "serialize_markers": [
+    {
+      "assembly": "Gameplay.Beyond.dll",
+      "instance_field_count": 1,
+      "interfaces": [
+        "Beyond.MemoryPack.IMemoryPackSerialize"
+      ],
+      "matching_wrapper": "Beyond.MemoryPack.Beyond_Gameplay_BambooRaftTaskTableForMemoryPack",
+      "type_name": "Beyond.Gameplay.BambooRaftTaskTable",
+      "typedef_index": 687
+    },
+    {
+      "assembly": "Gameplay.Beyond.dll",
+      "instance_field_count": 1,
+      "interfaces": [
+        "Beyond.ISubDataTable`1<Beyond.Gameplay.TeleportValidationDataTable>",
+        "Beyond.ISubDataTable",
+        "Beyond.ISubDataTableClear",
+        "Beyond.MemoryPack.IMemoryPackSerialize"
+      ],
+      "matching_wrapper": "Beyond.MemoryPack.Beyond_Gameplay_TeleportValidationDataTableForMemoryPack",
+      "type_name": "Beyond.Gameplay.TeleportValidationDataTable",
+      "typedef_index": 1408
+    }
+  ]
+}

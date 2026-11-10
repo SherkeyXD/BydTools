@@ -10,8 +10,7 @@ namespace BydTools.Formats.MemoryPack;
 /// reads a prefix (MemoryPack versioning). Strings are StringPool int32 ids.
 /// AbilityActionData / ActionBase are MemoryPack unions (tag, then concrete).
 /// Concrete ability payloads are AbilityActionData members plus wrapper wire_order.
-/// Unmanaged Beyond structs (GameplayTag, AnimationClipAsyncInfo, FMontageTransitionInfo)
-/// are read as raw blittable layouts (no object header), matching parent WriteUnmanaged.
+/// Valuetype payloads listed in unmanaged.json are memcpy layouts (no object header).
 /// UnityEngine.AnimationCurve uses the native MemoryPack layout (count 3 + Keyframe[28]).
 /// </summary>
 public sealed class MemoryPackDecoder
@@ -37,8 +36,6 @@ public sealed class MemoryPackDecoder
     private bool TryMappedConcrete(string staticType, int tag, string? hint, out MpType concrete)
     {
         concrete = null!;
-        // SelectorData.finderData is Finder.Data. The schema collapses that to bare Data,
-        // so the Ability Data jumptable must not answer finder/validator/processor fields.
         string key = DataRoleKey(staticType, hint) ?? staticType;
         if (LookupUnionMap(key) is not { } map || !map.TryGetValue(tag, out string? mapped))
             return false;
@@ -62,12 +59,39 @@ public sealed class MemoryPackDecoder
 
     private Dictionary<int, string>? LookupUnionMap(string staticType)
     {
-        if (_unionMaps.TryGetValue(staticType, out var exact))
-            return exact;
-        int dot = staticType.LastIndexOf('.');
-        if (dot >= 0 && _unionMaps.TryGetValue(staticType[(dot + 1)..], out var leaf))
-            return leaf;
+        foreach (string key in UnionLookupKeys(staticType))
+        {
+            if (_unionMaps.TryGetValue(key, out var map))
+                return map;
+        }
         return null;
+    }
+
+    private static IEnumerable<string> UnionLookupKeys(string staticType)
+    {
+        yield return staticType;
+        string dotted = staticType.Replace('+', '.');
+        if (dotted != staticType)
+            yield return dotted;
+        string plused = staticType.Replace('.', '+');
+        if (plused != staticType)
+            yield return plused;
+
+        int dot = staticType.LastIndexOf('.');
+        if (dot >= 0)
+            yield return staticType[(dot + 1)..];
+
+        string nested = dot >= 0 ? staticType[(dot + 1)..] : staticType;
+        if (nested.Contains('+'))
+        {
+            yield return nested;
+            string[] parts = nested.Split('+');
+            if (parts.Length >= 2)
+                yield return parts[^2] + "+" + parts[^1];
+            yield return parts[^1];
+            if (parts.Length >= 2)
+                yield return parts[^2] + "." + parts[^1];
+        }
     }
 
     public JsonNode? Decode(ReadOnlySpan<byte> data, string rootType)
@@ -95,26 +119,8 @@ public sealed class MemoryPackDecoder
         if (depth > 64)
             throw new InvalidDataException($"MemoryPack nesting is deeper than 64 at offset {cursor.Position}.");
 
-        if (type == "GUIDProxy" || type.EndsWith(".GUIDProxy", StringComparison.Ordinal))
-            return ReadGuidProxy(cursor);
-        if (type == "Beyond.Gameplay.Core.GameplayTag" || type == "GameplayTag")
-            return ReadGameplayTag(cursor);
-        if (type == "Beyond.Resource.StringPathHash" || type == "StringPathHash")
-            return ReadStringPathHash(cursor);
-        if (type == "Beyond.Gameplay.Core.DispelConfig" || type == "DispelConfig")
-            return ReadDispelConfig(cursor);
-        if (type == "OrderPriorityConfig" || type.EndsWith(".OrderPriorityConfig", StringComparison.Ordinal))
-            return ReadOrderPriorityConfig(cursor);
-        if (type == "Beyond.Gameplay.Core.ModelViewStateController.ConditionValue"
-            || type.EndsWith(".ConditionValue", StringComparison.Ordinal))
-            return ReadConditionValue(cursor);
-        if (type == "Beyond.Gameplay.Audio.Utils.AudioBlackScreenBehaviour"
-            || type.EndsWith(".AudioBlackScreenBehaviour", StringComparison.Ordinal))
-            return ReadAudioBlackScreenBehaviour(cursor);
-        if (type == "Beyond.Montage.AnimationClipAsyncInfo")
-            return ReadAnimationClipAsyncInfo(cursor);
-        if (type == "Beyond.Montage.FMontageTransitionInfo")
-            return ReadFMontageTransitionInfo(cursor);
+        if (_schema.TryUnmanaged(type, out MpUnmanagedLayout? unmanaged))
+            return ReadUnmanaged(cursor, unmanaged, depth, sandbox);
         if (type == "Beyond.Optional`1<UnityEngine.Vector3>")
             return ReadOptionalVector3(cursor);
         if (type.StartsWith("Beyond.Optional`1<", StringComparison.Ordinal))
@@ -157,11 +163,17 @@ public sealed class MemoryPackDecoder
             case MpKind.List:
                 return ReadList(cursor, ElementType(type), hint, depth, sandbox);
             case MpKind.Dictionary:
-                return ReadDictionary(cursor, type, depth, sandbox);
+                return ReadDictionary(cursor, type, depth, sandbox, v2: false);
+            case MpKind.DictionaryV2:
+                return ReadDictionary(cursor, type, depth, sandbox, v2: true);
             case MpKind.Nullable:
                 return ReadNullable(cursor, InnerType(type), depth, sandbox);
             case MpKind.AnimationCurve:
                 return ReadUnityAnimationCurve(cursor);
+            case MpKind.Unmanaged:
+                if (_schema.TryUnmanaged(type, out unmanaged))
+                    return ReadUnmanaged(cursor, unmanaged, depth, sandbox);
+                goto default;
             default:
                 // Wrapper FQCNs (BuffData modifier list elements) resolve via byWrapper.
                 MpType resolved = _schema.ResolveNamed(type);
@@ -174,200 +186,119 @@ public sealed class MemoryPackDecoder
     /// carry the four AbilityActionData fields before the leaf wire_order.
     /// </summary>
     private static bool UsesAbilityPayload(string staticType, MpType concrete) =>
-        staticType == "AbilityActionData"
-        || (staticType == "Data" && concrete.AbilityPayload != null);
+        concrete.AbilityPayload != null
+        && (staticType == "AbilityActionData"
+            || staticType == "Data"
+            || staticType.Contains("AbilityActionData", StringComparison.Ordinal));
 
-    private static bool IsTaggedUnion(string type) =>
-        type is "AbilityActionData"
+    private bool IsTaggedUnion(string type) =>
+        LookupUnionMap(type) != null
+        || type is "AbilityActionData"
             or "Beyond.Gameplay.Actions.ActionBase"
             or "Beyond.Gameplay.Actions.PureGetter"
             or "Beyond.Gameplay.Actions.ActionHeader"
             or "Beyond.Gameplay.Core.ModelViewStateController.AbstractBehaviorData"
             or "Beyond.Gameplay.Core.DamageProcessorBase"
+            or "Beyond.Gameplay.Core.HealProcessorBase"
+            or "HealProcessorBase"
+            or "Beyond.Gameplay.Core.PoiseProcessorBase"
+            or "PoiseProcessorBase"
             or "Beyond.Gameplay.ConditionRuntimeBase"
             or "Beyond.Gameplay.GameCondition"
             or "Beyond.Gameplay.Core.CalculationBase"
             or "CalculationBase"
             or "Finder.Data"
             or "Beyond.Gameplay.Core.Selector.Finder.Data"
+            or "Beyond.Gameplay.Core.Selector+Finder+Data"
             or "Validator.Data"
             or "Beyond.Gameplay.Core.Selector.Validator.Data"
+            or "Beyond.Gameplay.Core.Selector+Validator+Data"
             or "PostProcessor.Data"
             or "Beyond.Gameplay.Core.Selector.PostProcessor.Data"
+            or "Beyond.Gameplay.Core.Selector+PostProcessor+Data"
             or "SpawnerPreprocess.Data"
             or "Beyond.Gameplay.SpawnerPreprocess.Data"
+            or "Beyond.Gameplay.SpawnerPreprocess+Data"
             or "SpawnerActionData"
             or "Beyond.Gameplay.SpawnerActionData"
             or "Data";
 
     /// <summary>
-    /// GUIDProxy is a 16-byte blittable payload (4× uint32) with no object header.
-    /// A leading 255 is null when the field is a reference.
+    /// Valuetype memcpy payload from schema <c>unmanaged.json</c>. No object header.
+    /// Field offsets include padding; the cursor always consumes <see cref="MpUnmanagedLayout.PayloadSize"/>.
     /// </summary>
-    private static JsonNode? ReadGuidProxy(Cursor cursor)
+    private JsonNode ReadUnmanaged(Cursor cursor, MpUnmanagedLayout layout, int depth, bool sandbox)
     {
-        if (cursor.Remaining > 0 && cursor.Buffer[cursor.Position] == 255)
+        if (cursor.Remaining < layout.PayloadSize)
         {
-            cursor.U8();
-            return null;
+            throw new InvalidDataException(
+                $"{layout.TypeName} needs {layout.PayloadSize} bytes at offset {cursor.Position}, have {cursor.Remaining}."
+            );
         }
 
-        return new JsonObject
-        {
-            ["val0"] = JsonValue.Create(unchecked((uint)cursor.I32())),
-            ["val1"] = JsonValue.Create(unchecked((uint)cursor.I32())),
-            ["val2"] = JsonValue.Create(unchecked((uint)cursor.I32())),
-            ["val3"] = JsonValue.Create(unchecked((uint)cursor.I32())),
-        };
-    }
-
-    /// <summary>
-    /// GameplayTag is an unmanaged struct { int tagId }. Parents WriteUnmanaged a raw int32.
-    /// </summary>
-    private static JsonNode ReadGameplayTag(Cursor cursor) =>
-        new JsonObject { ["tagId"] = JsonValue.Create(cursor.I32()) };
-
-    /// <summary>
-    /// GameplayTag ForMemoryPack formatter: object header must be 1, then tagId.
-    /// List&lt;GameplayTag&gt; uses this; unmanaged spans write a raw int32.
-    /// </summary>
-    private static JsonNode ReadGameplayTagFormatted(Cursor cursor)
-    {
         int origin = cursor.Position;
-        int? count = ReadHeader(cursor);
-        if (count == null)
-            throw new InvalidDataException($"GameplayTag null header at offset {origin}.");
-        if (count != 1)
-            throw new InvalidDataException($"GameplayTag memberCount {count} at offset {origin} (expected 1).");
-        return new JsonObject { ["tagId"] = JsonValue.Create(cursor.I32()) };
-    }
-
-    /// <summary>
-    /// StringPathHashFormatter reads a raw int64. KindOf would otherwise treat it as int32.
-    /// </summary>
-    private static JsonNode ReadStringPathHash(Cursor cursor)
-    {
-        if (cursor.Remaining < 8)
+        var obj = new JsonObject();
+        foreach (MpUnmanagedField field in layout.Fields.OrderBy(f => f.Offset))
         {
-            throw new InvalidDataException(
-                $"StringPathHash needs 8 bytes at offset {cursor.Position}, have {cursor.Remaining}."
-            );
+            cursor.Position = origin + field.Offset;
+            obj[field.Name] = ReadUnmanagedField(cursor, field, depth, sandbox);
         }
 
-        return new JsonObject { ["hash"] = JsonValue.Create(cursor.I64()) };
+        cursor.Position = origin + layout.PayloadSize;
+        return obj;
     }
 
-    /// <summary>
-    /// DispelConfig is an unmanaged struct { bool canBeDispelled; pad3; DispelLevel } (8 bytes).
-    /// BuffData reads it with a raw 8-byte move, not an object header.
-    /// </summary>
-    private static JsonNode ReadDispelConfig(Cursor cursor)
+    private JsonNode? ReadUnmanagedField(Cursor cursor, MpUnmanagedField field, int depth, bool sandbox)
     {
-        if (cursor.Remaining < 8)
-        {
-            throw new InvalidDataException(
-                $"DispelConfig needs 8 bytes at offset {cursor.Position}, have {cursor.Remaining}."
-            );
-        }
+        if (_schema.TryUnmanaged(field.Type, out MpUnmanagedLayout? nested))
+            return ReadUnmanaged(cursor, nested, depth + 1, sandbox);
 
-        bool canBeDispelled = cursor.U8() != 0;
-        cursor.U8();
-        cursor.U8();
-        cursor.U8();
-        return new JsonObject
+        int size = field.Size ?? 0;
+        MpKind kind = _schema.KindOf(field.Type);
+        if (kind == MpKind.Bool || field.Type is "bool" or "System.Boolean")
+            return JsonValue.Create(cursor.U8() != 0);
+        if (kind == MpKind.Float32 || field.Type is "float" or "System.Single")
+            return JsonValue.Create(cursor.F32());
+        if (kind == MpKind.Float64 || field.Type is "double" or "System.Double")
+            return JsonValue.Create(cursor.F64());
+        if (kind == MpKind.Int64 || field.Type is "long" or "System.Int64")
+            return JsonValue.Create(cursor.I64());
+        if (kind == MpKind.UInt64 || field.Type is "ulong" or "System.UInt64")
+            return JsonValue.Create(cursor.U64());
+        if (kind == MpKind.Vector2)
+            return Vec(cursor.F32(), cursor.F32());
+        if (kind == MpKind.Vector3)
+            return Vec(cursor.F32(), cursor.F32(), cursor.F32());
+        if (kind == MpKind.Vector4)
+            return Vec(cursor.F32(), cursor.F32(), cursor.F32(), cursor.F32());
+        if (kind == MpKind.Vector2Int)
+            return Vec(cursor.I32(), cursor.I32());
+        if (kind == MpKind.Vector3Int)
+            return Vec(cursor.I32(), cursor.I32(), cursor.I32());
+        if (kind == MpKind.Enum)
+            return JsonValue.Create(ReadEnumWidth(cursor, field.Type, size));
+        return size switch
         {
-            ["canBeDispelled"] = JsonValue.Create(canBeDispelled),
-            ["dispelledLevel"] = JsonValue.Create(cursor.I32()),
+            1 => JsonValue.Create((int)cursor.U8()),
+            2 => JsonValue.Create((short)cursor.U16()),
+            8 => JsonValue.Create(cursor.I64()),
+            _ => JsonValue.Create(cursor.I32()),
         };
     }
 
-    /// <summary>
-    /// OrderPriorityConfig is a 12-byte unmanaged struct inside BuffIconConfig:
-    /// bool useDirectoryValue, 3 pad, int priorityValue, int priorityEnum.
-    /// A leading 0 is the bool, not an object memberCount.
-    /// </summary>
-    private static JsonNode ReadOrderPriorityConfig(Cursor cursor)
+    private int ReadEnumWidth(Cursor cursor, string type, int size)
     {
-        if (cursor.Remaining < 12)
+        if (size is 1 or 2 or 8)
         {
-            throw new InvalidDataException(
-                $"OrderPriorityConfig needs 12 bytes at offset {cursor.Position}, have {cursor.Remaining}."
-            );
-        }
-
-        bool useDirectoryValue = cursor.U8() != 0;
-        cursor.U8();
-        cursor.U8();
-        cursor.U8();
-        return new JsonObject
-        {
-            ["useDirectoryValue"] = JsonValue.Create(useDirectoryValue),
-            ["priorityValue"] = JsonValue.Create(cursor.I32()),
-            ["priorityEnum"] = JsonValue.Create(cursor.I32()),
-        };
-    }
-
-    /// <summary>
-    /// ConditionValue is a 16-byte unmanaged struct: ValueUnion (bool, pad3, float, int) then DataType.
-    /// There is no object header. Interactive ModelView data writes it with a raw move.
-    /// </summary>
-    private static JsonNode ReadConditionValue(Cursor cursor)
-    {
-        if (cursor.Remaining < 16)
-        {
-            throw new InvalidDataException(
-                $"ConditionValue needs 16 bytes at offset {cursor.Position}, have {cursor.Remaining}."
-            );
-        }
-
-        bool boolValue = cursor.U8() != 0;
-        cursor.U8();
-        cursor.U8();
-        cursor.U8();
-        return new JsonObject
-        {
-            ["conditionValue"] = new JsonObject
+            return size switch
             {
-                ["boolValue"] = JsonValue.Create(boolValue),
-                ["floatValue"] = JsonValue.Create(cursor.F32()),
-                ["intValue"] = JsonValue.Create(cursor.I32()),
-            },
-            ["type"] = JsonValue.Create(cursor.I32()),
-        };
-    }
-
-    /// <summary>
-    /// AudioBlackScreenBehaviour is 16 unmanaged bytes: two byte enums, then each
-    /// override bool is followed by padding and a float. No object header.
-    /// </summary>
-    private static JsonNode ReadAudioBlackScreenBehaviour(Cursor cursor)
-    {
-        if (cursor.Remaining < 16)
-        {
-            throw new InvalidDataException(
-                $"AudioBlackScreenBehaviour needs 16 bytes at offset {cursor.Position}, have {cursor.Remaining}."
-            );
+                1 => cursor.U8(),
+                2 => (short)cursor.U16(),
+                _ => (int)cursor.I64(),
+            };
         }
 
-        int presetBehaviour = cursor.U8();
-        int customRetainFlags = cursor.U8();
-        bool fadeIn = cursor.U8() != 0;
-        cursor.U8();
-        float fadeInSeconds = cursor.F32();
-        bool fadeOut = cursor.U8() != 0;
-        cursor.U8();
-        cursor.U8();
-        cursor.U8();
-        float fadeOutSeconds = cursor.F32();
-        return new JsonObject
-        {
-            ["presetBehaviour"] = JsonValue.Create(presetBehaviour),
-            ["customRetainFlags"] = JsonValue.Create(customRetainFlags),
-            ["isOverrideFadeInTime"] = JsonValue.Create(fadeIn),
-            ["overrideFadeInTimeSeconds"] = JsonValue.Create(fadeInSeconds),
-            ["isOverrideFadeOutTime"] = JsonValue.Create(fadeOut),
-            ["overrideFadeOutTimeSeconds"] = JsonValue.Create(fadeOutSeconds),
-        };
+        return ReadEnum(cursor, type);
     }
 
     /// <summary>
@@ -375,70 +306,26 @@ public sealed class MemoryPackDecoder
     /// StackingType and AdditiveEffectType are signed int16. Reading them as int32
     /// shifts the next field and turns a later memberCount 3 into Boolean 3.
     /// </summary>
-    private static int ReadEnum(Cursor cursor, string type)
+    private int ReadEnum(Cursor cursor, string type)
     {
-        int dot = type.LastIndexOf('.');
-        string leaf = dot >= 0 ? type[(dot + 1)..] : type;
+        if (_schema.TryEnumWidth(type, out byte width))
+        {
+            return width switch
+            {
+                1 => cursor.U8(),
+                2 => (short)cursor.U16(),
+                8 => (int)cursor.I64(),
+                _ => cursor.I32(),
+            };
+        }
+
+        int sep = type.LastIndexOfAny(['.', '+']);
+        string leaf = sep >= 0 ? type[(sep + 1)..] : type;
         if (leaf is "LifeType" or "IdentifierType")
             return cursor.U8();
         if (leaf is "StackingType" or "AdditiveEffectType")
             return (short)cursor.U16();
         return cursor.I32();
-    }
-
-    /// <summary>
-    /// AnimationClipAsyncInfo is an unmanaged struct (36 bytes, declaration order).
-    /// </summary>
-    private static JsonNode ReadAnimationClipAsyncInfo(Cursor cursor)
-    {
-        if (cursor.Remaining < 36)
-        {
-            throw new InvalidDataException(
-                $"AnimationClipAsyncInfo needs 36 bytes at offset {cursor.Position}, have {cursor.Remaining}."
-            );
-        }
-
-        var obj = new JsonObject
-        {
-            ["montagePathHash"] = JsonValue.Create(cursor.I64()),
-            ["length"] = JsonValue.Create(cursor.F32()),
-            ["framerate"] = JsonValue.Create(cursor.F32()),
-            ["averageSpeed"] = Vec(cursor.F32(), cursor.F32(), cursor.F32()),
-            ["averageAngularSpeed"] = JsonValue.Create(cursor.F32()),
-            ["isHumanoid"] = JsonValue.Create(cursor.U8() != 0),
-            ["isLooping"] = JsonValue.Create(cursor.U8() != 0),
-        };
-        _ = cursor.U16(); // padding to unmanaged size 36
-        return obj;
-    }
-
-    /// <summary>
-    /// FMontageTransitionInfo is an unmanaged struct (32 bytes, declaration order with bool pad).
-    /// </summary>
-    private static JsonNode ReadFMontageTransitionInfo(Cursor cursor)
-    {
-        if (cursor.Remaining < 32)
-        {
-            throw new InvalidDataException(
-                $"FMontageTransitionInfo needs 32 bytes at offset {cursor.Position}, have {cursor.Remaining}."
-            );
-        }
-
-        bool fixedTime = cursor.U8() != 0;
-        cursor.U8();
-        cursor.U8();
-        cursor.U8();
-        return new JsonObject
-        {
-            ["bIsFixedTransitionTime"] = JsonValue.Create(fixedTime),
-            ["transistionOffset"] = JsonValue.Create(cursor.F32()),
-            ["transitionDuration"] = JsonValue.Create(cursor.F32()),
-            ["transitionTime"] = JsonValue.Create(cursor.F32()),
-            ["fixedTime"] = JsonValue.Create(cursor.F32()),
-            ["fixedTransitionDuration"] = JsonValue.Create(cursor.F32()),
-            ["normalizedTransitionTime"] = JsonValue.Create(cursor.F32()),
-            ["exitTime"] = JsonValue.Create(cursor.F32()),
-        };
     }
 
     /// <summary>
@@ -718,20 +605,35 @@ public sealed class MemoryPackDecoder
         if (count < 0 || count > 1_000_000)
             throw new InvalidDataException($"List count {count} at offset {cursor.Position - 4}.");
         var array = new JsonArray();
-        bool gameplayTagElement = element is "Beyond.Gameplay.Core.GameplayTag" or "GameplayTag";
+        bool unmanagedElem = _schema.TryUnmanaged(element, out MpUnmanagedLayout? elemLayout);
+        int formatterCount = 0;
+        if (unmanagedElem && _schema.HasWrapper(element))
+        {
+            try
+            {
+                formatterCount = _schema.ResolveNamed(element).Wire.Length;
+            }
+            catch (MemoryPackTypeException)
+            {
+                formatterCount = 0;
+            }
+        }
+
         for (int i = 0; i < count; i++)
         {
-            if (gameplayTagElement)
+            if (unmanagedElem && elemLayout != null && formatterCount > 0
+                && cursor.Remaining > 0 && cursor.Buffer[cursor.Position] == formatterCount)
             {
-                // List formatter writes memberCount 1 + tagId. Unmanaged spans write a raw int32.
-                array.Add(
-                    cursor.Remaining > 0 && cursor.Buffer[cursor.Position] == 1
-                        ? ReadGameplayTagFormatted(cursor)
-                        : ReadGameplayTag(cursor));
+                // List/array of a valuetype that also has a ForMemoryPack formatter.
+                // The formatter writes an object header (wire length) then members.
+                array.Add(ReadObject(cursor, _schema.ResolveNamed(element), abilityPayload: false, depth + 1, sandbox));
             }
+            else if (unmanagedElem && elemLayout != null)
+                array.Add(ReadUnmanaged(cursor, elemLayout, depth + 1, sandbox));
             else
                 array.Add(ReadValue(cursor, element, hint, depth + 1, sandbox));
         }
+
         return array;
     }
 
@@ -764,8 +666,15 @@ public sealed class MemoryPackDecoder
             cursor.U8();
     }
 
-    private JsonNode? ReadDictionary(Cursor cursor, string type, int depth, bool sandbox)
+    private JsonNode? ReadDictionary(Cursor cursor, string type, int depth, bool sandbox, bool v2)
     {
+        if (v2)
+        {
+            byte header = cursor.U8();
+            if (header == 255)
+                return null;
+        }
+
         int count = cursor.I32();
         if (count == -1)
             return null;
