@@ -1,5 +1,0 @@
-/target
-**/__pycache__/
-**/*.pyc
-**/*.rs.bk
-*.swp
