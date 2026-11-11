@@ -155,7 +155,15 @@ public sealed class VfsCommand : ICommand
             "VFS asset dumper",
             "vfs --input <path> --output <dir> --blocktype <type>",
             parser,
-            () => HelpFormatter.WriteEnumValues("Available block types", BlockRegistry.All.Select(static d => d.Type))
+            () =>
+            {
+                HelpFormatter.WriteEnumValues("Available block types", BlockRegistry.All.Select(static d => d.Type));
+                HelpFormatter.WriteSection("Notes");
+                Console.WriteLine("  JsonData .json files are decoded to plaintext using the embedded MemoryPack schema.");
+                Console.WriteLine("  StringPool*.byte in the same block is used for string ids, then copied as-is.");
+                Console.WriteLine("  Lua .lua files are decrypted in place. Table .bytes become SparkBuffer JSON.");
+                Console.WriteLine();
+            }
         );
     }
 

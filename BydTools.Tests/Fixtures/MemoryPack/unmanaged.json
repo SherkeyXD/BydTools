@@ -105,5 +105,32 @@
       { "name": "floatValue", "type": "float", "offset": 4, "size": 4 },
       { "name": "intValue", "type": "int", "offset": 8, "size": 4 }
     ]
+  },
+  {
+    "type_name": "Beyond.Gameplay.Core.LevelScriptPtr",
+    "payload_size": 16,
+    "native_size": 16,
+    "fields": [
+      { "name": "scriptId", "type": "ulong", "offset": 0, "size": 8 },
+      { "name": "<levelId>k__BackingField", "type": "int", "offset": 8, "size": 4 }
+    ]
+  },
+  {
+    "type_name": "System.Nullable`1<float>",
+    "payload_size": 8,
+    "native_size": 8,
+    "fields": [
+      { "name": "hasValue", "type": "bool", "offset": 0, "size": 1 },
+      { "name": "value", "type": "float", "offset": 4, "size": 4 }
+    ]
+  },
+  {
+    "type_name": "Beyond.Optional`1<UnityEngine.Vector3>",
+    "payload_size": 16,
+    "native_size": 16,
+    "fields": [
+      { "name": "enabled", "type": "bool", "offset": 0, "size": 1 },
+      { "name": "value", "type": "UnityEngine.Vector3", "offset": 4, "size": 12 }
+    ]
   }
 ]

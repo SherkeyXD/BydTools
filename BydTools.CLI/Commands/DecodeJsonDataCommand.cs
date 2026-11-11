@@ -5,7 +5,7 @@ namespace BydTools.CLI.Commands;
 public sealed class DecodeJsonDataCommand : ICommand
 {
     public string Name => "decode-jsondata";
-    public string Description => "Decode JsonData MemoryPack files to plaintext JSON";
+    public string Description => "Re-decode a raw JsonData dump using the embedded schema";
 
     public int Execute(string[] args, CancellationToken cancellationToken)
     {
@@ -16,16 +16,19 @@ public sealed class DecodeJsonDataCommand : ICommand
         {
             HelpFormatter.WriteCommandHelp(
                 "JsonData MemoryPack decoder",
-                "decode-jsondata --input <dir> --output <dir> --schema <schemas.json> --index <type_index.json>",
+                "decode-jsondata --input <dir> --output <dir>",
                 parser,
                 () =>
                 {
                     HelpFormatter.WriteSection("Notes");
-                    Console.WriteLine("  Dump JsonData first: BydTools vfs --blocktype JsonData --input <game> --output <dump>");
+                    Console.WriteLine("  vfs --blocktype JsonData already decodes MMP using the embedded schema.");
+                    Console.WriteLine("  Use this command to re-decode a raw dump, or to override the schema.");
+                    Console.WriteLine("  Embedded schemas / type_index / union-map / unmanaged / enums are used by default.");
+                    Console.WriteLine("  --schema-dir is a beyond-schema-dumper export (.msgpack.lz4 preferred, else .json).");
+                    Console.WriteLine("  --schema / --index / --union-map override individual files.");
                     Console.WriteLine("  A leading { or [ is copied as UTF-8 JSON. USPC and SHPI files are skipped.");
-                    Console.WriteLine("  String pool ids -1 and -2 are \"\" and null. Other ids are resolved from StringPool*.byte");
-                    Console.WriteLine("  when --string-pool is set, otherwise written as \"#<id>\".");
-                    Console.WriteLine("  --union-map is { \"AbilityActionData\": { \"<tag>\": \"<TypeName>\" }, \"ActionBase\": { ... } }.");
+                    Console.WriteLine("  String pool ids -1 and -2 are \"\" and null. Other ids resolve from StringPool*.byte");
+                    Console.WriteLine("  under --string-pool, or <input>/Data/Json/StringPool when that folder exists.");
                     Console.WriteLine();
                 }
             );
@@ -34,11 +37,29 @@ public sealed class DecodeJsonDataCommand : ICommand
 
         string? input = parser.Get("input");
         string? output = parser.Get("output");
-        string? schema = parser.Get("schema");
-        string? index = parser.Get("index");
-        if (string.IsNullOrWhiteSpace(input) || string.IsNullOrWhiteSpace(output)
-            || string.IsNullOrWhiteSpace(schema) || string.IsNullOrWhiteSpace(index))
-            return VfsCommand.Fail(2, "--input, --output, --schema, and --index are required.");
+        if (string.IsNullOrWhiteSpace(input) || string.IsNullOrWhiteSpace(output))
+            return VfsCommand.Fail(2, "--input and --output are required.");
+
+        bool useEmbedded = string.IsNullOrWhiteSpace(parser.Get("schema-dir"))
+            && string.IsNullOrWhiteSpace(parser.Get("schema"))
+            && string.IsNullOrWhiteSpace(parser.Get("index"));
+        MemoryPackExport.Paths? export = null;
+        if (!useEmbedded)
+        {
+            try
+            {
+                export = MemoryPackExport.Resolve(
+                    parser.Get("schema-dir"),
+                    parser.Get("schema"),
+                    parser.Get("index"),
+                    parser.Get("union-map")
+                );
+            }
+            catch (ArgumentException ex)
+            {
+                return VfsCommand.Fail(2, ex.Message);
+            }
+        }
 
         int jobs;
         try
@@ -52,15 +73,35 @@ public sealed class DecodeJsonDataCommand : ICommand
 
         try
         {
-            var loaded = MemoryPackSchema.Load(Path.GetFullPath(schema), Path.GetFullPath(index));
+            MemoryPackSchema loaded;
+            IReadOnlyDictionary<string, IReadOnlyDictionary<int, string>>? unions;
+            if (export is { } paths)
+            {
+                loaded = MemoryPackSchema.Load(paths.Schema, paths.TypeIndex);
+                unions = string.IsNullOrWhiteSpace(paths.UnionMap)
+                    ? null
+                    : JsonDataMemoryPack.LoadUnionMap(paths.UnionMap);
+            }
+            else
+            {
+                loaded = MemoryPackResources.Schema;
+                string? unionOverride = parser.Get("union-map");
+                unions = string.IsNullOrWhiteSpace(unionOverride)
+                    ? MemoryPackResources.UnionMaps
+                    : JsonDataMemoryPack.LoadUnionMap(Path.GetFullPath(unionOverride));
+            }
+
             BeyondStringPool? pool = null;
             string? poolDir = parser.Get("string-pool");
+            if (string.IsNullOrWhiteSpace(poolDir))
+            {
+                string guess = Path.Combine(Path.GetFullPath(input), "Data", "Json", "StringPool");
+                if (Directory.Exists(guess)
+                    && Directory.EnumerateFiles(guess, "StringPool*.byte").Any())
+                    poolDir = guess;
+            }
             if (!string.IsNullOrWhiteSpace(poolDir))
                 pool = BeyondStringPool.Load(Path.GetFullPath(poolDir));
-            IReadOnlyDictionary<string, IReadOnlyDictionary<int, string>>? unions = null;
-            string? unionMap = parser.Get("union-map");
-            if (!string.IsNullOrWhiteSpace(unionMap))
-                unions = JsonDataMemoryPack.LoadUnionMap(Path.GetFullPath(unionMap));
 
             string outputPath = Path.GetFullPath(output);
             JsonDataDecodeReport report = JsonDataMemoryPack.DecodeTree(
@@ -116,12 +157,15 @@ public sealed class DecodeJsonDataCommand : ICommand
 
     private static ArgParser CreateParser() =>
         new ArgParser()
-            .Add("input", "i", "JsonData dump directory (vfs --blocktype JsonData)", "dir", required: true)
+            .Add("input", "i", "JsonData dump directory (raw MMP, not already decoded)", "dir", required: true)
             .Add("output", "o", "Directory for plaintext JSON", "dir", required: true)
-            .Add("schema", null, "beyond-mp-schema schemas.json", "file", required: true)
-            .Add("index", null, "beyond-mp-schema type_index.json", "file", required: true)
-            .Add("string-pool", null, "Directory of StringPool*.byte (USPC)", "dir")
-            .Add("union-map", null, "JSON map of AbilityActionData union tags to type names", "file")
+            .Add("schema-dir", null, "beyond-schema-dumper export directory (overrides embedded)", "dir",
+                continuation: "Loads schemas/type_index/union-map/unmanaged/enums as .msgpack.lz4 or .json.")
+            .Add("schema", null, "schemas.json or schemas.msgpack.lz4 (overrides --schema-dir)", "file")
+            .Add("index", null, "type_index.json or type_index.msgpack.lz4 (overrides --schema-dir)", "file")
+            .Add("string-pool", null, "Directory of StringPool*.byte (USPC)", "dir",
+                continuation: "Default: <input>/Data/Json/StringPool when that folder exists.")
+            .Add("union-map", null, "union-map.json or union-map.msgpack.lz4 (overrides --schema-dir)", "file")
             .Add("report", null, "Coverage report path", "file", continuation: "Default: <output>/memorypack-report.json.")
             .Add("jobs", null, "Files decoded at once", "n", continuation: "Default: processor count.")
             .Add("help", "h", "Show help information");

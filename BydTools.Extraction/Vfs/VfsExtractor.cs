@@ -1,6 +1,7 @@
 using BydTools.Core;
 using BydTools.Core.IO;
 using BydTools.Extraction.Sink;
+using BydTools.Formats.MemoryPack;
 using BydTools.Formats.Usm;
 using BydTools.VFS;
 
@@ -15,8 +16,13 @@ public sealed class VfsExtractResult(int Extracted, int Failed)
 public sealed class VfsExtractor
 {
     private readonly ILogger _logger;
+    private readonly IContentHandler? _jsonDataHandler;
 
-    public VfsExtractor(ILogger logger) => _logger = logger;
+    public VfsExtractor(ILogger logger, IContentHandler? jsonDataHandler = null)
+    {
+        _logger = logger;
+        _jsonDataHandler = jsonDataHandler;
+    }
 
     public VfsExtractResult Dump(
         VfsBlock block,
@@ -55,7 +61,11 @@ public sealed class VfsExtractor
         progress.AddTotal(totalBytes);
 
         var sink = new DirectoryOutputSink(outputDirectory);
-        IContentHandler? handler = CreateHandler(block.Descriptor?.Kind ?? ContentKind.Generic);
+        ContentKind kind = block.Descriptor?.Kind ?? ContentKind.Generic;
+        BeyondStringPool? pool = kind == ContentKind.JsonData && _jsonDataHandler == null
+            ? TryLoadStringPool(block)
+            : null;
+        IContentHandler? handler = CreateHandler(kind, pool);
         int extracted = 0;
         int failed = 0;
         var options = new ParallelOptions
@@ -171,15 +181,43 @@ public sealed class VfsExtractor
             _logger.Info("  {0} -> {1}", block.Info.GroupCfgName, block.Info.GroupCfgHashName);
     }
 
-    private static IContentHandler? CreateHandler(ContentKind kind) =>
+    private IContentHandler? CreateHandler(ContentKind kind, BeyondStringPool? pool) =>
         kind switch
         {
             ContentKind.Table => new SparkBufferHandler(),
             ContentKind.Lua => new LuaHandler(),
             ContentKind.Video => new UsmHandler(),
             ContentKind.Audio => new PckDecryptHandler(),
+            ContentKind.JsonData => _jsonDataHandler ?? new JsonDataHandler(pool),
             _ => null,
         };
+
+    private BeyondStringPool? TryLoadStringPool(VfsBlock block)
+    {
+        try
+        {
+            var files = new List<(string Name, byte[] Data)>();
+            foreach (var chunk in block.Info.Chunks)
+            {
+                string? chunkPath = block.ResolveChunkPath(chunk);
+                if (chunkPath == null)
+                    continue;
+                foreach (var file in chunk.Files)
+                {
+                    if (BeyondStringPool.IndexOfFileName(file.Name) < 0)
+                        continue;
+                    files.Add((file.Name, block.ReadFile(chunkPath, file)));
+                }
+            }
+
+            return BeyondStringPool.TryLoad(files);
+        }
+        catch (Exception ex)
+        {
+            _logger.Verbose("  String pool was not loaded: {0}", ex.Message);
+            return null;
+        }
+    }
 
     private void WriteBlockInfo(VfsBlockInfo info)
     {

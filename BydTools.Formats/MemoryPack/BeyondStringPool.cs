@@ -35,16 +35,28 @@ public sealed class BeyondStringPool
 
         var files = Directory
             .EnumerateFiles(directory, "StringPool*.byte", SearchOption.TopDirectoryOnly)
-            .Select(path => (path, index: PoolIndex(path)))
+            .Select(path => (Name: path, Data: File.ReadAllBytes(path)))
+            .ToList();
+        return TryLoad(files)
+            ?? throw new InvalidDataException($"No StringPool*.byte files in \"{directory}\".");
+    }
+
+    /// <summary>
+    /// Builds a pool from <c>StringPoolN.byte</c> entries. Returns null when none match.
+    /// </summary>
+    public static BeyondStringPool? TryLoad(IEnumerable<(string Name, byte[] Data)> files)
+    {
+        var blocks = files
+            .Select(file => (file.Data, index: IndexOfFileName(file.Name)))
             .Where(item => item.index >= 0)
             .OrderBy(item => item.index)
             .ToList();
-        if (files.Count == 0)
-            throw new InvalidDataException($"No StringPool*.byte files in \"{directory}\".");
+        if (blocks.Count == 0)
+            return null;
 
-        var blocks = new List<string[]>(files.Count);
+        var loaded = new List<string[]>(blocks.Count);
         int expect = 0;
-        foreach (var (path, index) in files)
+        foreach (var (data, index) in blocks)
         {
             if (index != expect)
             {
@@ -53,12 +65,14 @@ public sealed class BeyondStringPool
                 );
             }
 
-            blocks.Add(ReadBlock(File.ReadAllBytes(path)));
+            loaded.Add(ReadBlock(data));
             expect++;
         }
 
-        return new BeyondStringPool(blocks);
+        return new BeyondStringPool(loaded);
     }
+
+    public static int IndexOfFileName(string path) => PoolIndex(path);
 
     /// <summary>
     /// One USPC block. After an optional leading int32 (when bytes 4..7 are <c>USPC</c>),

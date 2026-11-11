@@ -13,24 +13,13 @@
 
 ### VFS
 
-- [x] `JsonData` MemoryPack decode (`decode-jsondata`), using `beyond-mp-schema` `wire_order`
+- [x] `JsonData` MemoryPack decode (in `vfs --blocktype JsonData`, like Lua decrypt)
+  - Wire layouts are the embedded beyond-schema-dumper `*.msgpack.lz4` under `BydTools.Formats/MemoryPack/Resource/`
   - Plain UTF-8 JSON (leading `{` / `[`) is copied through
-  - StringPool ids (`-1` empty, `-2` null) resolve from `StringPool*.byte` when `--string-pool` is set
-  - Tables such as BambooRaft and teleport validation decode fully
-  - Remaining gaps (each failed file is one row in the coverage report):
-    - On the full dump, ok moved from 1295 to 5685 after unmanaged `GameplayTag` / `AnimationClipAsyncInfo` / `FMontageTransitionInfo`, native `AnimationCurve` (count 3 and 28-byte keys, not an `FAnimationCurve` alias), `EffectActionData` base+wire, and `ActionHeader` wires for `OnLeaderEnterTriggerVolume`.
-    - Full-dump v15 is ok **14486** (v14 was 12437, +2049). SpawnerConfig 0→674, LevelConfig 0→240, SkillData +584, LevelData +493, BuffData +57.
-    - `DispelConfig` is 8 unmanaged bytes. `OrderPriorityConfig` inside `BuffIconConfig` is 12 unmanaged bytes (bool, pad, `priorityValue`, `priorityEnum`); a leading 0 is that bool, not memberCount 0. `LifeType` and `IdentifierType` are byte enums. `StackingType` and `AdditiveEffectType` are signed int16. Reading those as int32 shifted the next field and turned a later memberCount 3 into `Boolean 3`. Buff modifier lists use the concrete `*Modifier.Data` wrappers, and `BuffIconConfig` is 20 fields.
-    - `ContinuousFindTargetAction.Data` is ability base + `FindTargetActionData` (14) + `findInterval` (19). `ShowHideActorData` is the 4 ability fields + its 6 leaf fields (10). `StartDialogAndTeleportAction` is `StartDialogAction` (15) plus a second `_dialogId` (16).
-    - v10 wires: KeywordAction middles (Vulnerable/Enhanced 14, Weak/Slow/Speedup/Shelter 13), `EffectActionData` named fields accept the 20-field ability payload, `PlayRadioAndWait` copies `PlayRadio` (13), MVSC behaviors prefix `MVSCBehaviorData` (Effect 17), `PlayAnimationWithStep` is 30, and Char interact acts prefix ActionData/ActorAct (CharAnim 31).
-    - `SelectorData.finderData` is rewritten to `Finder.Data` (validators and post-processors likewise). The fixture union map has the full jumptables: Finder tags 0–0x19 (tag 7 is HitBoxFinder), Validator 14, PostProcessor 11. HitBox count is 8 = TargetFinder (5) + leaf (3).
-    - v12: `EffectLineCenterAction.Data` is ability base + `EffectActionData` + `effectCenter` (21). `ConditionValue` is 16 unmanaged bytes with no object header. Dictionary class values drop a leading `01` when the next byte is that type's wire memberCount. `InventoryItemBundleWithInfinite` is the two bundle fields plus `infinite`.
-    - v13: `ParamOutput<T>` keeps its native wire of 2 (`paramTarget`, `path`) and does not take the ActionBase prefix. That was the ActionMap desync (`AbilitySystemReset` 449→5). `StartDialogAndTeleportAction` extends `ClientCutsceneTeleport`, then `_dialogId`. `AudioBlackScreenBehaviour` is 16 unmanaged bytes. `MVSCDestructibleBehaviorData` still writes the 6 `MVSCBehaviorData` fields.
-    - `GameCondition` is a 344-tag jumptable (`GameCondition` / `Beyond.Gameplay.GameCondition` in the union map). Concretes get the four base fields; compare-operator and soil-count bases add their `_` fields. `Interactive/InteractiveData` maps to `LevelInteractiveData`.
-    - `data_int_*` still fails with memberCount 26. `LevelInteractiveData` wire is 25, and the GameAssembly formatter compares against 25. No 26th field is invented.
-    - v15: `SpawnerPreprocess.Data` (7 tags) and `SpawnerActionData` (6 tags) are their own unions, not Ability Data. `Optional<Vector3>` is 16 unmanaged bytes. `StringPathHash` is a raw int64. `List<GameplayTag>` reads a formatter header of 1, otherwise a raw int32. `ShapeFinderData` copies the 11-field ShapeFinder wire. `EnemyWarningActionData` is 20 and `ChannelingDamageAction.Data` is 12.
-    - Still open after v15: AnimationConfig 139, CharInteractPerformCfgs 266, Interactive 26-vs-25 (~332), LevelScript ~3000, Skill leftover ~681.
-    - U8, Webview, and Table SparkBuffer are out of scope
+  - StringPool ids (`-1` empty, `-2` null) resolve from `StringPool*.byte` in the same block
+  - `decode-jsondata` re-decodes a raw dump, or overrides the schema with `--schema-dir`
+  - Full JsonData dump: **19501** ok / **0** fail / 3826 plain (23327 files)
+  - U8, Webview, and Table SparkBuffer are out of scope
 
 ## Prerequisites
 
@@ -51,7 +40,7 @@ Usage:
 Commands:
   vfs               Dump files from VFS
   pck               Extract audio from VFS
-  decode-jsondata   Decode a JsonData dump (MemoryPack) to plaintext JSON
+  decode-jsondata   Re-decode a raw JsonData dump (embedded schema by default)
 ```
 
 ### vfs
@@ -80,6 +69,8 @@ Block types:
 ```
 
 A directory that is not in this list can still be dumped by its `groupCfgName`. `All`, `Raw`, and numbers that are not a real block type are rejected. `--debug` prints the blocks actually present, including ones the catalog does not know yet.
+
+`JsonData` `.json` files are decoded to plaintext with the embedded MemoryPack schema (same idea as Lua decrypt). `StringPool*.byte` in that block is used for string ids and then copied through. Table `.bytes` still become SparkBuffer JSON.
 
 ### pck
 
@@ -111,40 +102,42 @@ Files with no AudioDialog match go under `<block>/unmapped/<language>/`. The lan
 
 ### decode-jsondata
 
-Reads a directory produced by `vfs --blocktype JsonData`. Schemas come from the `beyond-mp-schema` export (`schemas.json` + `type_index.json`). Member order is `wire_order`, not the target field declaration order. Wrappers that omit private fields still accept a member count that matches those fields inserted in case-insensitive alphabetical order.
+`vfs --blocktype JsonData` already writes plaintext JSON. Use this command to re-decode a **raw** dump, or to point at a newer beyond-schema-dumper export. BydTools interprets `wire_order`; it does not export schemas. The default schema is the embedded `*.msgpack.lz4` in `BydTools.Formats/MemoryPack/Resource/`.
 
 ```text
 BydTools decode-jsondata \
-  --input vfs-json \
-  --output vfs-json-text \
-  --schema out/memorypack/schemas.json \
-  --index out/memorypack/type_index.json \
-  --string-pool vfs-json/Data/Json/StringPool
+  --input raw-jsondata \
+  --output vfs-json-text
 ```
 
-`--union-map` for an Endfield dump is `BydTools.Tests/Fixtures/MemoryPack/union-map.json`, recovered from GameAssembly formatter jumptables (tag 296 is `PlayAnimationActionData`). Keys: `AbilityActionData` 447, `Data` 447, `ActionBase` 1364, `ActionHeader` 240, `PureGetter` 1108, `AbstractBehaviorData` 21, `DamageProcessorBase` 11, `ConditionRuntimeBase` 50, `CalculationBase` 6, `Finder.Data` 26 (tag 7 is HitBoxFinder, max tag 0x19), `Validator.Data` 14, `PostProcessor.Data` 11, `SpawnerPreprocess.Data` 7, `SpawnerActionData` 6. The same tables are also stored under the `Beyond.Gameplay.*` names. A flat `{ "296": "PlayAnimationActionData" }` file is still accepted as AbilityActionData only. Bare `Data` tags that name an ability-action wrapper use the same four base fields plus the leaf `wire_order` as `AbilityActionData`. `CreateBuffActionInput` is `BuffInput`'s three fields plus its own two. `GameplayTag` is a raw int32. `AnimationClipAsyncInfo` is 36 unmanaged bytes and `FMontageTransitionInfo` is 32. `UnityEngine.AnimationCurve` is memberCount 3, two wrap-mode int32s, then 28-byte keyframes (count 0 is a skipped placeholder); it is not aliased to `Beyond.FAnimationCurve`. `EffectActionData` uses the ability base plus `wire_order`. `OnLeaderEnterTriggerVolume` and similar script events use the ActionHeader wire (18), not ActionBase. Nested `NPC/MontageJson/...` paths use that folder hint. On the full JsonData dump those fixes moved ok from 1295 to 5685. `LevelInteractiveData` (and `LevelEnemyData`, `LevelNpcData`, `LevelFactoryRegionData`) is `LevelEntityData`'s 14-field wire plus its own `wire_order`, because the leaf fields start at offset 112. `CalculationBase` is a tagged union of types whose names end in `Calculation` (fork-matched when two concretes share a member count). Game condition subclasses whose first field is at offset 144 are `GameCondition`'s four members (`scopeMask`, `uniqueId`, `useCurrentScope`, `useGraphScope`) plus the subclass `_` fields and `wire_order`. `DispelConfig` is 8 raw bytes. `ContinuousFindTargetAction.Data` is 19 fields (ability base, `FindTargetActionData`, `findInterval`). `ShowHideActorData` is 10. `StartDialogAndTeleportAction` is 16. Full-dump v14 is ok 12437 (v13 was 12017). `GameCondition` is a 344-tag union. `Interactive/InteractiveData` selects `LevelInteractiveData`. Files named `data_int_*` still report memberCount 26 against that 25-field wire; the formatter compares against 25, so no extra field is added. About 223 BuffData files remain. `--report` overrides the default `<output>/memorypack-report.json`. Exit code `1` means the run finished and at least one file failed; the report still has ok / plain JSON / skipped / failed counts by top-level folder.
+`--schema-dir` overrides the embed and loads `schemas` / `type_index` / `union-map` / `unmanaged` / `enums` (`.msgpack.lz4` preferred, else `.json`). `--schema` / `--index` / `--union-map` override individual files. `--string-pool` defaults to `<input>/Data/Json/StringPool` when that folder exists.
 
-Basename `CommonSysTeleportValidationDataTable` matches the `TeleportValidationDataTable` suffix. Instance-id filenames use the folder hint (`BuffData/`, `SkillData/`, `LevelConfig/`, `LevelData/`, `LevelScriptData/`, `SpawnerConfig` → `SpawnerConfigData`, `AtmosphericNpcData` → `NpcAtmosphericDataTable`, `NPC/MontageJson` → `NPCMontageJson`, `Interactive/ModelViewStateControllerData` → `MVSCModelViewStateControllerData`, `Interactive/InteractiveData` → `LevelInteractiveData`, `CharInteractPerformCfgs` → `CharInteractPerformRuntimeCfg`, `AnimationConfig` → `AnimationConfigJson`, `NavMesh` → `LunaNavMeshAreaContainer`, `GPUISystemConfig` → `PrefabGroupSerializeData`). `GameplayConfig/NonGeneratedConfigs` uses the file basename. When several types share a leaf, an `IMemoryPackSerialize` root wins.
+To refresh the embed after a game update:
 
-`GUIDProxy` is 16 bytes (four little-endian uint32s) with no object header; a leading 255 is null. Outside a union sandbox, memberCount 0 on a non-empty wire is an empty object, and a smaller count reads that prefix of `wire_order` (MemoryPack versioning). Inside a sandbox, count 0 is only accepted for `Beyond.Optional<T>`, `Param<T>`, and `AnimationClipAsyncInfo`, so fork-match does not treat every wrapper as a hit. `ActionBase` concretes are read as NodeBase's seven fields, then `_nextID`, then the concrete `_` fields and `wire_order` (confirmed on WaitForSeconds, Split, CallServer, SwitchInt, IfElse, StartDialog, and BlackScreenFadeIn). `GameplayTag`, `AnimationClipAsyncInfo`, and `FMontageTransitionInfo` are unmanaged (no object header). `UnityEngine.AnimationCurve` is its own layout, not an `FAnimationCurve` alias. Bare `Data` is narrowed when the field name contains finder, validator, or processor.
+```text
+beyond-schema-dumper export \
+  --game-root /path/to/Endfield \
+  --format msgpack \
+  --out out/memorypack
+```
+
+Copy `schemas`, `type_index`, `union-map`, `unmanaged`, and `enums` `.msgpack.lz4` into `BydTools.Formats/MemoryPack/Resource/`.
+
+A fixture map lives at `BydTools.Tests/Fixtures/MemoryPack/union-map.json`. A flat `{ "296": "PlayAnimationActionData" }` file is still accepted as AbilityActionData only. `--report` overrides the default `<output>/memorypack-report.json`. Exit code `1` means the run finished and at least one file failed; the report still has ok / plain JSON / skipped / failed counts by top-level folder.
+
+Basename matching uses `type_index.json` (`by_basename`, then `{segment}Data` / `{segment}Json`, then path-token scoring). When several types share a leaf, an `IMemoryPackSerialize` root wins. Member order is `wire_order`, not the target field declaration order. Per-field `collection_encoding` (`memcpy` / `formatter` / `memorypack` / `utf8`) overrides the default unmanaged layout.
 
 ### Failure classes
 
-The report's `failures` array is the coverage list. Messages fall into a few classes:
+A current Endfield JsonData dump decodes with an empty `failures` array. If a later dump or schema misses a rule, messages look like:
 
 | Class | What it means |
 | --- | --- |
-| `union tag N … matches K concrete types` | More than one wrapper fits and the tag is not in `--union-map`. The checked-in map covers `AbilityActionData`, `Data`, `ActionBase`, `ActionHeader`, `PureGetter`, `AbstractBehaviorData`, `DamageProcessorBase`, and `ConditionRuntimeBase`. |
+| `union tag N … matches K concrete types` | More than one wrapper fits and the tag is not in `union-map.json`. |
 | `union tag N … matched no concrete wrapper` | The tag was read, and every candidate rejected the following bytes. |
-| `memberCount … does not match` | The header is not that wrapper's wire. Actions use the NodeBase or ActionHeader prefix. Level entities use `LevelEntityData`. `ContinuousFindTarget` is 19, `ShowHideActorData` is 10, `StartDialogAndTeleportAction` is 16. What remains is mostly `AbilitySystemReset`, `ParamListForGraph`, and `Param`. |
-| `CalculationBase union tag` | `CalculationBase` fork-matches `*Calculation`. Two concretes with the same member count stay ambiguous until a union map lists the tag. |
-| `AnimationCurve memberCount` | Count 3 is pre/post wrap mode plus 28-byte keyframes. Count 0 is a skipped placeholder. Any other count is still a desync. |
-| Boolean / dictionary garbage | Often a cascade from an earlier short read. |
-| `No type_index basename` | The file name and folder hint did not select a root type. |
-
-```text
-BydTools decode-jsondata ... --union-map BydTools.Tests/Fixtures/MemoryPack/union-map.json
-```
+| `memberCount … does not match` | The header is not that wrapper's `wire_order` (or inherited / ability payload). |
+| `Boolean` / illegal dictionary count | Usually a cascade from an earlier short or long read. |
+| `No type_index basename` | The file name and folder hint did not select a root type. Pass a path under `Data/Json/…`, not a bare folder of files. |
 
 String pool files are version-1 `USPC` blocks: magic, version, flags (bit 0 = LZ4), count, raw length, stored length, then the payload. Each string is an int32 byte length and that many UTF-8 bytes, reached through an offset table. Shipped `StringPool0.byte` starts with a little-endian `extraFileCount` and then `USPC`; `StringPool1.byte` and later start at `USPC`. `StringPoolHashIndex.byte` is `SHPI` and is ignored. Global id = `blockIndex * len(StringPool0) + localIndex`.
 
