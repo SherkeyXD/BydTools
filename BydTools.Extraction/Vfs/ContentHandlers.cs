@@ -1,6 +1,7 @@
 using BydTools.Audio.Pck;
 using BydTools.Extraction.Sink;
 using BydTools.Formats.Lua;
+using BydTools.Formats.MemoryPack;
 using BydTools.Formats.SparkBuffer;
 using BydTools.Formats.Usm;
 
@@ -33,6 +34,56 @@ public sealed class SparkBufferHandler : IContentHandler
             output.Write(System.Text.Encoding.UTF8.GetBytes(json));
             output.Complete();
             return HandleResult.Handled;
+        }
+        catch (Exception)
+        {
+            return HandleResult.Failed;
+        }
+    }
+}
+
+public sealed class JsonDataHandler : IContentHandler
+{
+    private readonly MemoryPackSchema _schema;
+    private readonly MemoryPackDecoder _decoder;
+
+    public JsonDataHandler(BeyondStringPool? pool = null)
+        : this(MemoryPackResources.Schema, MemoryPackResources.UnionMaps, pool)
+    {
+    }
+
+    public JsonDataHandler(
+        MemoryPackSchema schema,
+        IReadOnlyDictionary<string, IReadOnlyDictionary<int, string>>? unionMaps,
+        BeyondStringPool? pool = null)
+    {
+        _schema = schema;
+        _decoder = new MemoryPackDecoder(schema, pool, unionMaps);
+    }
+
+    public bool CanHandle(string relativePath) =>
+        Path.GetExtension(relativePath).Equals(".json", StringComparison.OrdinalIgnoreCase);
+
+    public HandleResult Handle(string relativePath, ReadOnlyMemory<byte> data, IOutputSink sink)
+    {
+        try
+        {
+            JsonDataFileResult result = JsonDataMemoryPack.DecodeBytes(
+                _decoder,
+                _schema,
+                data.Span,
+                relativePath,
+                out byte[]? output
+            );
+            if (result.Kind is JsonDataFileKind.Decoded or JsonDataFileKind.PlainJson)
+            {
+                using var file = sink.Create(relativePath);
+                file.Write(output ?? data.ToArray());
+                file.Complete();
+                return HandleResult.Handled;
+            }
+
+            return result.Kind == JsonDataFileKind.Failed ? HandleResult.Failed : HandleResult.Skipped;
         }
         catch (Exception)
         {

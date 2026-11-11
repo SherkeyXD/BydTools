@@ -5,6 +5,10 @@ namespace BydTools.Formats.MemoryPack;
 public enum MpKind
 {
     Bool,
+    Int8,
+    UInt8,
+    Int16,
+    UInt16,
     Int32,
     Int64,
     UInt64,
@@ -31,6 +35,11 @@ public sealed class MpMember
     public required string Name { get; init; }
     public required string Type { get; init; }
     public required MpKind Kind { get; init; }
+    /// <summary>
+    /// Native collection encoding for this field from schema <c>wire_order</c>.
+    /// <c>memcpy</c> is i32 count then <c>count * payload_size</c> with no per-element header.
+    /// </summary>
+    public string? CollectionEncoding { get; init; }
 }
 
 /// <summary>One <c>*ForMemoryPack</c> wrapper. <see cref="Wire"/> is the exporter wire_order.</summary>
@@ -48,6 +57,11 @@ public sealed class MpType
     public bool SerializeMarker { get; set; }
     /// <summary>Exporter <c>parent_type</c>. Union fallback collects wrappers with this parent.</summary>
     public string? ParentType { get; init; }
+    /// <summary>
+    /// Nested MemoryPack <c>TFormatter</c> members (UTF-8 strings). Used when a
+    /// field's <c>collection_encoding</c> is <c>memorypack</c> (<c>ReadValue&lt;T&gt;</c>).
+    /// </summary>
+    public MpMember[]? MemorypackWire { get; set; }
 }
 
 public sealed class MpUnmanagedField
@@ -64,6 +78,11 @@ public sealed class MpUnmanagedLayout
     public required string TypeName { get; init; }
     public required int PayloadSize { get; init; }
     public required MpUnmanagedField[] Fields { get; init; }
+    /// <summary>
+    /// Native <c>T[]</c> / <c>List&lt;T&gt;</c> encoding from schema <c>unmanaged.json</c>.
+    /// <c>memcpy</c> is i32 count then <c>count * PayloadSize</c> with no per-element object header.
+    /// </summary>
+    public string? CollectionEncoding { get; init; }
 }
 
 public sealed class MemoryPackSchema
@@ -79,6 +98,8 @@ public sealed class MemoryPackSchema
     private readonly Dictionary<int, MpType> _abilityTags = [];
     private readonly object _tagGate = new();
     private readonly Dictionary<string, MpType[]> _unionCandidates = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, List<MpType>> _childrenByParent = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, MpType[]> _descendants = new(StringComparer.Ordinal);
     private MpType[]? _dataConcretes;
 
     private MemoryPackSchema(
@@ -99,14 +120,27 @@ public sealed class MemoryPackSchema
     public static MemoryPackSchema Load(string schemasPath, string typeIndexPath)
     {
         if (!File.Exists(schemasPath))
-            throw new FileNotFoundException("schemas.json was not found.", schemasPath);
+            throw new FileNotFoundException("schemas.json / schemas.msgpack.lz4 was not found.", schemasPath);
         if (!File.Exists(typeIndexPath))
-            throw new FileNotFoundException("type_index.json was not found.", typeIndexPath);
+            throw new FileNotFoundException("type_index.json / type_index.msgpack.lz4 was not found.", typeIndexPath);
 
+        using var schemaDoc = SchemaFile.Parse(schemasPath);
+        using var indexDoc = SchemaFile.Parse(typeIndexPath);
+        var schema = Load(schemaDoc, indexDoc);
+        LoadEnumWidths(schema, schemasPath);
+        LoadUnmanaged(schema, schemasPath);
+        return schema;
+    }
+
+    public static MemoryPackSchema Load(
+        JsonDocument schemaDoc,
+        JsonDocument indexDoc,
+        JsonDocument? enumsDoc = null,
+        JsonDocument? unmanagedDoc = null)
+    {
         var kinds = new Dictionary<string, string>(StringComparer.Ordinal);
         var byBasename = new Dictionary<string, List<string>>(StringComparer.Ordinal);
         var markers = new HashSet<string>(StringComparer.Ordinal);
-        using (var indexDoc = JsonDocument.Parse(File.ReadAllBytes(typeIndexPath)))
         {
             var root = indexDoc.RootElement;
             if (root.TryGetProperty("by_type", out var byType))
@@ -155,10 +189,9 @@ public sealed class MemoryPackSchema
         var byTarget = new Dictionary<string, List<MpType>>(StringComparer.Ordinal);
         var byWrapper = new Dictionary<string, MpType>(StringComparer.Ordinal);
         bool inheritedExport = false;
-        using (var schemaDoc = JsonDocument.Parse(File.ReadAllBytes(schemasPath)))
         {
             if (!schemaDoc.RootElement.TryGetProperty("wrappers", out var wrappers))
-                throw new InvalidDataException("schemas.json has no wrappers array.");
+                throw new InvalidDataException("schemas export has no wrappers array.");
 
             var pending = new List<(MpType Type, List<(string Name, string Type)> Extras)>();
             foreach (var wrapper in wrappers.EnumerateArray())
@@ -201,6 +234,9 @@ public sealed class MemoryPackSchema
                     MinFieldOffset = minOffset,
                     SerializeMarker = markers.Contains(target),
                     ParentType = parentType,
+                    MemorypackWire = ReadMembers(wrapper, "memorypack_wire", kinds) is { Length: > 0 } mp
+                        ? mp
+                        : null,
                 };
                 pending.Add((typeObj, extras));
                 if (!byTarget.TryGetValue(target, out var list))
@@ -323,8 +359,11 @@ public sealed class MemoryPackSchema
         var schema = new MemoryPackSchema(byTarget, byWrapper, byBasename, kinds, concretes.ToArray());
         foreach (var name in markers)
             schema._marker[name] = true;
-        LoadEnumWidths(schema, schemasPath);
-        LoadUnmanaged(schema, schemasPath);
+        schema.IndexDerivedTypes();
+        if (enumsDoc != null)
+            ApplyEnums(schema, enumsDoc.RootElement);
+        if (unmanagedDoc != null)
+            ApplyUnmanaged(schema, unmanagedDoc.RootElement);
         return schema;
     }
 
@@ -348,13 +387,18 @@ public sealed class MemoryPackSchema
         string? dir = Path.GetDirectoryName(schemasPath);
         if (string.IsNullOrEmpty(dir))
             return;
-        string enumsPath = Path.Combine(dir, "enums.json");
-        if (!File.Exists(enumsPath))
+        string? enumsPath = SchemaFile.Find(dir, MemoryPackExport.EnumsStem);
+        if (enumsPath == null)
             return;
-        using var doc = JsonDocument.Parse(File.ReadAllBytes(enumsPath));
-        if (doc.RootElement.ValueKind != JsonValueKind.Array)
+        using var doc = SchemaFile.Parse(enumsPath);
+        ApplyEnums(schema, doc.RootElement);
+    }
+
+    private static void ApplyEnums(MemoryPackSchema schema, JsonElement root)
+    {
+        if (root.ValueKind != JsonValueKind.Array)
             return;
-        foreach (var item in doc.RootElement.EnumerateArray())
+        foreach (var item in root.EnumerateArray())
         {
             string? name = item.TryGetProperty("type_name", out var nameEl) ? nameEl.GetString() : null;
             if (name == null || !item.TryGetProperty("width", out var widthEl) || !widthEl.TryGetInt32(out int width))
@@ -406,9 +450,23 @@ public sealed class MemoryPackSchema
         string plused = type.Replace('.', '+');
         if (plused != type)
             yield return plused;
+        // Only unqualified names may use the leaf alias. A qualified query
+        // such as Beyond.Gameplay.Core.Entity must not match
+        // UnityEngine.HyperGryph.ECS.Entity via the shared leaf "Entity".
+        if (type.IndexOfAny(['.', '+']) < 0 && UnmanagedShortName(type) is string shortName)
+            yield return shortName;
+    }
+
+    /// <summary>
+    /// Leaf name for non-generic types only. <c>Optional`1&lt;UnityEngine.Vector3&gt;</c>
+    /// must not look up as <c>Vector3</c>.
+    /// </summary>
+    private static string? UnmanagedShortName(string type)
+    {
+        if (type.Contains('`', StringComparison.Ordinal))
+            return null;
         int sep = type.LastIndexOfAny(['.', '+']);
-        if (sep >= 0)
-            yield return type[(sep + 1)..];
+        return sep >= 0 ? type[(sep + 1)..] : null;
     }
 
     private static void LoadUnmanaged(MemoryPackSchema schema, string schemasPath)
@@ -416,13 +474,18 @@ public sealed class MemoryPackSchema
         string? dir = Path.GetDirectoryName(schemasPath);
         if (string.IsNullOrEmpty(dir))
             return;
-        string path = Path.Combine(dir, "unmanaged.json");
-        if (!File.Exists(path))
+        string? path = SchemaFile.Find(dir, MemoryPackExport.UnmanagedStem);
+        if (path == null)
             return;
-        using var doc = JsonDocument.Parse(File.ReadAllBytes(path));
-        if (doc.RootElement.ValueKind != JsonValueKind.Array)
+        using var doc = SchemaFile.Parse(path);
+        ApplyUnmanaged(schema, doc.RootElement);
+    }
+
+    private static void ApplyUnmanaged(MemoryPackSchema schema, JsonElement root)
+    {
+        if (root.ValueKind != JsonValueKind.Array)
             return;
-        foreach (var item in doc.RootElement.EnumerateArray())
+        foreach (var item in root.EnumerateArray())
         {
             string? name = item.TryGetProperty("type_name", out var nameEl) ? nameEl.GetString() : null;
             if (name == null || !item.TryGetProperty("payload_size", out var sizeEl) || !sizeEl.TryGetInt32(out int payload) || payload <= 0)
@@ -451,16 +514,19 @@ public sealed class MemoryPackSchema
                 }
             }
 
+            string? encoding = item.TryGetProperty("collection_encoding", out var encEl)
+                ? encEl.GetString()
+                : null;
             var layout = new MpUnmanagedLayout
             {
                 TypeName = name,
                 PayloadSize = payload,
                 Fields = fields.ToArray(),
+                CollectionEncoding = encoding,
             };
             schema._unmanaged[name] = layout;
-            int sep = name.LastIndexOfAny(['.', '+']);
-            if (sep >= 0)
-                schema._unmanaged.TryAdd(name[(sep + 1)..], layout);
+            if (UnmanagedShortName(name) is string shortName)
+                schema._unmanaged.TryAdd(shortName, layout);
         }
     }
 
@@ -629,7 +695,10 @@ public sealed class MemoryPackSchema
     public MpKind KindOf(string type)
     {
         MpKind kind = Classify(type, _kinds);
-        if (kind is not MpKind.Object and not MpKind.Enum)
+        // Enums must stay enums. Closed Optional<Enum> layouts used to be
+        // aliased as the inner leaf name ("AoiRadiusEnum") and hijacked every
+        // enum field into an 8-byte Optional memcpy.
+        if (kind is not MpKind.Object)
             return kind;
         if (TryUnmanaged(type, out _))
             return MpKind.Unmanaged;
@@ -731,6 +800,17 @@ public sealed class MemoryPackSchema
             return targetType != null || Fail(exact.Count, basename, out error);
         }
 
+        if (basename.EndsWith("Table", StringComparison.Ordinal)
+            && !basename.EndsWith("DataTable", StringComparison.Ordinal))
+        {
+            string dataTable = basename[..^5] + "DataTable";
+            if (_byBasename.TryGetValue(dataTable, out var aliased) && aliased.Count > 0)
+            {
+                targetType = Prefer(aliased);
+                return targetType != null || Fail(aliased.Count, dataTable, out error);
+            }
+        }
+
         string? suffix = LongestSuffix(basename);
         if (suffix != null && _byBasename.TryGetValue(suffix, out var suffixed))
         {
@@ -787,6 +867,303 @@ public sealed class MemoryPackSchema
         }
 
         return best;
+    }
+
+    private void IndexDerivedTypes()
+    {
+        foreach (MpType type in _byWrapper.Values)
+        {
+            if (string.IsNullOrEmpty(type.ParentType))
+                continue;
+            if (!_childrenByParent.TryGetValue(type.ParentType, out List<MpType>? list))
+            {
+                list = [];
+                _childrenByParent[type.ParentType] = list;
+            }
+            list.Add(type);
+        }
+    }
+
+    /// <summary>
+    /// Wrapper with <c>has_deserialize: false</c> and derived wrappers (<c>parent_type</c>).
+    /// MemoryPack writes either a union tag then the unique child wire, or the child object header alone.
+    /// </summary>
+    public bool TryPolymorphicBase(string type, out MpType? baseType, out MpType[] derived)
+    {
+        baseType = null;
+        derived = [];
+        if (!TryResolve(type, hint: null, out MpType? resolved, out _) || resolved == null)
+            return false;
+        if (resolved.HasDeserialize)
+            return false;
+        MpType[] desc = Descendants(resolved.TargetType);
+        if (desc.Length == 0)
+            return false;
+        baseType = resolved;
+        derived = desc;
+        return true;
+    }
+
+    public MpType[] Descendants(string staticType)
+    {
+        lock (_tagGate)
+        {
+            if (_descendants.TryGetValue(staticType, out MpType[]? cached))
+                return cached;
+            var list = new List<MpType>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            var queue = new Queue<string>();
+            queue.Enqueue(staticType);
+            while (queue.Count > 0)
+            {
+                string current = queue.Dequeue();
+                foreach (var (parent, children) in _childrenByParent)
+                {
+                    if (!ParentNameMatches(parent, current))
+                        continue;
+                    foreach (MpType child in children)
+                    {
+                        if (!seen.Add(child.TargetType))
+                            continue;
+                        list.Add(child);
+                        queue.Enqueue(child.TargetType);
+                    }
+                }
+            }
+
+            MpType[] arr = [.. list];
+            _descendants[staticType] = arr;
+            return arr;
+        }
+    }
+
+    public bool TryIdentifyRoot(string relativePath, ReadOnlySpan<byte> data, out string? targetType, out string? error)
+    {
+        targetType = null;
+        error = null;
+        string normalized = relativePath.Replace('\\', '/');
+        string basename = Path.GetFileNameWithoutExtension(normalized);
+        int? header = PeekMemberCount(data);
+        var candidates = new List<string>();
+
+        void Consider(string? name)
+        {
+            if (string.IsNullOrEmpty(name) || candidates.Contains(name))
+                return;
+            candidates.Add(name);
+        }
+
+        if (TryBasename(basename, folderHint: null, out string? named, out _) && named != null)
+        {
+            int? wire = WireLength(named);
+            if (header is null || wire is null || wire == header || header < wire)
+            {
+                targetType = named;
+                return true;
+            }
+
+            Consider(named);
+        }
+
+        string directory = Path.GetDirectoryName(normalized) ?? "";
+        foreach (string segment in directory.Split('/', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (segment.Length < 4 || segment is "Data" or "Json")
+                continue;
+            if (TryBasename(segment, folderHint: null, out string? fromFolder, out _))
+                Consider(fromFolder);
+            if (TryBasename(segment + "Data", folderHint: null, out string? fromData, out _))
+                Consider(fromData);
+            if (TryBasename(segment + "Json", folderHint: null, out string? fromJson, out _))
+                Consider(fromJson);
+            string? tokenHit = UniqueBasenameByTokens(segment, header);
+            Consider(tokenHit);
+        }
+
+        string? matching = UniqueWireMatch(candidates, header);
+        if (matching != null)
+        {
+            targetType = matching;
+            return true;
+        }
+
+        string? scored = ScorePathTypes(relativePath, header);
+        if (scored != null)
+        {
+            targetType = scored;
+            return true;
+        }
+
+        if (candidates.Count == 1)
+        {
+            targetType = candidates[0];
+            return true;
+        }
+
+        error = $"No type_index basename for \"{basename}\".";
+        return false;
+    }
+
+    public static int? PeekMemberCount(ReadOnlySpan<byte> data)
+    {
+        if (data.IsEmpty)
+            return null;
+        byte b = data[0];
+        if (b == 255)
+            return null;
+        if (b == 250)
+            return data.Length >= 5 ? BitConverter.ToInt32(data[1..]) : null;
+        return b;
+    }
+
+    private string? UniqueWireMatch(List<string> names, int? header)
+    {
+        if (names.Count == 0)
+            return null;
+        if (header is not int count)
+            return names.Count == 1 ? names[0] : Prefer(names);
+        var hits = new List<string>();
+        foreach (string name in names)
+        {
+            if (WireLength(name) == count)
+                hits.Add(name);
+        }
+
+        if (hits.Count == 1)
+            return hits[0];
+        if (hits.Count > 1)
+            return Prefer(hits);
+        return names.Count == 1 ? names[0] : Prefer(names);
+    }
+
+    private string? UniqueBasenameByTokens(string segment, int? header)
+    {
+        HashSet<string> tokens = Tokens(segment);
+        tokens.ExceptWith(IdentityStopwords);
+        if (tokens.Count == 0)
+            return null;
+        var hits = new List<(int Score, string Name)>();
+        foreach (var (key, names) in _byBasename)
+        {
+            HashSet<string> keyTokens = Tokens(key);
+            keyTokens.ExceptWith(IdentityStopwords);
+            int overlap = 0;
+            foreach (string token in tokens)
+            {
+                if (keyTokens.Contains(token))
+                    overlap += token.Length * token.Length;
+            }
+            if (overlap == 0)
+                continue;
+            string? preferred = Prefer(names);
+            if (preferred == null)
+                continue;
+            if (header is int count && WireLength(preferred) is int wire && wire != count)
+                overlap -= 50;
+            hits.Add((overlap, preferred));
+        }
+
+        if (hits.Count == 0)
+            return null;
+        hits.Sort((a, b) => b.Score.CompareTo(a.Score));
+        if (hits.Count == 1 || hits[0].Score > hits[1].Score)
+            return hits[0].Name;
+        return null;
+    }
+
+    private string? ScorePathTypes(string relativePath, int? header)
+    {
+        if (header is not int count)
+            return null;
+        HashSet<string> pathTokens = Tokens(relativePath);
+        pathTokens.ExceptWith(IdentityStopwords);
+        if (pathTokens.Count == 0)
+            return null;
+        var hits = new List<(int Score, int Overlap, string Name)>();
+        foreach (var (name, list) in _byTarget)
+        {
+            if (list.Count == 0)
+                continue;
+            MpType type = list[0];
+            if (type.Wire.Length != count)
+                continue;
+            HashSet<string> nameTokens = Tokens(name);
+            nameTokens.ExceptWith(IdentityStopwords);
+            int overlap = 0;
+            foreach (string token in pathTokens)
+            {
+                if (nameTokens.Contains(token))
+                    overlap += token.Length * token.Length;
+            }
+            if (overlap == 0)
+                continue;
+            int score = overlap;
+            if (type.SerializeMarker)
+                score += 100;
+            hits.Add((score, overlap, name));
+        }
+
+        if (hits.Count == 0)
+            return null;
+        hits.Sort((a, b) => b.Score.CompareTo(a.Score) != 0 ? b.Score.CompareTo(a.Score) : b.Overlap.CompareTo(a.Overlap));
+        if (hits.Count == 1 || hits[0].Score > hits[1].Score)
+            return hits[0].Name;
+        return null;
+    }
+
+    private int? WireLength(string targetType)
+    {
+        if (!_byTarget.TryGetValue(targetType, out var list) || list.Count == 0)
+            return null;
+        MpType type = list.FirstOrDefault(t => t.SerializeMarker) ?? list[0];
+        return type.Wire.Length;
+    }
+
+    private static readonly HashSet<string> IdentityStopwords = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "data", "json", "config", "table", "system", "the", "for", "and", "of", "to", "in",
+        "from", "with", "info", "type", "item", "base",
+    };
+
+    internal static HashSet<string> Tokens(string text)
+    {
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var token = new System.Text.StringBuilder();
+        void Flush()
+        {
+            if (token.Length >= 2)
+                set.Add(token.ToString());
+            token.Clear();
+        }
+
+        for (int i = 0; i < text.Length; i++)
+        {
+            char ch = text[i];
+            if (ch is '.' or '+' or '/' or '\\' or '_' or '`' or '<' or '>' or ',')
+            {
+                Flush();
+                continue;
+            }
+
+            if (!char.IsLetterOrDigit(ch))
+            {
+                Flush();
+                continue;
+            }
+
+            if (token.Length > 0 && char.IsUpper(ch))
+            {
+                bool prevLower = char.IsLower(token[^1]);
+                bool nextLower = i + 1 < text.Length && char.IsLower(text[i + 1]);
+                if (prevLower || nextLower)
+                    Flush();
+            }
+
+            token.Append(ch);
+        }
+
+        Flush();
+        return set;
     }
 
     /// <summary>
@@ -1795,7 +2172,16 @@ public sealed class MemoryPackSchema
             string? type = item.TryGetProperty("type", out var typeEl) ? typeEl.GetString() : null;
             if (name == null || type == null)
                 continue;
-            members.Add(new MpMember { Name = name, Type = type, Kind = Classify(type, kinds) });
+            string? encoding = item.TryGetProperty("collection_encoding", out var encEl)
+                ? encEl.GetString()
+                : null;
+            members.Add(new MpMember
+            {
+                Name = name,
+                Type = type,
+                Kind = Classify(type, kinds),
+                CollectionEncoding = encoding,
+            });
         }
 
         return members.ToArray();
@@ -1807,8 +2193,15 @@ public sealed class MemoryPackSchema
         {
             case "bool" or "System.Boolean":
                 return MpKind.Bool;
-            case "sbyte" or "byte" or "short" or "ushort" or "int" or "uint"
-                or "System.SByte" or "System.Byte" or "System.Int16" or "System.UInt16"
+            case "sbyte" or "System.SByte":
+                return MpKind.Int8;
+            case "byte" or "System.Byte":
+                return MpKind.UInt8;
+            case "short" or "System.Int16":
+                return MpKind.Int16;
+            case "ushort" or "System.UInt16":
+                return MpKind.UInt16;
+            case "int" or "uint"
                 or "System.Int32" or "System.UInt32" or "UnityEngine.LayerMask":
                 return MpKind.Int32;
             case "long" or "System.Int64":
@@ -1835,11 +2228,13 @@ public sealed class MemoryPackSchema
                 return MpKind.AnimationCurve;
         }
 
-        if (type.EndsWith("[]", StringComparison.Ordinal) || type.StartsWith("System.Collections.Generic.List`1<", StringComparison.Ordinal))
+        if (type.EndsWith("[]", StringComparison.Ordinal) || IsCollectionList(type))
             return MpKind.List;
         if (type.StartsWith("Beyond.SerializeFieldDictionary`2<", StringComparison.Ordinal))
             return MpKind.DictionaryV2;
-        if (type.StartsWith("System.Collections.Generic.Dictionary`2<", StringComparison.Ordinal))
+        if (type.StartsWith("System.Collections.Generic.Dictionary`2<", StringComparison.Ordinal)
+            || type.StartsWith("System.Collections.Generic.IDictionary`2<", StringComparison.Ordinal)
+            || type.StartsWith("System.Collections.Generic.IReadOnlyDictionary`2<", StringComparison.Ordinal))
             return MpKind.Dictionary;
         if (type.StartsWith("System.Nullable`1<", StringComparison.Ordinal))
             return MpKind.Nullable;
@@ -1852,6 +2247,14 @@ public sealed class MemoryPackSchema
                 return MpKind.Unmanaged;
             if (kind == "dictionary_v2")
                 return MpKind.DictionaryV2;
+            if (kind is "int8")
+                return MpKind.Int8;
+            if (kind is "uint8")
+                return MpKind.UInt8;
+            if (kind is "int16")
+                return MpKind.Int16;
+            if (kind is "uint16")
+                return MpKind.UInt16;
             if (kind is "int32" or "uint32")
                 return MpKind.Int32;
             if (kind == "float32")
@@ -1863,6 +2266,28 @@ public sealed class MemoryPackSchema
         }
 
         return MpKind.Object;
+    }
+
+    private static bool IsCollectionList(string type)
+    {
+        if (type.StartsWith("System.Collections.Generic.List`1<", StringComparison.Ordinal)
+            || type.StartsWith("System.Collections.Generic.HashSet`1<", StringComparison.Ordinal)
+            || type.StartsWith("System.Collections.Generic.Queue`1<", StringComparison.Ordinal)
+            || type.StartsWith("System.Collections.Generic.Stack`1<", StringComparison.Ordinal)
+            || type.StartsWith("System.Collections.Generic.IList`1<", StringComparison.Ordinal)
+            || type.StartsWith("System.Collections.Generic.ICollection`1<", StringComparison.Ordinal)
+            || type.StartsWith("System.Collections.Generic.IReadOnlyList`1<", StringComparison.Ordinal)
+            || type.StartsWith("System.Collections.Generic.IReadOnlyCollection`1<", StringComparison.Ordinal))
+            return true;
+        int tick = type.IndexOf('`');
+        if (tick < 0)
+            return false;
+        int slash = type.LastIndexOf('.', tick);
+        string leaf = slash < 0 ? type : type[(slash + 1)..];
+        return leaf.StartsWith("HashSet`1<", StringComparison.Ordinal)
+            || leaf.StartsWith("List`1<", StringComparison.Ordinal)
+            || leaf.StartsWith("Queue`1<", StringComparison.Ordinal)
+            || leaf.StartsWith("Stack`1<", StringComparison.Ordinal);
     }
 
     private static string Required(JsonElement element, string name)

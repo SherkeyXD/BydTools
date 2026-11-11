@@ -1,4 +1,6 @@
+using System.Buffers.Binary;
 using System.Text;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using BydTools.Formats.MemoryPack;
 using Xunit;
@@ -24,14 +26,133 @@ public class MemoryPackTests
         throw new DirectoryNotFoundException("MemoryPack fixtures were not found.");
     }
 
-    private static MemoryPackSchema Schema() =>
-        MemoryPackSchema.Load(
-            Path.Combine(FixtureRoot(), "schemas.json"),
-            Path.Combine(FixtureRoot(), "type_index.json")
-        );
+    private static MemoryPackSchema Schema() => MemoryPackExport.LoadSchema(FixtureRoot());
 
     private static byte[] Sample(string name) =>
         File.ReadAllBytes(Path.Combine(FixtureRoot(), "samples", name));
+
+    [Fact]
+    public void Export_directory_resolves_standard_filenames()
+    {
+        var paths = MemoryPackExport.Resolve(FixtureRoot(), schema: null, index: null, unionMap: null);
+        Assert.True(File.Exists(paths.Schema));
+        Assert.True(File.Exists(paths.TypeIndex));
+        Assert.True(File.Exists(paths.UnionMap!));
+        Assert.NotNull(JsonDataMemoryPack.LoadUnionMap(paths.UnionMap));
+    }
+
+    [Fact]
+    public void Export_resolve_requires_schema_and_index()
+    {
+        var ex = Assert.Throws<ArgumentException>(() =>
+            MemoryPackExport.Resolve(schemaDir: null, schema: null, index: null, unionMap: null));
+        Assert.Contains("--schema-dir", ex.Message);
+    }
+
+    [Fact]
+    public void Embedded_msgpack_resources_decode_bamboo_raft()
+    {
+        byte[] sample = Sample("BambooRaftTaskTable.json");
+        Assert.NotEmpty(MemoryPackResources.Read("schemas.msgpack.lz4"));
+        Assert.True(
+            MemoryPackResources.Schema.TryIdentifyRoot(
+                "Data/Json/BambooRaftTaskTable.json",
+                sample,
+                out string? root,
+                out string? error
+            ),
+            error
+        );
+        string json = MemoryPackResources.CreateDecoder().ToJson(sample, root!);
+        Assert.Contains("questConfigs", json, StringComparison.Ordinal);
+        Assert.Contains("PlayAnimationActionData", MemoryPackResources.UnionMaps["AbilityActionData"][296]);
+    }
+
+    [Fact]
+    public void SchemaFile_parses_plain_msgpack_and_lz4_block()
+    {
+        // {"ok":true}
+        byte[] msgpack = [0x81, 0xA2, (byte)'o', (byte)'k', 0xC3];
+        string plain = Path.Combine(Path.GetTempPath(), "bydtools-schema-plain.msgpack.lz4");
+        File.WriteAllBytes(plain, msgpack);
+        using (JsonDocument doc = SchemaFile.Parse(plain))
+            Assert.True(doc.RootElement.GetProperty("ok").GetBoolean());
+
+        byte[] wrapped = WrapLz4Block(msgpack);
+        string packed = Path.Combine(Path.GetTempPath(), "bydtools-schema-lz4.msgpack.lz4");
+        File.WriteAllBytes(packed, wrapped);
+        using JsonDocument packedDoc = SchemaFile.Parse(packed);
+        Assert.True(packedDoc.RootElement.GetProperty("ok").GetBoolean());
+    }
+
+    [Fact]
+    public void Export_directory_prefers_msgpack_lz4()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "bydtools-schema-prefer-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "schemas.json"), "{\"wrappers\":[]}");
+        File.WriteAllText(Path.Combine(dir, "type_index.json"), "{}");
+        File.WriteAllBytes(Path.Combine(dir, "schemas.msgpack.lz4"), [0x81, 0xA8, .. Encoding.UTF8.GetBytes("wrappers"), 0x90]);
+        File.WriteAllBytes(Path.Combine(dir, "type_index.msgpack.lz4"), [0x80]);
+        var paths = MemoryPackExport.Resolve(dir, schema: null, index: null, unionMap: null);
+        Assert.EndsWith(".msgpack.lz4", paths.Schema);
+        Assert.EndsWith(".msgpack.lz4", paths.TypeIndex);
+    }
+
+    [Fact]
+    public void LoadUnionMap_reads_msgpack_nested_tags()
+    {
+        // {"AbilityActionData":{"296":"PlayAnimationActionData"}}
+        byte[] typeName = "AbilityActionData"u8.ToArray();
+        byte[] concrete = "PlayAnimationActionData"u8.ToArray();
+        var msgpack = new List<byte> { 0x81, (byte)(0xA0 + typeName.Length) };
+        msgpack.AddRange(typeName);
+        msgpack.Add(0x81);
+        msgpack.Add(0xA3);
+        msgpack.AddRange("296"u8.ToArray());
+        msgpack.Add((byte)(0xA0 + concrete.Length));
+        msgpack.AddRange(concrete);
+        string path = Path.Combine(Path.GetTempPath(), "bydtools-union-map.msgpack.lz4");
+        File.WriteAllBytes(path, msgpack.ToArray());
+        IReadOnlyDictionary<string, IReadOnlyDictionary<int, string>> maps =
+            JsonDataMemoryPack.LoadUnionMap(path);
+        Assert.Equal("PlayAnimationActionData", maps["AbilityActionData"][296]);
+
+        string rustPacked = Path.Combine(FixtureRoot(), "union-map-sample.msgpack.lz4");
+        IReadOnlyDictionary<string, IReadOnlyDictionary<int, string>> rustMaps =
+            JsonDataMemoryPack.LoadUnionMap(rustPacked);
+        Assert.Equal("PlayAnimationActionData", rustMaps["AbilityActionData"][296]);
+    }
+
+    private static byte[] WrapLz4Block(byte[] raw)
+    {
+        byte[] lz4;
+        if (raw.Length < 15)
+        {
+            lz4 = new byte[1 + raw.Length];
+            lz4[0] = (byte)(raw.Length << 4);
+            raw.CopyTo(lz4.AsSpan(1));
+        }
+        else
+        {
+            int extra = raw.Length - 15;
+            lz4 = new byte[2 + raw.Length];
+            lz4[0] = 0xF0;
+            lz4[1] = (byte)extra;
+            raw.CopyTo(lz4.AsSpan(2));
+        }
+
+        byte[] payload = new byte[5 + lz4.Length];
+        payload[0] = 0xD2;
+        BinaryPrimitives.WriteInt32BigEndian(payload.AsSpan(1, 4), raw.Length);
+        lz4.CopyTo(payload.AsSpan(5));
+        byte[] file = new byte[3 + payload.Length];
+        file[0] = 0xC7;
+        file[1] = (byte)payload.Length;
+        file[2] = 99;
+        payload.CopyTo(file.AsSpan(3));
+        return file;
+    }
 
     [Fact]
     public void BambooRaft_decodes_every_byte()
@@ -139,6 +260,7 @@ public class MemoryPackTests
         );
         Directory.CreateDirectory(Path.Combine(input.Path, "notes"));
         File.WriteAllText(Path.Combine(input.Path, "notes", "hello.json"), "{\n  \"a\": 1\n}");
+        File.WriteAllText(Path.Combine(input.Path, "notes", "StringPoolCounting.json"), "Total Size: 12\r\n[]");
         Directory.CreateDirectory(Path.Combine(input.Path, "pools"));
         File.WriteAllBytes(Path.Combine(input.Path, "pools", "blob.json"), "USPC"u8.ToArray());
 
@@ -149,13 +271,41 @@ public class MemoryPackTests
             jobs: 2
         );
         Assert.Equal(2, report.Ok);
-        Assert.Equal(1, report.PlainJson);
+        Assert.Equal(2, report.PlainJson);
         Assert.Equal(1, report.Skipped);
         Assert.Equal(0, report.Failed);
         Assert.True(report.ByFolder.ContainsKey("AtmosphericNpcData"));
         string text = File.ReadAllText(Path.Combine(output.Path, "notes", "hello.json"));
         Assert.Contains("\"a\"", text, StringComparison.Ordinal);
         Assert.Contains("questConfigs", File.ReadAllText(Path.Combine(output.Path, "BambooRaftTaskTable.json")), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void HashSet_classifies_as_list()
+    {
+        Assert.Equal(
+            MpKind.List,
+            Schema().KindOf("System.Collections.Generic.HashSet`1<Beyond.Gameplay.SceneStateBuckets>")
+        );
+    }
+
+    [Fact]
+    public void Byte_and_int16_follow_schema_wire_width()
+    {
+        Assert.Equal(MpKind.UInt8, Schema().KindOf("byte"));
+        Assert.Equal(MpKind.UInt8, Schema().KindOf("System.Byte"));
+        Assert.Equal(MpKind.Int8, Schema().KindOf("sbyte"));
+        Assert.Equal(MpKind.Int16, Schema().KindOf("short"));
+        Assert.Equal(MpKind.UInt16, Schema().KindOf("ushort"));
+        Assert.Equal(MpKind.Int32, Schema().KindOf("int"));
+    }
+
+    [Fact]
+    public void Plain_text_counting_files_are_not_memorypack()
+    {
+        byte[] text = "Total Size: 33796401\r\n[{\"str\":\"Default\"}]"u8.ToArray();
+        Assert.False(JsonDataMemoryPack.IsPlainJson(text));
+        Assert.True(JsonDataMemoryPack.IsPlainText(text));
     }
 
     [Fact]
@@ -650,6 +800,68 @@ public class MemoryPackTests
         Assert.Equal(-1, node["constValue"]!.GetValue<int>());
         Assert.Equal(0, node["idRef"]!.GetValue<int>());
         Assert.Equal("", node["path"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void LevelScriptPtr_reads_unmanaged_16_bytes_with_native_padding()
+    {
+        var decoder = new MemoryPackDecoder(Schema());
+        // ulong scriptId + int levelId + 4-byte ABI pad (native_size 16, packed 12).
+        byte[] payload =
+        [
+            0xC8, 0x04, 0x32, 0x7D, 0, 0, 0, 0,
+            0, 0, 0, 0,
+            0, 0, 0, 0,
+        ];
+        JsonObject obj = Assert.IsType<JsonObject>(
+            decoder.Decode(payload, "Beyond.Gameplay.Core.LevelScriptPtr"));
+        Assert.Equal(2100430024UL, obj["scriptId"]!.GetValue<ulong>());
+        Assert.Equal(0, obj["<levelId>k__BackingField"]!.GetValue<int>());
+    }
+
+    [Fact]
+    public void Optional_generic_unmanaged_does_not_steal_inner_type_short_name()
+    {
+        MemoryPackSchema schema = Schema();
+        Assert.True(schema.TryUnmanaged("Beyond.Optional`1<UnityEngine.Vector3>", out MpUnmanagedLayout? optional));
+        Assert.Contains("Optional", optional.TypeName, StringComparison.Ordinal);
+        bool stolen = schema.TryUnmanaged("UnityEngine.Vector3", out MpUnmanagedLayout? inner)
+            && inner.TypeName.Contains("Optional", StringComparison.Ordinal);
+        Assert.False(stolen);
+        Assert.Equal(MpKind.Vector3, schema.KindOf("UnityEngine.Vector3"));
+    }
+
+    [Fact]
+    public void Embedded_schema_core_entity_does_not_steal_ecs_entity_layout()
+    {
+        MemoryPackSchema schema = MemoryPackResources.Schema;
+        Assert.True(schema.TryUnmanaged("UnityEngine.HyperGryph.ECS.Entity", out MpUnmanagedLayout? ecs));
+        Assert.Equal(8, ecs.PayloadSize);
+        Assert.False(schema.TryUnmanaged("Beyond.Gameplay.Core.Entity", out _));
+        Assert.Equal(MpKind.Object, schema.KindOf("Beyond.Gameplay.Core.Entity"));
+        Assert.True(schema.TryUnmanaged(
+            "System.ValueTuple`2<UnityEngine.Vector3, UnityEngine.Vector3>",
+            out MpUnmanagedLayout? tuple));
+        Assert.Equal(24, tuple.PayloadSize);
+        MpType sendLua = schema.Require("Beyond.Gameplay.Actions.SendLuaEvent1", hint: null);
+        Assert.NotNull(sendLua.MemorypackWire);
+        Assert.Contains(sendLua.Wire, m => m.CollectionEncoding == "memorypack");
+    }
+
+    [Fact]
+    public void NullableFloat_unmanaged_null_is_8_zero_bytes()
+    {
+        var decoder = new MemoryPackDecoder(Schema());
+        Assert.Null(decoder.Decode([0, 0, 0, 0, 0, 0, 0, 0], "System.Nullable`1<float>"));
+    }
+
+    [Fact]
+    public void NullableFloat_unmanaged_value_skips_abi_padding()
+    {
+        var decoder = new MemoryPackDecoder(Schema());
+        // hasValue=1, 3 pad, float 1.0. Native copies the whole qword.
+        JsonNode? node = decoder.Decode([1, 0, 0, 0, 0, 0, 0x80, 0x3f], "System.Nullable`1<float>");
+        Assert.Equal(1.0f, node!.GetValue<float>());
     }
 
     [Fact]
