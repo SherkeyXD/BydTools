@@ -17,11 +17,22 @@ public sealed class VfsExtractor
 {
     private readonly ILogger _logger;
     private readonly IContentHandler? _jsonDataHandler;
+    private readonly MemoryPackSchema? _jsonSchema;
+    private readonly IReadOnlyDictionary<string, IReadOnlyDictionary<int, string>>? _unionMaps;
+    private readonly bool _rawJsonData;
 
-    public VfsExtractor(ILogger logger, IContentHandler? jsonDataHandler = null)
+    public VfsExtractor(
+        ILogger logger,
+        IContentHandler? jsonDataHandler = null,
+        bool rawJsonData = false,
+        MemoryPackSchema? jsonSchema = null,
+        IReadOnlyDictionary<string, IReadOnlyDictionary<int, string>>? unionMaps = null)
     {
         _logger = logger;
         _jsonDataHandler = jsonDataHandler;
+        _rawJsonData = rawJsonData;
+        _jsonSchema = jsonSchema;
+        _unionMaps = unionMaps;
     }
 
     public VfsExtractResult Dump(
@@ -62,7 +73,7 @@ public sealed class VfsExtractor
 
         var sink = new DirectoryOutputSink(outputDirectory);
         ContentKind kind = block.Descriptor?.Kind ?? ContentKind.Generic;
-        BeyondStringPool? pool = kind == ContentKind.JsonData && _jsonDataHandler == null
+        BeyondStringPool? pool = kind == ContentKind.JsonData && !_rawJsonData && _jsonDataHandler == null
             ? TryLoadStringPool(block)
             : null;
         IContentHandler? handler = CreateHandler(kind, pool);
@@ -104,10 +115,16 @@ public sealed class VfsExtractor
                         if (handler != null && handler.CanHandle(relative))
                         {
                             HandleResult result = handler.Handle(relative, data, sink);
-                            if (result == HandleResult.Handled)
+                            if (result.Status == HandleStatus.Handled)
                                 handled = true;
-                            else if (result == HandleResult.Failed)
+                            else if (result.Status == HandleStatus.Failed)
+                            {
                                 Interlocked.Increment(ref failed);
+                                _logger.Verbose(
+                                    "  Failed {0}: {1}",
+                                    relative,
+                                    result.Error ?? "content handler failed");
+                            }
                         }
 
                         if (!handled)
@@ -188,7 +205,11 @@ public sealed class VfsExtractor
             ContentKind.Lua => new LuaHandler(),
             ContentKind.Video => new UsmHandler(),
             ContentKind.Audio => new PckDecryptHandler(),
-            ContentKind.JsonData => _jsonDataHandler ?? new JsonDataHandler(pool),
+            ContentKind.JsonData => _rawJsonData
+                ? null
+                : _jsonDataHandler ?? (_jsonSchema == null
+                    ? new JsonDataHandler(pool)
+                    : new JsonDataHandler(_jsonSchema, _unionMaps, pool)),
             _ => null,
         };
 

@@ -1,7 +1,7 @@
 namespace BydTools.Formats.MemoryPack;
 
 /// <summary>
-/// Layout of a beyond-schema-dumper export directory. BydTools only consumes these files.
+/// Layout of a beyond-mp-schema export directory. BydTools only consumes these files.
 /// Stems are <c>schemas</c>, <c>type_index</c>, <c>union-map</c>, <c>enums</c>, <c>unmanaged</c>.
 /// Each stem is <c>.msgpack.lz4</c> (transfer format) or <c>.json</c>.
 /// </summary>

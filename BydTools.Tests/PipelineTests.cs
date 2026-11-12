@@ -3,7 +3,6 @@ using BydTools.CLI;
 using BydTools.Core;
 using BydTools.Extraction.Audio;
 using BydTools.Extraction.Vfs;
-using BydTools.Formats.MemoryPack;
 using BydTools.Tests.Fixtures;
 using BydTools.VFS;
 using Xunit;
@@ -78,12 +77,8 @@ public class PipelineTests
             Samples.Entry("775A31D1", "JsonData", EVFSBlockType.JsonData, "Data/Json/StringPool/StringPoolCounting.json", notes),
             Samples.Entry("775A31D1", "JsonData", EVFSBlockType.JsonData, "Data/Json/StringPool/StringPoolHashIndex.byte", shpi)
         );
-        var handler = new JsonDataHandler(
-            MemoryPackExport.LoadSchema(MemoryPackFixtures()),
-            MemoryPackExport.TryLoadUnionMap(MemoryPackFixtures())
-        );
         var block = VfsArchive.Open(Vfs(root.Path), Samples.Key, new QuietLogger()).Find("JsonData")!;
-        var result = new VfsExtractor(new QuietLogger(), handler).Dump(block, output.Path, jobs: 1);
+        var result = new VfsExtractor(new QuietLogger()).Dump(block, output.Path, jobs: 1);
         Assert.Equal(0, result.Failed);
         Assert.Contains(
             "questConfigs",
@@ -92,6 +87,22 @@ public class PipelineTests
         );
         Assert.Equal(notes, File.ReadAllBytes(Path.Combine(output.Path, "Data", "Json", "StringPool", "StringPoolCounting.json")));
         Assert.Equal(shpi, File.ReadAllBytes(Path.Combine(output.Path, "Data", "Json", "StringPool", "StringPoolHashIndex.byte")));
+    }
+
+    [Fact]
+    public void JsonData_block_raw_copies_bytes()
+    {
+        byte[] sample = File.ReadAllBytes(Path.Combine(MemoryPackFixtures(), "samples", "BambooRaftTaskTable.json"));
+        using var root = new TempDir();
+        using var output = new TempDir();
+        Samples.CreateGame(
+            root.Path,
+            Samples.Entry("775A31D1", "JsonData", EVFSBlockType.JsonData, "Data/Json/BambooRaftTaskTable.json", sample)
+        );
+        var block = VfsArchive.Open(Vfs(root.Path), Samples.Key, new QuietLogger()).Find("JsonData")!;
+        var result = new VfsExtractor(new QuietLogger(), rawJsonData: true).Dump(block, output.Path, jobs: 1);
+        Assert.Equal(0, result.Failed);
+        Assert.Equal(sample, File.ReadAllBytes(Path.Combine(output.Path, "Data", "Json", "BambooRaftTaskTable.json")));
     }
 
     [Fact]
