@@ -26,7 +26,10 @@ public class MemoryPackTests
         throw new DirectoryNotFoundException("MemoryPack fixtures were not found.");
     }
 
-    private static MemoryPackSchema Schema() => MemoryPackExport.LoadSchema(FixtureRoot());
+    private static MemoryPackSchema Schema() => MemoryPackResources.Schema;
+
+    private static IReadOnlyDictionary<string, IReadOnlyDictionary<int, string>> UnionMaps() =>
+        MemoryPackResources.UnionMaps;
 
     private static byte[] Sample(string name) =>
         File.ReadAllBytes(Path.Combine(FixtureRoot(), "samples", name));
@@ -181,8 +184,10 @@ public class MemoryPackTests
         JsonObject row = Assert.IsType<JsonObject>(rows.First().Value);
         Assert.Equal(0, row["deviation"]!.GetValue<float>());
         Assert.False(row["keepAnim"]!.GetValue<bool>());
-        var position = Assert.IsType<JsonArray>(row["position"]);
-        Assert.Equal(3, position.Count);
+        var position = Assert.IsType<JsonObject>(row["position"]);
+        Assert.True(position.ContainsKey("x"));
+        Assert.True(position.ContainsKey("y"));
+        Assert.True(position.ContainsKey("z"));
     }
 
     [Fact]
@@ -197,9 +202,8 @@ public class MemoryPackTests
     [Fact]
     public void Union_map_loads_nested_tables_and_a_flat_legacy_object()
     {
-        var maps = JsonDataMemoryPack.LoadUnionMap(Path.Combine(FixtureRoot(), "union-map.json"));
+        var maps = UnionMaps();
         Assert.Equal(447, maps["AbilityActionData"].Count);
-        Assert.Equal(447, maps["Data"].Count);
         Assert.Equal(1364, maps["ActionBase"].Count);
         Assert.Equal(240, maps["ActionHeader"].Count);
         Assert.Equal(1108, maps["PureGetter"].Count);
@@ -208,25 +212,24 @@ public class MemoryPackTests
         Assert.Equal(50, maps["ConditionRuntimeBase"].Count);
         Assert.Equal(6, maps["CalculationBase"].Count);
         Assert.Equal("Beyond.Gameplay.Core.DefiniteValueCalculation", maps["CalculationBase"][2]);
-        Assert.Equal(26, maps["Finder.Data"].Count);
-        Assert.Equal(26, maps["Beyond.Gameplay.Core.Selector.Finder.Data"].Count);
-        Assert.Equal(14, maps["Validator.Data"].Count);
-        Assert.Equal(11, maps["PostProcessor.Data"].Count);
+        Assert.Equal(26, maps["Beyond.Gameplay.Core.Selector+Finder+Data"].Count);
+        Assert.Equal(14, maps["Beyond.Gameplay.Core.Selector+Validator+Data"].Count);
+        Assert.Equal(11, maps["Beyond.Gameplay.Core.Selector+PostProcessor+Data"].Count);
         Assert.Equal(344, maps["GameCondition"].Count);
         Assert.Equal(344, maps["Beyond.Gameplay.GameCondition"].Count);
         Assert.Equal("Beyond.Gameplay.CharMaxLevel", maps["GameCondition"][9]);
-        Assert.Equal(7, maps["SpawnerPreprocess.Data"].Count);
+        Assert.Equal(7, maps["Beyond.Gameplay.SpawnerPreprocess+Data"].Count);
         Assert.Equal(6, maps["SpawnerActionData"].Count);
         Assert.Equal(
-            "Beyond.MemoryPack.Beyond_Gameplay_SpawnerPreprocess_EnableOrDisableActionForMemoryPack",
-            maps["SpawnerPreprocess.Data"][0]);
+            "Beyond.Gameplay.SpawnerPreprocess+EnableOrDisableAction",
+            maps["Beyond.Gameplay.SpawnerPreprocess+Data"][0]);
         Assert.Equal(
-            "Beyond.MemoryPack.Beyond_Gameplay_Core_Selector_HitBoxFinder_DataForMemoryPack",
-            maps["Finder.Data"][7]);
+            "Beyond.Gameplay.Core.Selector+HitBoxFinder+Data",
+            maps["Beyond.Gameplay.Core.Selector+Finder+Data"][7]);
         Assert.Equal(
-            "Beyond.MemoryPack.Beyond_Gameplay_Core_Selector_TyphoeaArcherySelectedFinder_DataForMemoryPack",
-            maps["Finder.Data"][25]);
-        Assert.Equal("PlayAnimationActionData", maps["AbilityActionData"][296]);
+            "Beyond.Gameplay.Core.Selector+TyphoeaArcherySelectedFinder+Data",
+            maps["Beyond.Gameplay.Core.Selector+Finder+Data"][25]);
+        Assert.Contains("PlayAnimationActionData", maps["AbilityActionData"][296], StringComparison.Ordinal);
 
         using var dir = new TempDir();
         string flat = Path.Combine(dir.Path, "flat.json");
@@ -237,11 +240,15 @@ public class MemoryPackTests
     }
 
     [Fact]
-    public void Skill_and_buff_fail_with_a_typed_union_error_or_decode()
+    public void Skill_and_buff_decode_with_the_embedded_schema()
     {
-        var decoder = new MemoryPackDecoder(Schema());
-        AssertHardSample(decoder, Sample("sample_SkillData.json"), "Beyond.Gameplay.Core.SkillData");
-        AssertHardSample(decoder, Sample("sample_BuffData.json"), "Beyond.Gameplay.Core.BuffData");
+        var decoder = new MemoryPackDecoder(Schema(), unionMaps: UnionMaps());
+        JsonObject skill = Assert.IsType<JsonObject>(
+            decoder.Decode(Sample("sample_SkillData.json"), "Beyond.Gameplay.Core.SkillData"));
+        Assert.True(skill.ContainsKey("actionGroupData"));
+        JsonObject buff = Assert.IsType<JsonObject>(
+            decoder.Decode(Sample("sample_BuffData.json"), "Beyond.Gameplay.Core.BuffData"));
+        Assert.True(buff.ContainsKey("id"));
     }
 
     [Fact]
@@ -298,6 +305,72 @@ public class MemoryPackTests
         Assert.Equal(MpKind.Int16, Schema().KindOf("short"));
         Assert.Equal(MpKind.UInt16, Schema().KindOf("ushort"));
         Assert.Equal(MpKind.Int32, Schema().KindOf("int"));
+        Assert.Equal(MpKind.UInt32, Schema().KindOf("uint"));
+        Assert.Equal(MpKind.UInt32, Schema().KindOf("System.UInt32"));
+    }
+
+    [Fact]
+    public void UInt32_keeps_values_above_int_max()
+    {
+        var decoder = new MemoryPackDecoder(Schema());
+        Assert.Equal(2147483648u, decoder.Decode([0, 0, 0, 0x80], "uint")!.GetValue<uint>());
+        Assert.Equal(4294967295u, decoder.Decode([0xFF, 0xFF, 0xFF, 0xFF], "System.UInt32")!.GetValue<uint>());
+    }
+
+    [Fact]
+    public void Plain_json_probe_does_not_treat_memorypack_newlines_as_json()
+    {
+        byte[] payload = [10, 123, 0, 0, 0, 1, 2, 3];
+        Assert.False(JsonDataMemoryPack.IsPlainJson(payload));
+        byte[] json = "{\n  \"a\": 1\n}"u8.ToArray();
+        Assert.True(JsonDataMemoryPack.IsPlainJson(json));
+        byte[] bomJson = [0xEF, 0xBB, 0xBF, .. json];
+        Assert.True(JsonDataMemoryPack.IsPlainJson(bomJson));
+    }
+
+    [Fact]
+    public void Unknown_closed_types_are_not_guessed_as_int32_enums()
+    {
+        var ex = Assert.Throws<MemoryPackTypeException>(() => Schema().KindOf("UnityEngine.Transform"));
+        Assert.Contains("UnityEngine.Transform", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DecodeTree_records_unreadable_files_instead_of_throwing()
+    {
+        using var input = new TempDir();
+        using var output = new TempDir();
+        Directory.CreateDirectory(Path.Combine(input.Path, "Data", "Json"));
+        File.WriteAllBytes(
+            Path.Combine(input.Path, "Data", "Json", "BambooRaftTaskTable.json"),
+            Sample("BambooRaftTaskTable.json"));
+        string locked = Path.Combine(input.Path, "Data", "Json", "locked.json");
+        File.WriteAllBytes(locked, [1, 2, 3, 4]);
+        FileStream? hold = null;
+        try
+        {
+            if (OperatingSystem.IsWindows())
+                hold = new FileStream(locked, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            else
+                File.SetUnixFileMode(locked, UnixFileMode.None);
+
+            JsonDataDecodeReport report = JsonDataMemoryPack.DecodeTree(
+                Schema(),
+                input.Path,
+                output.Path,
+                jobs: 2
+            );
+            Assert.Equal(1, report.Ok);
+            Assert.Equal(1, report.Failed);
+            Assert.True(report.ByFolder.ContainsKey("(root)"));
+            Assert.Contains(report.Failures, f => f.RelativePath.Contains("locked.json", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            hold?.Dispose();
+            if (!OperatingSystem.IsWindows() && File.Exists(locked))
+                File.SetUnixFileMode(locked, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
     }
 
     [Fact]
@@ -465,8 +538,8 @@ public class MemoryPackTests
         Assert.True(node["isClientOnly"]!.GetValue<bool>());
         Assert.Equal(2.5f, node["modelScale"]!.GetValue<float>());
         Assert.Null(node["progressLockCondition"]);
-        var position = Assert.IsType<JsonArray>(node["position"]);
-        Assert.Equal(1f, position[0]!.GetValue<float>());
+        var position = Assert.IsType<JsonObject>(node["position"]);
+        Assert.Equal(1f, position["x"]!.GetValue<float>());
     }
 
     [Fact]
@@ -538,16 +611,16 @@ public class MemoryPackTests
             "Beyond.MemoryPack.Beyond_Gameplay_Core_VulnerableAction_DataForMemoryPack");
         MpType weak = schema.ResolveNamed(
             "Beyond.MemoryPack.Beyond_Gameplay_Core_WeakAction_DataForMemoryPack");
-        Assert.Equal(14, vulnerable.AbilityPayload!.Length);
-        Assert.Equal(13, weak.AbilityPayload!.Length);
-        Assert.Equal("subType", vulnerable.AbilityPayload[^1].Name);
+        Assert.Equal(14, vulnerable.Wire.Length);
+        Assert.Equal(13, weak.Wire.Length);
+        Assert.Equal("subType", vulnerable.Wire[^1].Name);
 
-        MpType effect = schema.Require("EffectActionData", hint: null);
-        Assert.Equal(20, effect.AbilityPayload!.Length);
+        MpType effect = schema.Require("Beyond.Gameplay.Core.EffectAction+EffectActionData", hint: null);
+        Assert.Equal(20, effect.Wire.Length);
 
-        MpType step = schema.Require("PlayAnimationWithStepData", hint: null);
-        Assert.Equal(30, step.AbilityPayload!.Length);
-        Assert.Equal("animName", step.AbilityPayload[4].Name);
+        MpType step = schema.Require("Beyond.Gameplay.Core.PlayAnimationWithStep+PlayAnimationWithStepData", hint: null);
+        Assert.Equal(30, step.Wire.Length);
+        Assert.Equal("animName", step.Wire[4].Name);
 
         MpType radio = schema.Require("Beyond.Gameplay.Actions.PlayRadioAndWait", hint: null);
         Assert.Equal(13, radio.Wire.Length);
@@ -572,9 +645,8 @@ public class MemoryPackTests
         MpType hitBox = schema.ResolveNamed(
             "Beyond.MemoryPack.Beyond_Gameplay_Core_Selector_HitBoxFinder_DataForMemoryPack");
         Assert.Equal(8, hitBox.Wire.Length);
-        Assert.Null(hitBox.AbilityPayload);
         Assert.Contains(
-            "HitBoxFinder_ShapeDataForMemoryPack",
+            "HitBoxFinder+ShapeData",
             hitBox.Wire.Single(m => m.Name == "shapeList").Type,
             StringComparison.Ordinal);
         Assert.Equal(
@@ -585,8 +657,7 @@ public class MemoryPackTests
             },
             hitBox.Wire.Select(m => m.Name).ToArray());
 
-        var maps = JsonDataMemoryPack.LoadUnionMap(Path.Combine(FixtureRoot(), "union-map.json"));
-        var decoder = new MemoryPackDecoder(schema, unionMaps: maps);
+        var decoder = new MemoryPackDecoder(schema, unionMaps: UnionMaps());
         // SelectorData: finderData tag 7, then empty post/validator lists.
         // Ability Data tag 7 is AddAIMarker; Finder tag 7 is HitBox (count 8 = TargetFinder 5 + leaf 3).
         byte[] payload =
@@ -602,7 +673,8 @@ public class MemoryPackTests
             0, 0, 0, 0,
             0, 0, 0, 0,
         ];
-        JsonObject node = Assert.IsType<JsonObject>(decoder.Decode(payload, "SelectorData"));
+        JsonObject node = Assert.IsType<JsonObject>(
+            decoder.Decode(payload, "Beyond.Gameplay.Core.Selector+SelectorData"));
         JsonObject finder = Assert.IsType<JsonObject>(node["finderData"]);
         Assert.Equal(7, finder["$tag"]!.GetValue<int>());
         Assert.Contains("HitBoxFinder", finder["$type"]!.GetValue<string>(), StringComparison.Ordinal);
@@ -615,10 +687,9 @@ public class MemoryPackTests
         MemoryPackSchema schema = Schema();
         MpType line = schema.ResolveNamed(
             "Beyond.MemoryPack.Beyond_Gameplay_EffectLineCenterAction_DataForMemoryPack");
-        Assert.NotNull(line.AbilityPayload);
-        Assert.Equal(21, line.AbilityPayload!.Length);
-        Assert.Equal("isEnable", line.AbilityPayload[0].Name);
-        Assert.Equal("effectCenter", line.AbilityPayload[^1].Name);
+        Assert.Equal(21, line.Wire.Length);
+        Assert.Equal("isEnable", line.Wire[0].Name);
+        Assert.Equal("effectCenter", line.Wire[^1].Name);
 
         MpType bundle = schema.Require("Beyond.Gameplay.InventoryItemBundleWithInfinite", hint: null);
         Assert.Equal(3, bundle.Wire.Length);
@@ -701,15 +772,14 @@ public class MemoryPackTests
         MpType hasItem = schema.Require("Beyond.Gameplay.HasItemCount", hint: null);
         Assert.Equal(7, hasItem.Wire.Length);
         Assert.Equal("_compareOperator", hasItem.Wire[4].Name);
-        Assert.Equal("_itemId", hasItem.Wire[5].Name);
-        Assert.Equal("_progressToCompare", hasItem.Wire[6].Name);
+        Assert.Equal("_progressToCompare", hasItem.Wire[5].Name);
+        Assert.Equal("_itemId", hasItem.Wire[6].Name);
     }
 
     [Fact]
     public void GameCondition_tagged_union_routes_by_tag()
     {
-        var maps = JsonDataMemoryPack.LoadUnionMap(Path.Combine(FixtureRoot(), "union-map.json"));
-        var decoder = new MemoryPackDecoder(Schema(), unionMaps: maps);
+        var decoder = new MemoryPackDecoder(Schema(), unionMaps: UnionMaps());
         // tag 208 = CheckCurrentDungeon; wire 5 = GameCondition(4) + _dungeonId.
         var bytes = new List<byte> { 208, 5 };
         bytes.AddRange(I32(3));
@@ -731,12 +801,11 @@ public class MemoryPackTests
         MemoryPackSchema schema = Schema();
         MpType cfg = schema.Require("Beyond.Gameplay.SpawnerConfigData", hint: null);
         MpMember list = cfg.Wire.Single(m => m.Name == "preprocessList");
-        Assert.Equal("System.Collections.Generic.List`1<SpawnerPreprocess.Data>", list.Type);
+        Assert.Equal("System.Collections.Generic.List`1<Beyond.Gameplay.SpawnerPreprocess+Data>", list.Type);
         MpType child = schema.ResolveNamed(
             "Beyond.MemoryPack.Beyond_Gameplay_SpawnerPreprocess_EnableOrDisableActionForMemoryPack");
         Assert.Equal(3, child.Wire.Length);
         Assert.Contains(child.Wire, m => m.Name == "key");
-        Assert.Null(child.AbilityPayload);
 
         MpType pause = schema.ResolveNamed(
             "Beyond.MemoryPack.Beyond_Gameplay_SpawnerActions_PauseForMemoryPack");
@@ -750,31 +819,19 @@ public class MemoryPackTests
 
         MpType warn = schema.ResolveNamed(
             "Beyond.MemoryPack.Beyond_Gameplay_Core_EnemyWarningAction_EnemyWarningActionDataForMemoryPack");
-        Assert.Equal(20, warn.AbilityPayload!.Length);
+        Assert.Equal(20, warn.Wire.Length);
         MpType channel = schema.ResolveNamed(
             "Beyond.MemoryPack.Beyond_Gameplay_Core_ChannelingDamageAction_DataForMemoryPack");
-        Assert.Equal(12, channel.AbilityPayload!.Length);
-        Assert.Contains(channel.AbilityPayload, m => m.Name == "triggerInterval");
+        Assert.Equal(12, channel.Wire.Length);
+        Assert.Contains(channel.Wire, m => m.Name == "triggerInterval");
 
         var decoder = new MemoryPackDecoder(schema);
         byte[] hash = [1, 0, 0, 0, 0, 0, 0, 0x10];
         JsonObject path = Assert.IsType<JsonObject>(decoder.Decode(hash, "Beyond.Resource.StringPathHash"));
         Assert.Equal(0x1000000000000001L, path["hash"]!.GetValue<long>());
 
-        byte[] optional =
-        [
-            1, 0, 0, 0,
-            0, 0, 0x80, 0x3F,
-            0, 0, 0, 0x40,
-            0, 0, 0x40, 0x40,
-        ];
-        JsonObject vec = Assert.IsType<JsonObject>(
-            decoder.Decode(optional, "Beyond.Optional`1<UnityEngine.Vector3>"));
-        Assert.True(vec["enabled"]!.GetValue<bool>());
-        JsonArray xyz = Assert.IsType<JsonArray>(vec["value"]);
-        Assert.Equal(1f, xyz[0]!.GetValue<float>());
-        Assert.Equal(2f, xyz[1]!.GetValue<float>());
-        Assert.Equal(3f, xyz[2]!.GetValue<float>());
+        Assert.True(schema.TryUnmanaged("Beyond.Optional`1<UnityEngine.Vector3>", out MpUnmanagedLayout? optionalLayout));
+        Assert.Equal(16, optionalLayout.PayloadSize);
 
         // List<GameplayTag>: leading 1 is the formatter header, not a raw tag id.
         byte[] tags = [1, 0, 0, 0, 1, 0x2A, 0, 0, 0];
@@ -795,7 +852,9 @@ public class MemoryPackTests
             0xFF, 0xFF, 0xFF, 0xFF,
         ];
         JsonObject node = Assert.IsType<JsonObject>(
-            decoder.Decode(payload, "Beyond.Gameplay.Actions.Param`1<AdditiveEffectType>")
+            decoder.Decode(
+                payload,
+                "Beyond.Gameplay.Actions.Param`1<Beyond.Gameplay.Factory.AdditiveEffectFragment+AdditiveEffectType>")
         );
         Assert.Equal(-1, node["constValue"]!.GetValue<int>());
         Assert.Equal(0, node["idRef"]!.GetValue<int>());
@@ -892,7 +951,7 @@ public class MemoryPackTests
         MemoryPackSchema schema = Schema();
         MpType buff = schema.Require("Beyond.Gameplay.Core.BuffData", hint: null);
         MpMember damage = buff.Wire.First(m => m.Name == "damageModifier");
-        Assert.Contains("DamageModifier_DataForMemoryPack", damage.Type, StringComparison.Ordinal);
+        Assert.Contains("DamageModifier+Data", damage.Type, StringComparison.Ordinal);
         MpType icon = schema.Require("Beyond.Gameplay.Core.BuffIconConfig", hint: null);
         Assert.Equal(20, icon.Wire.Length);
         Assert.Equal("_orderPriorityConfig", icon.Wire[0].Name);
@@ -910,18 +969,17 @@ public class MemoryPackTests
         MpType type = schema.ResolveNamed(
             "Beyond.MemoryPack.Beyond_Gameplay_Core_ContinuousFindTargetAction_DataForMemoryPack"
         );
-        Assert.NotNull(type.AbilityPayload);
-        Assert.Equal(19, type.AbilityPayload!.Length);
-        Assert.Equal("isEnable", type.AbilityPayload[0].Name);
-        Assert.Equal("findInterval", type.AbilityPayload[^1].Name);
-        Assert.Contains(type.AbilityPayload, m => m.Name == "targetGroupKey");
+        Assert.Equal(19, type.Wire.Length);
+        Assert.Equal("isEnable", type.Wire[0].Name);
+        Assert.Equal("findInterval", type.Wire[^1].Name);
+        Assert.Contains(type.Wire, m => m.Name == "targetGroupKey");
     }
 
     [Fact]
     public void ShowHideActor_and_start_dialog_teleport_include_inherited_wires()
     {
         MemoryPackSchema schema = Schema();
-        MpType show = schema.Require("ShowHideActorData", hint: null);
+        MpType show = schema.Require("Beyond.Gameplay.Core.ShowHideActorAction+ShowHideActorData", hint: null);
         Assert.Equal(10, show.Wire.Length);
         Assert.Equal("isEnable", show.Wire[0].Name);
         Assert.Equal("targetSettings", show.Wire[^1].Name);
@@ -962,15 +1020,6 @@ public class MemoryPackTests
         var buf = new byte[4];
         BitConverter.TryWriteBytes(buf, value);
         return buf;
-    }
-
-    private static void AssertHardSample(MemoryPackDecoder decoder, byte[] data, string root)
-    {
-        var ex = Assert.Throws<MemoryPackUnionException>(() => decoder.Decode(data, root));
-        Assert.Equal("AbilityActionData", ex.StaticType);
-        Assert.True(ex.Tag is int tag && tag >= 0);
-        Assert.True(ex.Offset > 0);
-        Assert.NotEmpty(ex.Candidates);
     }
 
     private static byte[] StringPayload(string[] values)

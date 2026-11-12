@@ -229,8 +229,23 @@ public static class JsonDataMemoryPack
 
     public static bool IsPlainJson(ReadOnlySpan<byte> data)
     {
+        data = SkipBom(data);
         int i = SkipWs(data);
-        return i < data.Length && data[i] is (byte)'{' or (byte)'[';
+        if (i >= data.Length || data[i] is not ((byte)'{' or (byte)'['))
+            return false;
+        try
+        {
+            var reader = new Utf8JsonReader(data);
+            while (reader.Read())
+            {
+            }
+
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
     }
 
     /// <summary>
@@ -262,6 +277,13 @@ public static class JsonDataMemoryPack
         }
 
         return sawSpace && (end - i >= 16 || end == data.Length);
+    }
+
+    private static ReadOnlySpan<byte> SkipBom(ReadOnlySpan<byte> data)
+    {
+        if (data.Length >= 3 && data[0] == 0xEF && data[1] == 0xBB && data[2] == 0xBF)
+            return data[3..];
+        return data;
     }
 
     private static int SkipWs(ReadOnlySpan<byte> data)
@@ -321,7 +343,7 @@ public static class JsonDataMemoryPack
             output = Encoding.UTF8.GetBytes(decoder.ToJson(data, root!));
             return new JsonDataFileResult { RelativePath = relative, Kind = JsonDataFileKind.Decoded };
         }
-        catch (Exception ex) when (ex is InvalidDataException or IOException or MemoryPackTypeException)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             return new JsonDataFileResult
             {
@@ -340,22 +362,40 @@ public static class JsonDataMemoryPack
         string outputDirectory
     )
     {
-        byte[] data = File.ReadAllBytes(path);
-        JsonDataFileResult result = DecodeBytes(decoder, schema, data, relative, out byte[]? output);
-        if (output != null && result.Kind is JsonDataFileKind.Decoded or JsonDataFileKind.PlainJson)
+        try
         {
-            string destination = Path.Combine(outputDirectory, relative);
-            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-            File.WriteAllBytes(destination, output);
-        }
+            byte[] data = File.ReadAllBytes(path);
+            JsonDataFileResult result = DecodeBytes(decoder, schema, data, relative, out byte[]? output);
+            if (output != null && result.Kind is JsonDataFileKind.Decoded or JsonDataFileKind.PlainJson)
+            {
+                string destination = Path.Combine(outputDirectory, relative);
+                Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+                File.WriteAllBytes(destination, output);
+            }
 
-        return result;
+            return result;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return new JsonDataFileResult
+            {
+                RelativePath = relative,
+                Kind = JsonDataFileKind.Failed,
+                Error = ex.Message,
+            };
+        }
     }
 
     private static string TopFolder(string relativePath)
     {
-        int slash = relativePath.IndexOfAny(['/', '\\']);
-        return slash < 0 ? "(root)" : relativePath[..slash];
+        string normalized = relativePath.Replace('\\', '/').Trim('/');
+        string[] parts = normalized.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        int i = 0;
+        while (i < parts.Length - 1 && parts[i] is "Data" or "Json")
+            i++;
+        if (i >= parts.Length - 1)
+            return "(root)";
+        return parts[i];
     }
 
 }

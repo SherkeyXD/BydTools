@@ -14,11 +14,10 @@
 ### VFS
 
 - [x] `JsonData` MemoryPack decode (in `vfs --blocktype JsonData`, like Lua decrypt)
-  - Wire layouts are the embedded beyond-schema-dumper `*.msgpack.lz4` under `BydTools.Formats/MemoryPack/Resource/`
-  - Plain UTF-8 JSON (leading `{` / `[`) is copied through
+  - Wire layouts are the embedded beyond-mp-schema `*.msgpack.lz4` under `BydTools.Formats/MemoryPack/Resource/`
+  - Valid UTF-8 JSON objects/arrays (optional BOM) are copied through
   - StringPool ids (`-1` empty, `-2` null) resolve from `StringPool*.byte` in the same block
-  - `decode-jsondata` re-decodes a raw dump, or overrides the schema with `--schema-dir`
-  - Full JsonData dump: **19501** ok / **0** fail / 3826 plain (23327 files)
+  - `vfs --raw` writes JsonData files unchanged; `vfs --schema-dir` / `decode-jsondata --schema-dir` override the embed
   - U8, Webview, and Table SparkBuffer are out of scope
 
 ## Prerequisites
@@ -57,6 +56,8 @@ Options:
   --key <base64>             ChaCha20 key (32 bytes). Overrides --platform.
   --platform <name>          pc (default) or android, used when --key is omitted.
   --jobs <n>                 Chunks read at once. Default: processor count.
+  --raw                      Write JsonData files without MemoryPack decode.
+  --schema-dir <dir>         beyond-mp-schema export (overrides the embed). Ignored with --raw.
   -d, --debug                Print block declarations without extracting.
   -v, --verbose              Per-chunk and per-file details.
   -h, --help
@@ -70,7 +71,7 @@ Block types:
 
 A directory that is not in this list can still be dumped by its `groupCfgName`. `All`, `Raw`, and numbers that are not a real block type are rejected. `--debug` prints the blocks actually present, including ones the catalog does not know yet.
 
-`JsonData` `.json` files are decoded to plaintext with the embedded MemoryPack schema (same idea as Lua decrypt). `StringPool*.byte` in that block is used for string ids and then copied through. Table `.bytes` still become SparkBuffer JSON.
+`JsonData` `.json` files are decoded to plaintext with the embedded MemoryPack schema (same idea as Lua decrypt). `--raw` skips that decode so you keep the original bytes. `--schema-dir` points at a newer beyond-mp-schema export. `StringPool*.byte` in that block is used for string ids and then copied through. Table `.bytes` still become SparkBuffer JSON. `--verbose` prints the per-file MemoryPack error when a JsonData file fails to decode; the original bytes are still written.
 
 ### pck
 
@@ -102,7 +103,7 @@ Files with no AudioDialog match go under `<block>/unmapped/<language>/`. The lan
 
 ### decode-jsondata
 
-`vfs --blocktype JsonData` already writes plaintext JSON. Use this command to re-decode a **raw** dump, or to point at a newer beyond-schema-dumper export. BydTools interprets `wire_order`; it does not export schemas. The default schema is the embedded `*.msgpack.lz4` in `BydTools.Formats/MemoryPack/Resource/`.
+`vfs --blocktype JsonData` already writes plaintext JSON. Use this command to re-decode a **raw** dump (`vfs --raw --blocktype JsonData`), or to point at a newer beyond-mp-schema export. BydTools interprets `wire_order`; it does not export schemas. The default schema is the embedded `*.msgpack.lz4` in `BydTools.Formats/MemoryPack/Resource/`.
 
 ```text
 BydTools decode-jsondata \
@@ -112,18 +113,9 @@ BydTools decode-jsondata \
 
 `--schema-dir` overrides the embed and loads `schemas` / `type_index` / `union-map` / `unmanaged` / `enums` (`.msgpack.lz4` preferred, else `.json`). `--schema` / `--index` / `--union-map` override individual files. `--string-pool` defaults to `<input>/Data/Json/StringPool` when that folder exists.
 
-To refresh the embed after a game update:
+To refresh the embed after a game update, copy a beyond-mp-schema `--format msgpack` export of `schemas`, `type_index`, `union-map`, `unmanaged`, and `enums` `.msgpack.lz4` into `BydTools.Formats/MemoryPack/Resource/`.
 
-```text
-beyond-schema-dumper export \
-  --game-root /path/to/Endfield \
-  --format msgpack \
-  --out out/memorypack
-```
-
-Copy `schemas`, `type_index`, `union-map`, `unmanaged`, and `enums` `.msgpack.lz4` into `BydTools.Formats/MemoryPack/Resource/`.
-
-A fixture map lives at `BydTools.Tests/Fixtures/MemoryPack/union-map.json`. A flat `{ "296": "PlayAnimationActionData" }` file is still accepted as AbilityActionData only. `--report` overrides the default `<output>/memorypack-report.json`. Exit code `1` means the run finished and at least one file failed; the report still has ok / plain JSON / skipped / failed counts by top-level folder.
+A flat `{ "296": "PlayAnimationActionData" }` union map is still accepted as AbilityActionData only. `--report` overrides the default `<output>/memorypack-report.json`. Exit code `1` means the run finished and at least one file failed; the report still has ok / plain JSON / skipped / failed counts by folder (`Data/Json/SkillData/…` is reported as `SkillData`).
 
 Basename matching uses `type_index.json` (`by_basename`, then `{segment}Data` / `{segment}Json`, then path-token scoring). When several types share a leaf, an `IMemoryPackSerialize` root wins. Member order is `wire_order`, not the target field declaration order. Per-field `collection_encoding` (`memcpy` / `formatter` / `memorypack` / `utf8`) overrides the default unmanaged layout.
 
@@ -135,7 +127,7 @@ A current Endfield JsonData dump decodes with an empty `failures` array. If a la
 | --- | --- |
 | `union tag N … matches K concrete types` | More than one wrapper fits and the tag is not in `union-map.json`. |
 | `union tag N … matched no concrete wrapper` | The tag was read, and every candidate rejected the following bytes. |
-| `memberCount … does not match` | The header is not that wrapper's `wire_order` (or inherited / ability payload). |
+| `memberCount … does not match` | The header is not that wrapper's `wire_order`. |
 | `Boolean` / illegal dictionary count | Usually a cascade from an earlier short or long read. |
 | `No type_index basename` | The file name and folder hint did not select a root type. Pass a path under `Data/Json/…`, not a bare folder of files. |
 

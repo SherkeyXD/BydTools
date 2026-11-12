@@ -3,7 +3,7 @@ using System.Text.Json;
 namespace BydTools.Formats.MemoryPack;
 
 /// <summary>
-/// Embedded beyond-schema-dumper export (<c>*.msgpack.lz4</c> in
+/// Embedded beyond-mp-schema export (<c>*.msgpack.lz4</c> in
 /// <c>BydTools.Formats/MemoryPack/Resource/</c>). Refresh by copying a
 /// <c>--format msgpack</c> export of <c>schemas</c>, <c>type_index</c>,
 /// <c>union-map</c>, <c>unmanaged</c>, and <c>enums</c>.

@@ -4,7 +4,7 @@ using MessagePack;
 namespace BydTools.Formats.MemoryPack;
 
 /// <summary>
-/// beyond-schema-dumper export files: JSON, or MessagePack + LZ4 Block
+/// beyond-mp-schema export files: JSON, or MessagePack + LZ4 Block
 /// (MessagePack-CSharp extension type 99) as <c>*.msgpack.lz4</c>.
 /// </summary>
 public static class SchemaFile

@@ -7,11 +7,18 @@ using BydTools.Formats.Usm;
 
 namespace BydTools.Extraction.Vfs;
 
-public enum HandleResult
+public enum HandleStatus
 {
     Handled,
     Skipped,
     Failed,
+}
+
+public readonly record struct HandleResult(HandleStatus Status, string? Error = null)
+{
+    public static HandleResult Handled { get; } = new(HandleStatus.Handled);
+    public static HandleResult Skipped { get; } = new(HandleStatus.Skipped);
+    public static HandleResult Fail(string? error = null) => new(HandleStatus.Failed, error);
 }
 
 public interface IContentHandler
@@ -35,9 +42,9 @@ public sealed class SparkBufferHandler : IContentHandler
             output.Complete();
             return HandleResult.Handled;
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            return HandleResult.Failed;
+            return HandleResult.Fail(ex.Message);
         }
     }
 }
@@ -83,11 +90,13 @@ public sealed class JsonDataHandler : IContentHandler
                 return HandleResult.Handled;
             }
 
-            return result.Kind == JsonDataFileKind.Failed ? HandleResult.Failed : HandleResult.Skipped;
+            return result.Kind == JsonDataFileKind.Failed
+                ? HandleResult.Fail(result.Error)
+                : HandleResult.Skipped;
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            return HandleResult.Failed;
+            return HandleResult.Fail(ex.Message);
         }
     }
 }
@@ -103,15 +112,15 @@ public sealed class LuaHandler : IContentHandler
         {
             byte[]? decrypted = LuaDecipher.Decrypt(data.Span);
             if (decrypted == null)
-                return HandleResult.Failed;
+                return HandleResult.Fail("Lua decrypt returned no payload.");
             using var output = sink.Create(relativePath);
             output.Write(decrypted);
             output.Complete();
             return HandleResult.Handled;
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            return HandleResult.Failed;
+            return HandleResult.Fail(ex.Message);
         }
     }
 }
@@ -142,9 +151,9 @@ public sealed class UsmHandler : IContentHandler
 
             return HandleResult.Handled;
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            return HandleResult.Failed;
+            return HandleResult.Fail(ex.Message);
         }
     }
 }
@@ -165,9 +174,9 @@ public sealed class PckDecryptHandler : IContentHandler
             output.Complete();
             return HandleResult.Handled;
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            return HandleResult.Failed;
+            return HandleResult.Fail(ex.Message);
         }
     }
 }

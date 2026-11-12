@@ -24,7 +24,7 @@ public sealed class DecodeJsonDataCommand : ICommand
                     Console.WriteLine("  vfs --blocktype JsonData already decodes MMP using the embedded schema.");
                     Console.WriteLine("  Use this command to re-decode a raw dump, or to override the schema.");
                     Console.WriteLine("  Embedded schemas / type_index / union-map / unmanaged / enums are used by default.");
-                    Console.WriteLine("  --schema-dir is a beyond-schema-dumper export (.msgpack.lz4 preferred, else .json).");
+                    Console.WriteLine("  --schema-dir is a beyond-mp-schema export (.msgpack.lz4 preferred, else .json).");
                     Console.WriteLine("  --schema / --index / --union-map override individual files.");
                     Console.WriteLine("  A leading { or [ is copied as UTF-8 JSON. USPC and SHPI files are skipped.");
                     Console.WriteLine("  String pool ids -1 and -2 are \"\" and null. Other ids resolve from StringPool*.byte");
@@ -159,7 +159,7 @@ public sealed class DecodeJsonDataCommand : ICommand
         new ArgParser()
             .Add("input", "i", "JsonData dump directory (raw MMP, not already decoded)", "dir", required: true)
             .Add("output", "o", "Directory for plaintext JSON", "dir", required: true)
-            .Add("schema-dir", null, "beyond-schema-dumper export directory (overrides embedded)", "dir",
+            .Add("schema-dir", null, "beyond-mp-schema export directory (overrides embedded)", "dir",
                 continuation: "Loads schemas/type_index/union-map/unmanaged/enums as .msgpack.lz4 or .json.")
             .Add("schema", null, "schemas.json or schemas.msgpack.lz4 (overrides --schema-dir)", "file")
             .Add("index", null, "type_index.json or type_index.msgpack.lz4 (overrides --schema-dir)", "file")

@@ -10,6 +10,7 @@ public enum MpKind
     Int16,
     UInt16,
     Int32,
+    UInt32,
     Int64,
     UInt64,
     Float32,
@@ -50,9 +51,6 @@ public sealed class MpType
     public required bool HasDeserialize { get; init; }
     public required MpMember[] Wire { get; set; }
     public required MpMember[] Own { get; set; }
-    public MpMember[]? AbilityPayload { get; set; }
-    /// <summary>Ability base + Own when Own is longer than Wire (PlaySound etc.).</summary>
-    public MpMember[]? AbilityPayloadAlt { get; set; }
     public int? MinFieldOffset { get; init; }
     public bool SerializeMarker { get; set; }
     /// <summary>Exporter <c>parent_type</c>. Union fallback collects wrappers with this parent.</summary>
@@ -91,30 +89,28 @@ public sealed class MemoryPackSchema
     private readonly Dictionary<string, MpType> _byWrapper;
     private readonly Dictionary<string, List<string>> _byBasename;
     private readonly Dictionary<string, bool> _marker = new(StringComparer.Ordinal);
-    private readonly MpType[] _abilityConcretes;
     private readonly Dictionary<string, string> _kinds;
     private readonly Dictionary<string, byte> _enumWidth = new(StringComparer.Ordinal);
     private readonly Dictionary<string, MpUnmanagedLayout> _unmanaged = new(StringComparer.Ordinal);
-    private readonly Dictionary<int, MpType> _abilityTags = [];
     private readonly object _tagGate = new();
     private readonly Dictionary<string, MpType[]> _unionCandidates = new(StringComparer.Ordinal);
     private readonly Dictionary<string, List<MpType>> _childrenByParent = new(StringComparer.Ordinal);
     private readonly Dictionary<string, MpType[]> _descendants = new(StringComparer.Ordinal);
     private MpType[]? _dataConcretes;
+    private readonly List<(HashSet<string> Tokens, string Name, int? Wire)> _basenameTokenIndex = [];
+    private readonly List<(HashSet<string> Tokens, int Wire, bool Marker, string Name)> _targetTokenIndex = [];
 
     private MemoryPackSchema(
         Dictionary<string, List<MpType>> byTarget,
         Dictionary<string, MpType> byWrapper,
         Dictionary<string, List<string>> byBasename,
-        Dictionary<string, string> kinds,
-        MpType[] abilityConcretes
+        Dictionary<string, string> kinds
     )
     {
         _byTarget = byTarget;
         _byWrapper = byWrapper;
         _byBasename = byBasename;
         _kinds = kinds;
-        _abilityConcretes = abilityConcretes;
     }
 
     public static MemoryPackSchema Load(string schemasPath, string typeIndexPath)
@@ -188,36 +184,23 @@ public sealed class MemoryPackSchema
 
         var byTarget = new Dictionary<string, List<MpType>>(StringComparer.Ordinal);
         var byWrapper = new Dictionary<string, MpType>(StringComparer.Ordinal);
-        bool inheritedExport = false;
         {
             if (!schemaDoc.RootElement.TryGetProperty("wrappers", out var wrappers))
                 throw new InvalidDataException("schemas export has no wrappers array.");
 
-            var pending = new List<(MpType Type, List<(string Name, string Type)> Extras)>();
             foreach (var wrapper in wrappers.EnumerateArray())
             {
-                if (wrapper.TryGetProperty("wire_includes_base", out var includesBase)
-                    && includesBase.ValueKind == JsonValueKind.True)
-                    inheritedExport = true;
                 string target = Required(wrapper, "target_type");
                 string wrapperType = Required(wrapper, "wrapper_type");
                 bool hasDeserialize = wrapper.TryGetProperty("has_deserialize", out var deser) && deser.ValueKind == JsonValueKind.True;
                 var wire = ReadMembers(wrapper, "wire_order", kinds);
-                var extras = new List<(string Name, string Type)>();
                 int? minOffset = null;
                 if (wrapper.TryGetProperty("members_from_target_fields", out var fields))
                 {
-                    var wireNames = new HashSet<string>(wire.Select(m => m.Name), StringComparer.Ordinal);
                     foreach (var field in fields.EnumerateArray())
                     {
-                        string? name = field.TryGetProperty("name", out var nameEl) ? nameEl.GetString() : null;
-                        string? type = field.TryGetProperty("type", out var typeEl) ? typeEl.GetString() : null;
                         if (field.TryGetProperty("offset", out var offsetEl) && offsetEl.TryGetInt32(out int offset))
                             minOffset = minOffset is int current ? Math.Min(current, offset) : offset;
-                        if (name == null || type == null || wireNames.Contains(name) || IsBackingField(name))
-                            continue;
-                        extras.Add((name, type));
-                        wireNames.Add(name);
                     }
                 }
 
@@ -238,7 +221,6 @@ public sealed class MemoryPackSchema
                         ? mp
                         : null,
                 };
-                pending.Add((typeObj, extras));
                 if (!byTarget.TryGetValue(target, out var list))
                 {
                     list = [];
@@ -248,138 +230,18 @@ public sealed class MemoryPackSchema
                 list.Add(typeObj);
                 byWrapper[wrapperType] = typeObj;
             }
-
-            foreach (var (type, extras) in pending)
-            {
-                if (inheritedExport || extras.Count == 0)
-                    continue;
-                type.Own = type.Wire.Select(m => (m.Name, m.Type)).Concat(extras)
-                    .OrderBy(m => m.Name.ToLowerInvariant(), StringComparer.Ordinal)
-                    .Select(m => new MpMember
-                    {
-                        Name = m.Name,
-                        Type = m.Type,
-                        Kind = Classify(m.Type, kinds),
-                    })
-                    .ToArray();
-            }
-
-            if (!inheritedExport)
-            {
-                // Incomplete exports omit inherited members from wire_order. Recover them.
-                SynthesizeActionBaseWires(byTarget, pending, kinds);
-                SynthesizeActionHeaderWires(byTarget, pending, kinds);
-                SynthesizeGameConditionWires(byTarget, pending, kinds);
-            }
         }
 
-        MpMember[] abilityBase = AbilityActionBaseWire(byTarget);
-        var concretes = new List<MpType>();
-        if (!inheritedExport)
-        {
-            foreach (var type in byWrapper.Values)
-            {
-                if (!IsAbilityConcrete(type))
-                    continue;
-                MpMember[] leafWire = type.Wire.Length > 0 ? type.Wire : type.Own;
-                var wireNames = new HashSet<string>(leafWire.Select(m => m.Name), StringComparer.Ordinal);
-                type.AbilityPayload = abilityBase.Where(m => !wireNames.Contains(m.Name)).Concat(leafWire).ToArray();
-                if (type.Own.Length > leafWire.Length)
-                {
-                    var ownNames = new HashSet<string>(type.Own.Select(m => m.Name), StringComparer.Ordinal);
-                    type.AbilityPayloadAlt = abilityBase.Where(m => !ownNames.Contains(m.Name)).Concat(type.Own).ToArray();
-                }
-                concretes.Add(type);
-            }
-        }
-
-        // Empty-wire closed generics. Look up short fixture names and v3 nested names.
-        AliasEmpty(byTarget, "BlackboardDouble", "BlackboardParamBase`2<float, double>");
-        AliasEmpty(byTarget, "BlackboardInt", "BlackboardParamBase`2<int, int>");
-        AliasEmpty(byTarget, "BlackboardString", "BlackboardParamBase`2<string, string>");
-        AliasEmpty(byTarget, "BlackboardBuffId", "BlackboardString");
-        PrefixWithBaseWire(byTarget, "BlackboardCustomWithDropdownIntValue", "BlackboardInt");
-        AliasDropdownBlackboard(byTarget, "Beyond.Gameplay.Core.BlackboardImpactValue");
-        AliasDropdownBlackboard(byTarget, "Beyond.Gameplay.Core.BlackboardSuperArmorValue");
-        AliasDropdownBlackboard(byTarget, "BlackboardCharBlowOffPriorityValue");
-
-        if (!inheritedExport)
-        {
-            PrefixWithBaseWire(byTarget, "Beyond.Gameplay.Core.CreateBuffActionInput", "Beyond.Gameplay.Core.BuffInput");
-            AppendDuplicateChildField(
-                byTarget,
-                "Beyond.Gameplay.Actions.StartDialogAndTeleportAction",
-                "Beyond.Gameplay.Actions.ClientCutsceneTeleport",
-                "_dialogId"
-            );
-            PrefixAbilityBase(byTarget, "ShowHideActorData", abilityBase);
-            PrefixAbilityBase(byTarget, "FootStepChangeData", abilityBase);
-            PrefixAbilityBase(byTarget, "HideEffectOnTargetExceptTagData", abilityBase);
-            PrefixFindTargetData(byTarget, byWrapper, "Beyond.MemoryPack.Beyond_Gameplay_Core_ContinuousFindTargetAction_DataForMemoryPack", abilityBase);
-            PrefixFindTargetData(byTarget, byWrapper, "Beyond.MemoryPack.Beyond_Gameplay_Core_EffectFindTargetAction_DataForMemoryPack", abilityBase);
-            ApplyKeywordActionMiddles(byTarget, byWrapper);
-            PrefixPlayAnimationWithStep(byTarget, abilityBase);
-            PrefixEffectLineCenter(byTarget, byWrapper, abilityBase);
-            PrefixAbilityMiddle(
-                byTarget,
-                byWrapper,
-                "Beyond.MemoryPack.Beyond_Gameplay_Core_EnemyWarningAction_EnemyWarningActionDataForMemoryPack",
-                "EffectActionData",
-                abilityBase);
-            PrefixAbilityMiddle(
-                byTarget,
-                byWrapper,
-                "Beyond.MemoryPack.Beyond_Gameplay_Core_ChannelingDamageAction_DataForMemoryPack",
-                "DamageActionData",
-                abilityBase);
-            PrefixWithBaseWire(byTarget, "Beyond.Gameplay.InventoryItemBundleWithInfinite", "Beyond.Gameplay.InventoryItemBundle");
-            CopyWire(byTarget, "Beyond.Gameplay.Actions.PlayRadioAndWait", "Beyond.Gameplay.Actions.PlayRadio");
-            PrefixMvscBehaviors(byTarget);
-            PrefixCharInteractPerform(byTarget);
-            RewriteSelectorDataUnions(byTarget);
-            PrefixTargetFinderChildren(byWrapper);
-            CopyWireFromWrapper(
-                byWrapper,
-                "Beyond.MemoryPack.Beyond_Gameplay_Core_Selector_ShapeFinder_ShapeFinderDataForMemoryPack",
-                "Beyond.MemoryPack.Beyond_Gameplay_Core_Selector_ShapeFinder_DataForMemoryPack");
-            ClearSelectorAbilityPayloads(byWrapper);
-            DisambiguateShapeDataTypes(byWrapper);
-            RewriteSpawnerPreprocessList(byTarget, byWrapper);
-            ClearSpawnerPreprocessAbilityPayloads(byWrapper);
-            PrefixSpawnerActionDataChildren(byWrapper);
-            ClearSpawnerActionAbilityPayloads(byWrapper);
-            RewriteBuffModifierDataLists(byTarget, byWrapper);
-            SynthesizeBuffIconConfigWire(byTarget, kinds);
-            PrefixWithBaseWire(byTarget, "Beyond.Gameplay.LevelInteractiveData", "Beyond.Gameplay.LevelEntityData");
-            PrefixWithBaseWire(byTarget, "Beyond.Gameplay.LevelEnemyData", "Beyond.Gameplay.LevelEntityData");
-            PrefixWithBaseWire(byTarget, "Beyond.Gameplay.LevelFactoryRegionData", "Beyond.Gameplay.LevelEntityData");
-            PrefixWithBaseWire(byTarget, "Beyond.Gameplay.LevelNpcData", "Beyond.Gameplay.LevelEntityData");
-        }
-
-        var schema = new MemoryPackSchema(byTarget, byWrapper, byBasename, kinds, concretes.ToArray());
+        var schema = new MemoryPackSchema(byTarget, byWrapper, byBasename, kinds);
         foreach (var name in markers)
             schema._marker[name] = true;
         schema.IndexDerivedTypes();
+        schema.BuildTokenIndexes();
         if (enumsDoc != null)
             ApplyEnums(schema, enumsDoc.RootElement);
         if (unmanagedDoc != null)
             ApplyUnmanaged(schema, unmanagedDoc.RootElement);
         return schema;
-    }
-
-    private static MpMember[] AbilityActionBaseWire(Dictionary<string, List<MpType>> byTarget)
-    {
-        foreach (string name in new[]
-        {
-            "AbilityActionData",
-            "Beyond.Gameplay.Core.AbilityAction+AbilityActionData",
-            "Beyond.Gameplay.Core.AbilityActionData",
-        })
-        {
-            if (byTarget.TryGetValue(name, out var bases) && bases.Count == 1)
-                return bases[0].Wire;
-        }
-        return [];
     }
 
     private static void LoadEnumWidths(MemoryPackSchema schema, string schemasPath)
@@ -530,32 +392,13 @@ public sealed class MemoryPackSchema
         }
     }
 
-    public MpType? FindAbilityTag(int tag)
-    {
-        lock (_tagGate)
-            return _abilityTags.TryGetValue(tag, out var type) ? type : null;
-    }
-
-    public void RememberAbilityTag(int tag, MpType type)
-    {
-        lock (_tagGate)
-            _abilityTags.TryAdd(tag, type);
-    }
-
-    public IReadOnlyList<MpType> AbilityConcretes => _abilityConcretes;
-
     /// <summary>
     /// Concrete wrappers that may appear under a Beyond MemoryPack union formatter.
-    /// AbilityActionData keeps the ActionData/Data heuristic. ActionBase-like bases use
-    /// same-namespace leaves. Bare <c>Data</c> is narrowed by a finder/validator/processor field hint.
+    /// Bare <c>Data</c> is narrowed by a finder/validator/processor field hint.
+    /// Other bases use <c>parent_type</c> and same-namespace leaves.
     /// </summary>
     public IReadOnlyList<MpType> UnionCandidates(string staticType, string? hint)
     {
-        if (staticType == "AbilityActionData"
-            || staticType.EndsWith("+AbilityActionData", StringComparison.Ordinal)
-            || staticType.EndsWith(".AbilityActionData", StringComparison.Ordinal))
-            return _abilityConcretes;
-
         if (staticType == "Data")
             return DataCandidates(hint);
 
@@ -702,14 +545,17 @@ public sealed class MemoryPackSchema
             return kind;
         if (TryUnmanaged(type, out _))
             return MpKind.Unmanaged;
-        if (kind == MpKind.Object && !_byTarget.ContainsKey(type))
+        if (_byTarget.ContainsKey(type) || _byWrapper.ContainsKey(type))
+            return MpKind.Object;
+        foreach (string key in UnmanagedLookupKeys(type))
         {
-            // Wrapper FQCNs are objects. Without this, BuffData list elements are eaten as int32.
-            if (_byWrapper.ContainsKey(type))
+            if (_enumWidth.ContainsKey(key))
+                return MpKind.Enum;
+            if (_byTarget.ContainsKey(key) || _byWrapper.ContainsKey(key))
                 return MpKind.Object;
-            return MpKind.Enum;
         }
-        return kind;
+
+        throw new MemoryPackTypeException($"No MemoryPack rule for \"{type}\".");
     }
 
     public MpType ResolveNamed(string name)
@@ -1035,7 +881,6 @@ public sealed class MemoryPackSchema
             return Prefer(hits);
         return names.Count == 1 ? names[0] : Prefer(names);
     }
-
     private string? UniqueBasenameByTokens(string segment, int? header)
     {
         HashSet<string> tokens = Tokens(segment);
@@ -1043,10 +888,8 @@ public sealed class MemoryPackSchema
         if (tokens.Count == 0)
             return null;
         var hits = new List<(int Score, string Name)>();
-        foreach (var (key, names) in _byBasename)
+        foreach (var (keyTokens, preferred, wire) in _basenameTokenIndex)
         {
-            HashSet<string> keyTokens = Tokens(key);
-            keyTokens.ExceptWith(IdentityStopwords);
             int overlap = 0;
             foreach (string token in tokens)
             {
@@ -1055,10 +898,7 @@ public sealed class MemoryPackSchema
             }
             if (overlap == 0)
                 continue;
-            string? preferred = Prefer(names);
-            if (preferred == null)
-                continue;
-            if (header is int count && WireLength(preferred) is int wire && wire != count)
+            if (header is int count && wire is int w && w != count)
                 overlap -= 50;
             hits.Add((overlap, preferred));
         }
@@ -1080,15 +920,10 @@ public sealed class MemoryPackSchema
         if (pathTokens.Count == 0)
             return null;
         var hits = new List<(int Score, int Overlap, string Name)>();
-        foreach (var (name, list) in _byTarget)
+        foreach (var (nameTokens, wire, marker, name) in _targetTokenIndex)
         {
-            if (list.Count == 0)
+            if (wire != count)
                 continue;
-            MpType type = list[0];
-            if (type.Wire.Length != count)
-                continue;
-            HashSet<string> nameTokens = Tokens(name);
-            nameTokens.ExceptWith(IdentityStopwords);
             int overlap = 0;
             foreach (string token in pathTokens)
             {
@@ -1098,7 +933,7 @@ public sealed class MemoryPackSchema
             if (overlap == 0)
                 continue;
             int score = overlap;
-            if (type.SerializeMarker)
+            if (marker)
                 score += 100;
             hits.Add((score, overlap, name));
         }
@@ -1172,994 +1007,32 @@ public sealed class MemoryPackSchema
     /// (CompareOperator / SoilPersistentCount) contribute additional '_' fields. Empty leaves keep
     /// only the 4-field prefix.
     /// </summary>
-    private static void SynthesizeGameConditionWires(
-        Dictionary<string, List<MpType>> byTarget,
-        List<(MpType Type, List<(string Name, string Type)> Extras)> pending,
-        Dictionary<string, string> kinds)
+    private void BuildTokenIndexes()
     {
-        if (!byTarget.TryGetValue("Beyond.Gameplay.GameCondition", out var bases) || bases.Count != 1)
-            return;
-        MpMember[] prefix = bases[0].Wire;
-        if (prefix.Length == 0)
-            return;
-
-        var extrasByTarget = new Dictionary<string, List<(string Name, string Type)>>(StringComparer.Ordinal);
-        foreach (var (type, extras) in pending)
+        foreach (var (key, names) in _byBasename)
         {
-            if (!extrasByTarget.TryGetValue(type.TargetType, out var list))
-            {
-                list = [];
-                extrasByTarget[type.TargetType] = list;
-            }
-            list.AddRange(extras);
-        }
-
-        foreach (var group in byTarget.Values)
-        {
-            foreach (MpType type in group)
-            {
-                if (!IsGameConditionConcrete(type))
-                    continue;
-
-                var combined = new List<(string Name, string Type)>();
-                var seen = new HashSet<string>(StringComparer.Ordinal);
-                void AddExtras(string target)
-                {
-                    if (!extrasByTarget.TryGetValue(target, out var list))
-                        return;
-                    foreach (var extra in list)
-                    {
-                        if (!seen.Add(extra.Name))
-                            continue;
-                        combined.Add(extra);
-                    }
-                }
-
-                if (type.TargetType is "Beyond.Gameplay.CheckFacSoilFertilizingCount"
-                    or "Beyond.Gameplay.CheckFacSoilWateringCount")
-                    AddExtras("Beyond.Gameplay.CheckFacSoilPersistentCountBase");
-                else if (NeedsCompareOperatorPrefix(type.TargetType))
-                    AddExtras("Beyond.Gameplay.GameConditionServerCareScopeWithCompareOperator");
-
-                AddExtras(type.TargetType);
-
-                var wireNames = new HashSet<string>(prefix.Select(m => m.Name), StringComparer.Ordinal);
-                foreach (MpMember member in type.Wire)
-                    wireNames.Add(member.Name);
-
-                MpMember[] leafExtras = combined
-                    .Where(e => !e.Name.StartsWith("m_", StringComparison.Ordinal)
-                        && !wireNames.Contains(e.Name)
-                        && (e.Name.StartsWith("_", StringComparison.Ordinal)
-                            || e.Type.StartsWith("Beyond.Gameplay.Actions.Param`1", StringComparison.Ordinal)))
-                    .OrderBy(e => e.Name.ToLowerInvariant(), StringComparer.Ordinal)
-                    .Select(e => new MpMember
-                    {
-                        Name = e.Name,
-                        Type = e.Type,
-                        Kind = Classify(e.Type, kinds),
-                    })
-                    .ToArray();
-
-                var synthesized = new MpMember[prefix.Length + leafExtras.Length + type.Wire.Length];
-                Array.Copy(prefix, 0, synthesized, 0, prefix.Length);
-                Array.Copy(leafExtras, 0, synthesized, prefix.Length, leafExtras.Length);
-                Array.Copy(type.Wire, 0, synthesized, prefix.Length + leafExtras.Length, type.Wire.Length);
-                type.Wire = synthesized;
-                type.Own = synthesized;
-            }
-        }
-    }
-
-    private static bool NeedsCompareOperatorPrefix(string targetType) =>
-        targetType is "Beyond.Gameplay.CheckAliveCharNumInCurTeam"
-            or "Beyond.Gameplay.CheckCharFavorability"
-            or "Beyond.Gameplay.CheckFacSoilPlacedInPanel"
-            or "Beyond.Gameplay.CheckLiquidInBag"
-            or "Beyond.Gameplay.CheckMissionDaysNumAfterComplete"
-            or "Beyond.Gameplay.DungeonKeptTime"
-            or "Beyond.Gameplay.FacBattleBuildingCurEnergy"
-            or "Beyond.Gameplay.FacBoxConveyorLengthSum"
-            or "Beyond.Gameplay.FacBuildingCountInScene"
-            or "Beyond.Gameplay.FacBuildingFluidContainerHasItem"
-            or "Beyond.Gameplay.FacBuildingProducingCountInScene"
-            or "Beyond.Gameplay.FacPowerCostSum"
-            or "Beyond.Gameplay.FacProducingFormulaCountInScene"
-            or "Beyond.Gameplay.FacStatisticItemGen"
-            or "Beyond.Gameplay.FacStatisticItemGenRate"
-            or "Beyond.Gameplay.FacStorageBoxHasItems"
-            or "Beyond.Gameplay.HasItemCount";
-
-    private static bool IsGameConditionConcrete(MpType type)
-    {
-        if (!type.HasDeserialize)
-            return false;
-        if (type.TargetType == "Beyond.Gameplay.GameCondition")
-            return false;
-        return GameConditionUnionTargets.Targets.Contains(type.TargetType);
-    }
-
-    private static void AppendDuplicateChildField(
-        Dictionary<string, List<MpType>> byTarget,
-        string derived,
-        string baseName,
-        string fieldName)
-    {
-        if (!byTarget.TryGetValue(derived, out var derivedList) || derivedList.Count != 1)
-            return;
-        if (!byTarget.TryGetValue(baseName, out var baseList) || baseList.Count != 1)
-            return;
-        MpType child = derivedList[0];
-        MpMember? extra = null;
-        foreach (MpMember member in child.Wire)
-        {
-            if (member.Name == fieldName)
-                extra = member;
-        }
-
-        if (extra == null)
-            return;
-        child.Wire = baseList[0].Wire.Concat([extra]).ToArray();
-        child.Own = child.Wire;
-    }
-
-    private static void PrefixAbilityBase(
-        Dictionary<string, List<MpType>> byTarget,
-        string derived,
-        MpMember[] abilityBase)
-    {
-        if (abilityBase.Length == 0)
-            return;
-        if (!byTarget.TryGetValue(derived, out var list) || list.Count != 1)
-            return;
-        MpType type = list[0];
-        if (type.Wire.Any(m => m.Name == "isEnable"))
-            return;
-        type.Wire = abilityBase.Concat(type.Wire).ToArray();
-        type.Own = type.Wire;
-    }
-
-    private static void ApplyKeywordActionMiddles(
-        Dictionary<string, List<MpType>> byTarget,
-        Dictionary<string, MpType> byWrapper)
-    {
-        if (!byTarget.TryGetValue("KeywordActionData", out var keywordList) || keywordList.Count != 1)
-            return;
-        MpMember[] keyword = keywordList[0].AbilityPayload is { Length: > 0 } payload
-            ? payload
-            : keywordList[0].Wire;
-        MpMember[] subType = byTarget.TryGetValue("KeywordActionWithSubTypeData", out var subList) && subList.Count == 1
-            ? subList[0].Wire
-            : [];
-        foreach (MpType type in byWrapper.Values)
-        {
-            string wrapper = type.WrapperType;
-            bool fourteen = wrapper.Contains("VulnerableAction_Data", StringComparison.Ordinal)
-                || wrapper.Contains("EnhancedAction_Data", StringComparison.Ordinal);
-            bool thirteen = wrapper.Contains("WeakAction_Data", StringComparison.Ordinal)
-                || wrapper.Contains("SlowAction_Data", StringComparison.Ordinal)
-                || wrapper.Contains("SpeedupAction_Data", StringComparison.Ordinal)
-                || wrapper.Contains("ShelterAction_Data", StringComparison.Ordinal);
-            if (!fourteen && !thirteen)
+            string? preferred = Prefer(names);
+            if (preferred == null)
                 continue;
-            MpMember[] wire = fourteen ? keyword.Concat(subType).ToArray() : keyword;
-            type.AbilityPayload = wire;
-            type.Wire = wire;
-            type.Own = wire;
-        }
-    }
-
-    private static void PrefixPlayAnimationWithStep(
-        Dictionary<string, List<MpType>> byTarget,
-        MpMember[] abilityBase)
-    {
-        if (abilityBase.Length == 0)
-            return;
-        if (!byTarget.TryGetValue("PlayAnimationActionData", out var anim) || anim.Count != 1)
-            return;
-        if (!byTarget.TryGetValue("PlayAnimationWithStepData", out var step) || step.Count != 1)
-            return;
-        MpType type = step[0];
-        var leafNames = new HashSet<string>(type.Wire.Select(m => m.Name), StringComparer.Ordinal);
-        MpMember[] payload = abilityBase
-            .Concat(anim[0].Wire)
-            .Where(m => !leafNames.Contains(m.Name))
-            .Concat(type.Wire)
-            .ToArray();
-        type.AbilityPayload = payload;
-    }
-
-    private static void PrefixAbilityMiddle(
-        Dictionary<string, List<MpType>> byTarget,
-        Dictionary<string, MpType> byWrapper,
-        string wrapperName,
-        string middleTarget,
-        MpMember[] abilityBase)
-    {
-        if (abilityBase.Length == 0)
-            return;
-        if (!byWrapper.TryGetValue(wrapperName, out MpType? type))
-            return;
-        if (!byTarget.TryGetValue(middleTarget, out var bases) || bases.Count != 1)
-            return;
-        MpMember[] middle = bases[0].Wire;
-        if (middle.Length == 0)
-            return;
-        var leafNames = new HashSet<string>(type.Wire.Select(m => m.Name), StringComparer.Ordinal);
-        type.AbilityPayload = abilityBase
-            .Concat(middle.Where(m => !leafNames.Contains(m.Name)))
-            .Concat(type.Wire)
-            .ToArray();
-    }
-
-    private static void PrefixEffectLineCenter(
-        Dictionary<string, List<MpType>> byTarget,
-        Dictionary<string, MpType> byWrapper,
-        MpMember[] abilityBase)
-    {
-        if (abilityBase.Length == 0)
-            return;
-        if (!byTarget.TryGetValue("EffectActionData", out var effect) || effect.Count != 1)
-            return;
-        const string wrapper = "Beyond.MemoryPack.Beyond_Gameplay_EffectLineCenterAction_DataForMemoryPack";
-        if (!byWrapper.TryGetValue(wrapper, out MpType? type))
-            return;
-        var leafNames = new HashSet<string>(type.Wire.Select(m => m.Name), StringComparer.Ordinal);
-        type.AbilityPayload = abilityBase
-            .Concat(effect[0].Wire.Where(m => !leafNames.Contains(m.Name)))
-            .Concat(type.Wire)
-            .ToArray();
-    }
-
-    private static void CopyWire(Dictionary<string, List<MpType>> byTarget, string derived, string sourceName)
-    {
-        if (!byTarget.TryGetValue(derived, out var derivedList) || derivedList.Count != 1)
-            return;
-        if (!byTarget.TryGetValue(sourceName, out var sourceList) || sourceList.Count != 1)
-            return;
-        if (sourceList[0].Wire.Length == 0)
-            return;
-        MpMember[] wire = sourceList[0].Wire.ToArray();
-        derivedList[0].Wire = wire;
-        derivedList[0].Own = wire;
-    }
-
-    private static void PrefixMvscBehaviors(Dictionary<string, List<MpType>> byTarget)
-    {
-        const string behavior = "Beyond.Gameplay.Core.ModelViewStateController.MVSCBehaviorData";
-        if (!byTarget.TryGetValue(behavior, out var bases) || bases.Count != 1 || bases[0].Wire.Length == 0)
-            return;
-        foreach (var group in byTarget.Values)
-        {
-            foreach (MpType type in group)
-            {
-                if (type.TargetType == behavior)
-                    continue;
-                if (!type.TargetType.Contains(".MVSC", StringComparison.Ordinal)
-                    || !type.TargetType.Contains("BehaviorData", StringComparison.Ordinal))
-                    continue;
-                // DestructibleBehaviorData has an empty leaf and still writes the 6 base fields.
-                if (type.MinFieldOffset != 40 && type.Wire.Length != 0)
-                    continue;
-                var names = new HashSet<string>(type.Wire.Select(m => m.Name), StringComparer.Ordinal);
-                MpMember[] merged = bases[0].Wire.Where(m => !names.Contains(m.Name)).Concat(type.Wire).ToArray();
-                type.Wire = merged;
-                type.Own = merged;
-            }
-        }
-    }
-
-    private static void PrefixCharInteractPerform(Dictionary<string, List<MpType>> byTarget)
-    {
-        const string action = "Beyond.Gameplay.Core.CharInteractPerform.CharInteractPerformActionData";
-        const string actor = "Beyond.Gameplay.Core.CharInteractPerform.ActorActData";
-        if (!byTarget.TryGetValue(action, out var actionList) || actionList.Count != 1)
-            return;
-        MpMember[] actionWire = actionList[0].Wire;
-        MpMember[] actorWire = byTarget.TryGetValue(actor, out var actorList) && actorList.Count == 1
-            ? actorList[0].Wire
-            : [];
-        foreach (var group in byTarget.Values)
-        {
-            foreach (MpType type in group)
-            {
-                if (!type.TargetType.Contains(".CharInteractPerform.", StringComparison.Ordinal))
-                    continue;
-                if (type.TargetType == action)
-                    continue;
-                MpMember[] prefix = type.MinFieldOffset switch
-                {
-                    128 => actionWire.Concat(actorWire).ToArray(),
-                    120 => actionWire,
-                    _ => [],
-                };
-                if (prefix.Length == 0)
-                    continue;
-                var names = new HashSet<string>(type.Wire.Select(m => m.Name), StringComparer.Ordinal);
-                MpMember[] merged = prefix.Where(m => !names.Contains(m.Name)).Concat(type.Wire).ToArray();
-                type.Wire = merged;
-                type.Own = merged;
-            }
-        }
-    }
-
-    /// <summary>
-    /// SelectorData fields were exported as bare Data. Native finderData is Finder.Data.
-    /// </summary>
-    private static void RewriteSelectorDataUnions(Dictionary<string, List<MpType>> byTarget)
-    {
-        if (!byTarget.TryGetValue("SelectorData", out var list) || list.Count != 1)
-            return;
-        MpType type = list[0];
-        type.Wire = type.Wire.Select(RewriteSelectorMember).ToArray();
-        type.Own = type.Wire;
-    }
-
-    private static MpMember RewriteSelectorMember(MpMember member)
-    {
-        string type = member.Type switch
-        {
-            "Data" when member.Name == "finderData" => "Finder.Data",
-            "System.Collections.Generic.List`1<Data>" when member.Name == "validatorData"
-                => "System.Collections.Generic.List`1<Validator.Data>",
-            "System.Collections.Generic.List`1<Data>" when member.Name == "postProcessorData"
-                => "System.Collections.Generic.List`1<PostProcessor.Data>",
-            _ => member.Type,
-        };
-        if (type == member.Type)
-            return member;
-        return new MpMember
-        {
-            Name = member.Name,
-            Type = type,
-            Kind = type.StartsWith("System.Collections.Generic.List`1<", StringComparison.Ordinal)
-                ? MpKind.List
-                : MpKind.Object,
-        };
-    }
-
-    private static void CopyWireFromWrapper(
-        Dictionary<string, MpType> byWrapper,
-        string derivedWrapper,
-        string baseWrapper)
-    {
-        if (!byWrapper.TryGetValue(derivedWrapper, out MpType? derived))
-            return;
-        if (!byWrapper.TryGetValue(baseWrapper, out MpType? baseType))
-            return;
-        if (derived.Wire.Length != 0 || baseType.Wire.Length == 0)
-            return;
-        derived.Wire = baseType.Wire;
-        derived.Own = baseType.Own.Length > 0 ? baseType.Own : baseType.Wire;
-        derived.AbilityPayload = null;
-        derived.AbilityPayloadAlt = null;
-    }
-
-    private static void RewriteSpawnerPreprocessList(
-        Dictionary<string, List<MpType>> byTarget,
-        Dictionary<string, MpType> byWrapper)
-    {
-        if (!byTarget.TryGetValue("Beyond.Gameplay.SpawnerConfigData", out var list) || list.Count != 1)
-            return;
-        MpType type = list[0];
-        type.Wire = type.Wire.Select(m =>
-            m.Name == "preprocessList" && m.Type == "System.Collections.Generic.List`1<Data>"
-                ? new MpMember
-                {
-                    Name = m.Name,
-                    Type = "System.Collections.Generic.List`1<SpawnerPreprocess.Data>",
-                    Kind = MpKind.List,
-                }
-                : m).ToArray();
-        type.Own = type.Wire;
-
-        if (!byWrapper.TryGetValue(
-                "Beyond.MemoryPack.Beyond_Gameplay_SpawnerPreprocess_DataForMemoryPack",
-                out MpType? baseData)
-            || baseData.Wire.Length == 0)
-            return;
-
-        ReadOnlySpan<string> children =
-        [
-            "Beyond.MemoryPack.Beyond_Gameplay_SpawnerPreprocess_EnableOrDisableActionForMemoryPack",
-            "Beyond.MemoryPack.Beyond_Gameplay_SpawnerPreprocess_EnableOrDisableGroupForMemoryPack",
-            "Beyond.MemoryPack.Beyond_Gameplay_SpawnerPreprocess_EnableOrDisableWaveForMemoryPack",
-            "Beyond.MemoryPack.Beyond_Gameplay_SpawnerPreprocess_ModifyActionLibraryKeyForMemoryPack",
-            "Beyond.MemoryPack.Beyond_Gameplay_SpawnerPreprocess_ModifyActionTimestampForMemoryPack",
-            "Beyond.MemoryPack.Beyond_Gameplay_SpawnerPreprocess_ModifyGroupTimestampForMemoryPack",
-            "Beyond.MemoryPack.Beyond_Gameplay_SpawnerPreprocess_ModifyWaveTimestampForMemoryPack",
-        ];
-        foreach (string childName in children)
-        {
-            if (!byWrapper.TryGetValue(childName, out MpType? child))
+            HashSet<string> tokens = Tokens(key);
+            tokens.ExceptWith(IdentityStopwords);
+            if (tokens.Count == 0)
                 continue;
-            var names = new HashSet<string>(child.Wire.Select(m => m.Name), StringComparer.Ordinal);
-            MpMember[] merged = baseData.Wire.Where(m => !names.Contains(m.Name)).Concat(child.Wire).ToArray();
-            child.Wire = merged;
-            child.Own = merged;
-        }
-    }
-
-    private static void ClearSpawnerPreprocessAbilityPayloads(Dictionary<string, MpType> byWrapper)
-    {
-        foreach (MpType type in byWrapper.Values)
-        {
-            if (!type.WrapperType.Contains("SpawnerPreprocess_", StringComparison.Ordinal))
-                continue;
-            type.AbilityPayload = null;
-            type.AbilityPayloadAlt = null;
-        }
-    }
-
-    private static void PrefixSpawnerActionDataChildren(Dictionary<string, MpType> byWrapper)
-    {
-        if (!byWrapper.TryGetValue(
-                "Beyond.MemoryPack.Beyond_Gameplay_SpawnerActionDataForMemoryPack",
-                out MpType? baseType)
-            || baseType.Wire.Length == 0)
-            return;
-
-        foreach (MpType type in byWrapper.Values)
-        {
-            if (!type.WrapperType.Contains("SpawnerActions_", StringComparison.Ordinal))
-                continue;
-            var names = new HashSet<string>(type.Wire.Select(m => m.Name), StringComparer.Ordinal);
-            MpMember[] merged = baseType.Wire.Where(m => !names.Contains(m.Name)).Concat(type.Wire).ToArray();
-            type.Wire = merged;
-            type.Own = merged;
-        }
-    }
-
-    private static void ClearSpawnerActionAbilityPayloads(Dictionary<string, MpType> byWrapper)
-    {
-        foreach (MpType type in byWrapper.Values)
-        {
-            if (!type.WrapperType.Contains("SpawnerAction", StringComparison.Ordinal))
-                continue;
-            type.AbilityPayload = null;
-            type.AbilityPayloadAlt = null;
-        }
-    }
-
-    private static void PrefixTargetFinderChildren(Dictionary<string, MpType> byWrapper)
-    {
-        const string targetFinder = "Beyond.MemoryPack.Beyond_Gameplay_Core_Selector_TargetFinder_DataForMemoryPack";
-        if (!byWrapper.TryGetValue(targetFinder, out MpType? parent) || parent.Wire.Length == 0)
-            return;
-        foreach (MpType type in byWrapper.Values)
-        {
-            if (!IsTargetFinderChild(type.WrapperType))
-                continue;
-            var names = new HashSet<string>(type.Wire.Select(m => m.Name), StringComparer.Ordinal);
-            MpMember[] merged = parent.Wire.Where(m => !names.Contains(m.Name)).Concat(type.Wire).ToArray();
-            type.Wire = merged;
-            type.Own = merged;
-        }
-    }
-
-    private static bool IsTargetFinderChild(string wrapperType)
-    {
-        ReadOnlySpan<string> children =
-        [
-            "Selector_HitBoxFinder_DataForMemoryPack",
-            "Selector_ShapeFinder_DataForMemoryPack",
-            "Selector_InteractiveShapeFinder_DataForMemoryPack",
-            "Selector_InFightEnemyFinder_DataForMemoryPack",
-            "Selector_CharacterTeamFinder_DataForMemoryPack",
-            "Selector_MainTargetFinder_DataForMemoryPack",
-            "Selector_SmartTargetFinder_DataForMemoryPack",
-            "Selector_GuardAITargetFinder_DataForMemoryPack",
-            "Selector_AbilityEntityTargetFinder_DataForMemoryPack",
-            "Selector_GodEntityFinder_DataForMemoryPack",
-            "Selector_OwnerPartsFinder_DataForMemoryPack",
-            "Selector_OwnerSoulFinder_DataForMemoryPack",
-            "Selector_OwnerSpawnedEntityFinder_DataForMemoryPack",
-            "Selector_ProjectileFinder_DataForMemoryPack",
-            "Selector_TyphoeaArcherySelectedFinder_DataForMemoryPack",
-        ];
-        foreach (string child in children)
-        {
-            if (wrapperType.EndsWith(child, StringComparison.Ordinal))
-                return true;
-        }
-        return false;
-    }
-
-    private static void ClearSelectorAbilityPayloads(Dictionary<string, MpType> byWrapper)
-    {
-        foreach (MpType type in byWrapper.Values)
-        {
-            if (!type.WrapperType.Contains("Selector_", StringComparison.Ordinal))
-                continue;
-            type.AbilityPayload = null;
-            type.AbilityPayloadAlt = null;
-        }
-    }
-
-    private static void DisambiguateShapeDataTypes(Dictionary<string, MpType> byWrapper)
-    {
-        RewriteMemberType(
-            byWrapper,
-            "Beyond.MemoryPack.Beyond_Gameplay_Core_Selector_HitBoxFinder_DataForMemoryPack",
-            "shapeList",
-            "System.Collections.Generic.List`1<Beyond.MemoryPack.Beyond_Gameplay_Core_Selector_HitBoxFinder_ShapeDataForMemoryPack>");
-        RewriteMemberType(
-            byWrapper,
-            "Beyond.MemoryPack.Beyond_Gameplay_Core_ProjectileComponentDataForMemoryPack",
-            "shapeData",
-            "Beyond.MemoryPack.Beyond_Gameplay_Core_ProjectileComponentData_ShapeDataForMemoryPack");
-    }
-
-    private static void RewriteMemberType(
-        Dictionary<string, MpType> byWrapper,
-        string wrapperName,
-        string memberName,
-        string newType)
-    {
-        if (!byWrapper.TryGetValue(wrapperName, out MpType? type))
-            return;
-        type.Wire = type.Wire.Select(m =>
-            m.Name == memberName
-                ? new MpMember
-                {
-                    Name = m.Name,
-                    Type = newType,
-                    Kind = newType.StartsWith("System.Collections.Generic.List", StringComparison.Ordinal)
-                        ? MpKind.List
-                        : MpKind.Object,
-                }
-                : m).ToArray();
-        type.Own = type.Wire;
-    }
-
-    private static void PrefixFindTargetData(
-        Dictionary<string, List<MpType>> byTarget,
-        Dictionary<string, MpType> byWrapper,
-        string wrapperName,
-        MpMember[] abilityBase)
-    {
-        if (!byWrapper.TryGetValue(wrapperName, out MpType? type))
-            return;
-        if (!byTarget.TryGetValue("FindTargetActionData", out var bases) || bases.Count != 1)
-            return;
-        MpMember[] middle = bases[0].Wire;
-        if (middle.Length == 0 || abilityBase.Length == 0)
-            return;
-        var leafNames = new HashSet<string>(type.Wire.Select(m => m.Name), StringComparer.Ordinal);
-        MpMember[] payload = abilityBase
-            .Concat(middle)
-            .Where(m => !leafNames.Contains(m.Name))
-            .Concat(type.Wire)
-            .ToArray();
-        type.AbilityPayload = payload;
-    }
-
-    /// <summary>
-    /// Impact/SuperArmor/CharBlowOff inherit BlackboardCustomWithDropdownIntValue:
-    /// BlackboardInt wire (3) + useCustomValue.
-    /// </summary>
-    private static void AliasDropdownBlackboard(Dictionary<string, List<MpType>> byTarget, string derived)
-    {
-        PrefixWithBaseWire(byTarget, derived, "BlackboardCustomWithDropdownIntValue");
-        if (ResolveTargetList(byTarget, derived) is { Count: 1 } filled
-            && filled[0].Wire.Any(m => m.Name == "useCustomValue")
-            && filled[0].Wire.Length >= 4)
-            return;
-
-        PrefixWithBaseWire(byTarget, derived, "BlackboardInt");
-        if (ResolveTargetList(byTarget, derived) is not { Count: 1 } list)
-            return;
-        MpType type = list[0];
-        if (type.Wire.Any(m => m.Name == "useCustomValue"))
-            return;
-        MpMember extra = new()
-        {
-            Name = "useCustomValue",
-            Type = "bool",
-            Kind = MpKind.Bool,
-        };
-        type.Wire = type.Wire.Concat([extra]).ToArray();
-        type.Own = type.Wire;
-    }
-
-    /// <summary>
-    /// schemas.json collapses nested Modifier.Data to bare Data. BuffData modifier lists
-    /// are the concrete Modifier.Data wrappers, not AbilityAction Data unions.
-    /// </summary>
-    private static void RewriteBuffModifierDataLists(
-        Dictionary<string, List<MpType>> byTarget,
-        Dictionary<string, MpType> byWrapper)
-    {
-        if (!byTarget.TryGetValue("Beyond.Gameplay.Core.BuffData", out var list) || list.Count != 1)
-            return;
-        MpType buff = list[0];
-        (string Field, string Wrapper)[] map =
-        [
-            ("damageModifier", "Beyond.MemoryPack.Beyond_Gameplay_Core_DamageModifier_DataForMemoryPack"),
-            ("healModifier", "Beyond.MemoryPack.Beyond_Gameplay_Core_HealModifier_DataForMemoryPack"),
-            ("poiseModifier", "Beyond.MemoryPack.Beyond_Gameplay_Core_PoiseModifier_DataForMemoryPack"),
-            ("globalModifier", "Beyond.MemoryPack.Beyond_Gameplay_Core_GlobalModifier_DataForMemoryPack"),
-        ];
-        var wire = buff.Wire.ToArray();
-        bool changed = false;
-        for (int i = 0; i < wire.Length; i++)
-        {
-            foreach (var (field, wrapper) in map)
-            {
-                if (wire[i].Name != field)
-                    continue;
-                if (!wire[i].Type.Contains("List`1<Data>", StringComparison.Ordinal))
-                    continue;
-                if (!byWrapper.ContainsKey(wrapper))
-                    continue;
-                wire[i] = new MpMember
-                {
-                    Name = wire[i].Name,
-                    Type = $"System.Collections.Generic.List`1<{wrapper}>",
-                    Kind = MpKind.List,
-                };
-                changed = true;
-            }
+            _basenameTokenIndex.Add((tokens, preferred, WireLength(preferred)));
         }
 
-        if (!changed)
-            return;
-        buff.Wire = wire;
-        buff.Own = wire;
-    }
-
-    /// <summary>
-    /// BuffIconConfig wrapper exposes _spritePath / _orderPriorityConfig, which the exporter
-    /// skipped. Native count is 20 = those two (alpha) + 18 public wire props.
-    /// </summary>
-    private static void SynthesizeBuffIconConfigWire(
-        Dictionary<string, List<MpType>> byTarget,
-        Dictionary<string, string> kinds)
-    {
-        if (!byTarget.TryGetValue("Beyond.Gameplay.Core.BuffIconConfig", out var list) || list.Count != 1)
-            return;
-        MpType type = list[0];
-        if (type.Wire.Any(m => m.Name is "_spritePath" or "_orderPriorityConfig"))
-            return;
-        string orderType = byTarget.ContainsKey("Beyond.Gameplay.Core.BuffIconConfig.OrderPriorityConfig")
-            ? "Beyond.Gameplay.Core.BuffIconConfig.OrderPriorityConfig"
-            : byTarget.ContainsKey("OrderPriorityConfig")
-                ? "OrderPriorityConfig"
-                : "OrderPriorityConfig";
-        MpMember[] prefix =
-        [
-            new()
-            {
-                Name = "_orderPriorityConfig",
-                Type = orderType,
-                Kind = byTarget.ContainsKey(orderType) ? MpKind.Object : Classify(orderType, kinds),
-            },
-            new()
-            {
-                Name = "_spritePath",
-                Type = "string",
-                Kind = MpKind.String,
-            },
-        ];
-        type.Wire = prefix.Concat(type.Wire).ToArray();
-        type.Own = type.Wire;
-    }
-
-    private static void PrefixWithBaseWire(
-        Dictionary<string, List<MpType>> byTarget,
-        string derived,
-        string baseName)
-    {
-        if (ResolveTargetList(byTarget, derived) is not { Count: 1 } derivedList)
-            return;
-        if (ResolveTargetList(byTarget, baseName) is not { Count: 1 } baseList)
-            return;
-        MpType d = derivedList[0];
-        MpType b = baseList[0];
-        if (b.Wire.Length == 0)
-            return;
-        var names = new HashSet<string>(d.Wire.Select(m => m.Name), StringComparer.Ordinal);
-        MpMember[] merged = b.Wire.Where(m => !names.Contains(m.Name)).Concat(d.Wire).ToArray();
-        d.Wire = merged;
-        d.Own = merged;
-    }
-
-    private static void AliasEmpty(Dictionary<string, List<MpType>> byTarget, string derived, string baseName)
-    {
-        if (ResolveTargetList(byTarget, derived) is not { Count: 1 } derivedList)
-            return;
-        if (ResolveTargetList(byTarget, baseName) is not { Count: 1 } baseList)
-            return;
-        var source = derivedList[0];
-        if (source.Wire.Length != 0)
-            return;
-        source.Wire = baseList[0].Wire;
-        source.Own = baseList[0].Own.Length > 0 ? baseList[0].Own : baseList[0].Wire;
-    }
-
-    /// Fixture schemas use leaf names; v3 exports use `Ns.Outer+Leaf`.
-    private static List<MpType>? ResolveTargetList(Dictionary<string, List<MpType>> byTarget, string name)
-    {
-        if (byTarget.TryGetValue(name, out var exact) && exact.Count > 0)
-            return exact;
-
-        List<MpType>? found = null;
-        foreach (var (key, list) in byTarget)
+        foreach (var (name, list) in _byTarget)
         {
             if (list.Count == 0)
                 continue;
-            if (!key.EndsWith("+" + name, StringComparison.Ordinal)
-                && !key.EndsWith("." + name, StringComparison.Ordinal))
+            MpType type = list[0];
+            HashSet<string> nameTokens = Tokens(name);
+            nameTokens.ExceptWith(IdentityStopwords);
+            if (nameTokens.Count == 0)
                 continue;
-            if (found != null)
-                return null;
-            found = list;
-        }
-
-        return found;
-    }
-
-
-    /// <summary>
-    /// ActionHeader concretes (ScriptEvent/EntityEvent/…) inherit NodeBase + ActionHeader fields,
-    /// not ActionBase._nextID alone. OnLeaderEnterTriggerVolume native count is 18 =
-    /// NodeBase(7) + ActionHeader(7) + ScriptEventHeader(2) + leaf(2).
-    /// </summary>
-    private static void SynthesizeActionHeaderWires(
-        Dictionary<string, List<MpType>> byTarget,
-        List<(MpType Type, List<(string Name, string Type)> Extras)> pending,
-        Dictionary<string, string> kinds)
-    {
-        MpMember[] nodePrefix = BuildNodeBasePrefix(kinds);
-        MpMember[] actionHeader = UnderscoreMembers(
-            [
-                ("_filterLevel", "Beyond.Gameplay.Actions.FilterLevel"),
-                ("_filterMask", "Beyond.Gameplay.Actions.FilterMask"),
-                ("_filterMode", "bool"),
-                ("_nextID", "int"),
-                ("_priority", "int"),
-                ("_triggerActiveDuring", "Beyond.Gameplay.Actions.TriggerActiveDuring"),
-                ("_validate", "Beyond.Gameplay.Actions.Param`1<bool>"),
-            ],
-            kinds
-        );
-        MpMember[] scriptEvent = UnderscoreMembers(
-            [
-                ("_targetScript", "Beyond.Gameplay.Actions.Param`1<Beyond.Gameplay.Core.LevelScriptPtr>"),
-                ("_triggerTarget", "TriggerTarget"),
-            ],
-            kinds
-        );
-        MpMember[] entityEvent = UnderscoreMembers(
-            [
-                ("_targetEntity", "Beyond.Gameplay.Actions.Param`1<Beyond.Gameplay.Core.EntityPtr>"),
-                ("_targetEntityList", "Beyond.Gameplay.Actions.Param`1<System.Collections.Generic.List`1<Beyond.Gameplay.Core.EntityPtr>>"),
-                ("_targetEntityListOutput", "Beyond.Gameplay.Actions.ParamOutput`1<Beyond.Gameplay.Core.EntityPtr>"),
-                ("_triggerTarget", "TriggerTarget"),
-            ],
-            kinds
-        );
-
-        var extrasByType = new Dictionary<MpType, List<(string Name, string Type)>>();
-        foreach (var (type, extras) in pending)
-            extrasByType[type] = extras;
-
-        foreach (var group in byTarget.Values)
-        {
-            foreach (MpType type in group)
-            {
-                if (!type.HasDeserialize || !IsActionHeaderLineage(type.TargetType))
-                    continue;
-                if (type.TargetType is "Beyond.Gameplay.Actions.ActionHeader"
-                    or "Beyond.Gameplay.Actions.ScriptEventHeader"
-                    or "Beyond.Gameplay.Actions.EntityEventHeader"
-                    or "Beyond.Gameplay.Actions.LevelEventHeader"
-                    or "Beyond.Gameplay.Actions.MissionEventHeader")
-                    continue;
-
-                extrasByType.TryGetValue(type, out List<(string Name, string Type)>? extras);
-                extras ??= [];
-                var wireNames = new HashSet<string>(type.Wire.Select(m => m.Name), StringComparer.Ordinal);
-                MpMember[] leafUnderscore = extras
-                    .Where(e => e.Name.Length > 1
-                        && e.Name[0] == '_'
-                        && e.Name[1] != '_'
-                        && !e.Name.StartsWith("m_", StringComparison.Ordinal)
-                        && !wireNames.Contains(e.Name))
-                    .OrderBy(e => e.Name.ToLowerInvariant(), StringComparer.Ordinal)
-                    .Select(e => new MpMember
-                    {
-                        Name = e.Name,
-                        Type = e.Type,
-                        Kind = Classify(e.Type, kinds),
-                    })
-                    .ToArray();
-
-                MpMember[] intermediate =
-                    type.TargetType.Contains(".ScriptEvent.", StringComparison.Ordinal) ? scriptEvent
-                    : type.TargetType.Contains(".EntityEvent.", StringComparison.Ordinal) ? entityEvent
-                    : [];
-
-                var synthesized = new MpMember[
-                    nodePrefix.Length + actionHeader.Length + intermediate.Length
-                    + leafUnderscore.Length + type.Wire.Length];
-                int at = 0;
-                Array.Copy(nodePrefix, 0, synthesized, at, nodePrefix.Length);
-                at += nodePrefix.Length;
-                Array.Copy(actionHeader, 0, synthesized, at, actionHeader.Length);
-                at += actionHeader.Length;
-                Array.Copy(intermediate, 0, synthesized, at, intermediate.Length);
-                at += intermediate.Length;
-                Array.Copy(leafUnderscore, 0, synthesized, at, leafUnderscore.Length);
-                at += leafUnderscore.Length;
-                Array.Copy(type.Wire, 0, synthesized, at, type.Wire.Length);
-                type.Wire = synthesized;
-                type.Own = synthesized;
-            }
+            _targetTokenIndex.Add((nameTokens, type.Wire.Length, type.SerializeMarker, name));
         }
     }
-
-    private static MpMember[] BuildNodeBasePrefix(Dictionary<string, string> kinds) =>
-        UnderscoreMembers(
-            [
-                ("_dontLogWarning", "bool"),
-                ("_ID", "int"),
-                ("_releaseWhenExecutionFinished", "bool"),
-                ("_uid", "string"),
-                ("scopeMask", "Beyond.GEnums.ScopeName"),
-                ("useCurrentScope", "bool"),
-                ("useGraphScope", "bool"),
-            ],
-            kinds
-        );
-
-    private static MpMember[] UnderscoreMembers(
-        (string Name, string Type)[] members,
-        Dictionary<string, string> kinds) =>
-        members
-            .Select(m => new MpMember
-            {
-                Name = m.Name,
-                Type = m.Type,
-                Kind = Classify(m.Type, kinds),
-            })
-            .ToArray();
-
-        /// <summary>
-    /// Recover ActionBase MemoryPack wire for wrappers whose schemas.json wire_order is empty
-    /// or only lists leaf props. Confirmed against WaitForSeconds/Split/CallServer/SwitchInt/
-    /// IfElseAction/StartDialogAction formatter Deserialize (memberCount + setter order).
-    /// </summary>
-    private static void SynthesizeActionBaseWires(
-        Dictionary<string, List<MpType>> byTarget,
-        List<(MpType Type, List<(string Name, string Type)> Extras)> pending,
-        Dictionary<string, string> kinds)
-    {
-        MpMember[] prefix = BuildActionBasePrefix(kinds);
-        var extrasByType = new Dictionary<MpType, List<(string Name, string Type)>>();
-        foreach (var (type, extras) in pending)
-            extrasByType[type] = extras;
-
-        foreach (var group in byTarget.Values)
-        {
-            foreach (MpType type in group)
-            {
-                if (!IsActionBaseConcrete(type.TargetType, type.HasDeserialize))
-                    continue;
-
-                extrasByType.TryGetValue(type, out List<(string Name, string Type)>? extras);
-                extras ??= [];
-                var wireNames = new HashSet<string>(type.Wire.Select(m => m.Name), StringComparer.Ordinal);
-                MpMember[] underscore = extras
-                    .Where(e => e.Name.Length > 1
-                        && e.Name[0] == '_'
-                        && e.Name[1] != '_'
-                        && !e.Name.StartsWith("m_", StringComparison.Ordinal)
-                        && !wireNames.Contains(e.Name))
-                    .OrderBy(e => e.Name.ToLowerInvariant(), StringComparer.Ordinal)
-                    .Select(e => new MpMember
-                    {
-                        Name = e.Name,
-                        Type = e.Type,
-                        Kind = Classify(e.Type, kinds),
-                    })
-                    .ToArray();
-
-                var synthesized = new MpMember[prefix.Length + underscore.Length + type.Wire.Length];
-                Array.Copy(prefix, 0, synthesized, 0, prefix.Length);
-                Array.Copy(underscore, 0, synthesized, prefix.Length, underscore.Length);
-                Array.Copy(type.Wire, 0, synthesized, prefix.Length + underscore.Length, type.Wire.Length);
-                type.Wire = synthesized;
-                type.Own = synthesized;
-            }
-        }
-    }
-
-    private static MpMember[] BuildActionBasePrefix(Dictionary<string, string> kinds)
-    {
-        (string Name, string Type)[] members =
-        [
-            ("_dontLogWarning", "bool"),
-            ("_ID", "int"),
-            ("_releaseWhenExecutionFinished", "bool"),
-            ("_uid", "string"),
-            ("scopeMask", "Beyond.GEnums.ScopeName"),
-            ("useCurrentScope", "bool"),
-            ("useGraphScope", "bool"),
-            ("_nextID", "int"),
-        ];
-        return members
-            .Select(m => new MpMember
-            {
-                Name = m.Name,
-                Type = m.Type,
-                Kind = Classify(m.Type, kinds),
-            })
-            .ToArray();
-    }
-
-    private static bool IsActionBaseConcrete(string targetType, bool hasDeserialize)
-    {
-        // ClientCutsceneTeleport's wrapper has no Deserialize of its own, but
-        // StartDialogAndTeleport still writes the ActionBase prefix before its 7 fields.
-        if (!hasDeserialize && targetType != "Beyond.Gameplay.Actions.ClientCutsceneTeleport")
-            return false;
-        if (!targetType.StartsWith("Beyond.Gameplay.Actions.", StringComparison.Ordinal))
-            return false;
-        if (targetType is "Beyond.Gameplay.Actions.ActionBase" or "Beyond.Gameplay.Actions.NodeBase")
-            return false;
-        if (IsActionHeaderLineage(targetType))
-            return false;
-        if (targetType.Contains("ActionSerializedMap", StringComparison.Ordinal)
-            || targetType.Contains("ActionMapAssetRaw", StringComparison.Ordinal)
-            || targetType.Contains("ActionNodePtr", StringComparison.Ordinal)
-            || targetType.StartsWith("Beyond.Gameplay.Actions.Param`1", StringComparison.Ordinal)
-            || targetType.StartsWith("Beyond.Gameplay.Actions.ParamOutput`1", StringComparison.Ordinal)
-            || targetType.StartsWith("Beyond.Gameplay.Actions.Getter`1", StringComparison.Ordinal)
-            || targetType.StartsWith("Beyond.Gameplay.Actions.List", StringComparison.Ordinal)
-            || targetType.StartsWith("Beyond.Gameplay.Actions.GetInteractiveProperty`1", StringComparison.Ordinal)
-            || targetType.StartsWith("Beyond.Gameplay.Actions.GetLevelScriptPropertyGeneric`1", StringComparison.Ordinal)
-            || targetType.StartsWith("Beyond.Gameplay.Actions.IParam", StringComparison.Ordinal))
-            return false;
-        return true;
-    }
-
-    private static bool IsActionHeaderLineage(string targetType) =>
-        targetType is "Beyond.Gameplay.Actions.ActionHeader"
-            or "Beyond.Gameplay.Actions.ScriptEventHeader"
-            or "Beyond.Gameplay.Actions.EntityEventHeader"
-            or "Beyond.Gameplay.Actions.LevelEventHeader"
-            or "Beyond.Gameplay.Actions.MissionEventHeader"
-        || targetType.Contains(".ScriptEvent.", StringComparison.Ordinal)
-        || targetType.Contains(".EntityEvent.", StringComparison.Ordinal)
-        || targetType.Contains(".LevelEvent.", StringComparison.Ordinal)
-        || targetType.Contains(".MissionEvent.", StringComparison.Ordinal)
-        || targetType.StartsWith("Beyond.Gameplay.Actions.On", StringComparison.Ordinal);
-
-    private static bool IsAbilityConcrete(MpType type)
-    {
-        if (type.TargetType == "AbilityActionData"
-            || type.TargetType.EndsWith("+AbilityActionData", StringComparison.Ordinal)
-            || type.TargetType.EndsWith(".AbilityActionData", StringComparison.Ordinal))
-            return false;
-        string wrapper = type.WrapperType;
-        if (wrapper.Contains("Beyond_Gameplay_Actions_", StringComparison.Ordinal)
-            || wrapper.Contains("Beyond_Gameplay_AI_", StringComparison.Ordinal))
-            return false;
-        if (type.MinFieldOffset is int offset && offset < 32)
-            return false;
-        // Finder/Validator/PostProcessor Data is not AbilityActionData, even when the
-        // schema collapsed the nested type to bare Data.
-        if (type.WrapperType.Contains("_Selector_", StringComparison.Ordinal)
-            && (type.WrapperType.Contains("Finder", StringComparison.Ordinal)
-                || type.WrapperType.Contains("Validator", StringComparison.Ordinal)
-                || type.WrapperType.Contains("Processor", StringComparison.Ordinal)))
-            return false;
-        return type.TargetType == "Data" || type.TargetType.EndsWith("ActionData", StringComparison.Ordinal);
-    }
-
-    private static bool IsBackingField(string name) =>
-        name.StartsWith('<') && name.Contains("k__BackingField", StringComparison.Ordinal);
 
     private static MpMember[] ReadMembers(JsonElement wrapper, string property, Dictionary<string, string> kinds)
     {
@@ -2201,9 +1074,10 @@ public sealed class MemoryPackSchema
                 return MpKind.Int16;
             case "ushort" or "System.UInt16":
                 return MpKind.UInt16;
-            case "int" or "uint"
-                or "System.Int32" or "System.UInt32" or "UnityEngine.LayerMask":
+            case "int" or "System.Int32" or "UnityEngine.LayerMask":
                 return MpKind.Int32;
+            case "uint" or "System.UInt32":
+                return MpKind.UInt32;
             case "long" or "System.Int64":
                 return MpKind.Int64;
             case "ulong" or "System.UInt64":
@@ -2255,8 +1129,10 @@ public sealed class MemoryPackSchema
                 return MpKind.Int16;
             if (kind is "uint16")
                 return MpKind.UInt16;
-            if (kind is "int32" or "uint32")
+            if (kind is "int32")
                 return MpKind.Int32;
+            if (kind is "uint32")
+                return MpKind.UInt32;
             if (kind == "float32")
                 return MpKind.Float32;
             if (kind == "bool")

@@ -12,7 +12,6 @@ namespace BydTools.Formats.MemoryPack;
 /// memberCount 0 with a non-empty wire yields defaults; count below wire length
 /// reads a prefix (MemoryPack versioning). Strings are StringPool int32 ids.
 /// AbilityActionData / ActionBase are MemoryPack unions (tag, then concrete).
-/// Concrete ability payloads are AbilityActionData members plus wrapper wire_order.
 /// Valuetype payloads listed in unmanaged.json are memcpy layouts (no object header).
 /// UnityEngine.AnimationCurve uses the native MemoryPack layout (count 3 + Keyframe[28]).
 /// </summary>
@@ -135,9 +134,14 @@ public sealed class MemoryPackDecoder
             || type.StartsWith("Beyond.Optional<", StringComparison.Ordinal);
         // Nested Optional<T> of a memcpy T is unmanaged only when the schema
         // field says so. Other Optional sites use the object-header formatter.
-        // Depth 0 keeps the unmanaged path so Optional<Vector3> roots still decode.
-        if (optional && depth > 0 && collectionEncoding != "memcpy")
+        if (optional)
+        {
+            if (collectionEncoding == "memcpy"
+                && _schema.TryUnmanaged(type, out MpUnmanagedLayout? optionalLayout))
+                return UnwrapUnmanagedNullable(
+                    type, ReadUnmanaged(cursor, optionalLayout, depth, sandbox));
             return ReadBeyondOptional(cursor, type, depth, sandbox);
+        }
 
         if (_schema.TryUnmanaged(type, out MpUnmanagedLayout? unmanaged))
         {
@@ -155,8 +159,6 @@ public sealed class MemoryPackDecoder
             JsonNode blob = ReadUnmanaged(cursor, unmanaged, depth, sandbox);
             return UnwrapUnmanagedNullable(type, blob);
         }
-        if (optional)
-            return ReadBeyondOptional(cursor, type, depth, sandbox);
         if (collectionEncoding == "memorypack")
             return ReadMemoryPackValue(cursor, type, depth, sandbox);
         if (IsTaggedUnion(type))
@@ -184,6 +186,8 @@ public sealed class MemoryPackDecoder
                 return JsonValue.Create((int)cursor.U16());
             case MpKind.Int32:
                 return JsonValue.Create(cursor.I32());
+            case MpKind.UInt32:
+                return JsonValue.Create(cursor.U32());
             case MpKind.Enum:
                 return JsonValue.Create(ReadEnum(cursor, type));
             case MpKind.Int64:
@@ -223,19 +227,9 @@ public sealed class MemoryPackDecoder
             default:
                 // Wrapper FQCNs (BuffData modifier list elements) resolve via byWrapper.
                 MpType resolved = _schema.ResolveNamed(type);
-                return ReadObject(cursor, resolved, abilityPayload: false, depth, sandbox);
+                return ReadObject(cursor, resolved, depth, sandbox);
         }
     }
-
-    /// <summary>
-    /// AbilityActionData concretes, and bare <c>Data</c> leaves that share those wrappers,
-    /// carry the four AbilityActionData fields before the leaf wire_order.
-    /// </summary>
-    private static bool UsesAbilityPayload(string staticType, MpType concrete) =>
-        concrete.AbilityPayload != null
-        && (staticType == "AbilityActionData"
-            || staticType == "Data"
-            || staticType.Contains("AbilityActionData", StringComparison.Ordinal));
 
     private bool IsTaggedUnion(string type) =>
         LookupUnionMap(type) != null
@@ -337,6 +331,10 @@ public sealed class MemoryPackDecoder
             return JsonValue.Create(cursor.I64());
         if (kind == MpKind.UInt64 || field.Type is "ulong" or "System.UInt64")
             return JsonValue.Create(cursor.U64());
+        if (kind == MpKind.UInt32 || field.Type is "uint" or "System.UInt32")
+            return JsonValue.Create(cursor.U32());
+        if (kind == MpKind.Int32 || field.Type is "int" or "System.Int32")
+            return JsonValue.Create(cursor.I32());
         if (kind == MpKind.Vector2)
             return Vec(cursor.F32(), cursor.F32());
         if (kind == MpKind.Vector3)
@@ -486,7 +484,7 @@ public sealed class MemoryPackDecoder
         }
 
         cursor.Position = origin;
-        return ReadObject(cursor, _schema.Require(type, hint: null), abilityPayload: false, depth, sandbox);
+        return ReadObject(cursor, _schema.Require(type, hint: null), depth, sandbox);
     }
 
     /// <summary>
@@ -528,7 +526,7 @@ public sealed class MemoryPackDecoder
         else
             return false;
 
-        node = ReadObject(cursor, chosen, abilityPayload: false, depth, sandbox);
+        node = ReadObject(cursor, chosen, depth, sandbox);
         if (node is JsonObject obj)
         {
             if (!obj.ContainsKey("$type"))
@@ -549,9 +547,7 @@ public sealed class MemoryPackDecoder
 
         if (TryMappedConcrete(staticType, tag.Value, hint, out MpType mappedType))
         {
-            JsonNode? mapped = UsesAbilityPayload(staticType, mappedType)
-                ? ReadConcrete(cursor, mappedType, depth, sandbox)
-                : ReadObject(cursor, mappedType, abilityPayload: false, depth, sandbox);
+            JsonNode? mapped = ReadConcrete(cursor, mappedType, depth, sandbox);
             if (mapped is JsonObject mappedObj)
             {
                 if (!mappedObj.ContainsKey("$type"))
@@ -561,8 +557,6 @@ public sealed class MemoryPackDecoder
 
             return mapped;
         }
-        if (staticType == "AbilityActionData" && _schema.FindAbilityTag(tag.Value) is MpType cached)
-            return ReadConcrete(cursor, cached, depth, sandbox);
 
         int afterTag = cursor.Position;
         IReadOnlyList<MpType> candidates = _schema.UnionCandidates(staticType, hint);
@@ -572,9 +566,7 @@ public sealed class MemoryPackDecoder
             var fork = cursor.Fork(afterTag);
             try
             {
-                JsonNode? node = UsesAbilityPayload(staticType, candidate)
-                    ? ReadConcrete(fork, candidate, depth + 1, sandbox: true)
-                    : ReadObject(fork, candidate, abilityPayload: false, depth + 1, sandbox: true);
+                JsonNode? node = ReadObject(fork, candidate, depth + 1, sandbox: true);
                 if (node is not JsonObject obj)
                     continue;
                 matches.Add((candidate, fork.Position, obj));
@@ -596,8 +588,6 @@ public sealed class MemoryPackDecoder
         if (ends.Count == 1 && ambiguousEnds.Count == 0)
         {
             var chosen = ends.Values.First();
-            if (!sandbox && staticType == "AbilityActionData")
-                _schema.RememberAbilityTag(tag.Value, chosen.Type);
             cursor.Position = ends.Keys.First();
             if (!chosen.Value.ContainsKey("$type"))
                 chosen.Value["$type"] = ShortName(chosen.Type);
@@ -625,13 +615,13 @@ public sealed class MemoryPackDecoder
 
     private JsonNode? ReadConcrete(Cursor cursor, MpType type, int depth, bool sandbox)
     {
-        JsonNode? node = ReadObject(cursor, type, abilityPayload: true, depth, sandbox);
+        JsonNode? node = ReadObject(cursor, type, depth, sandbox);
         if (node is JsonObject obj && !obj.ContainsKey("$type"))
             obj["$type"] = ShortName(type);
         return node;
     }
 
-    private JsonNode? ReadObject(Cursor cursor, MpType type, bool abilityPayload, int depth, bool sandbox)
+    private JsonNode? ReadObject(Cursor cursor, MpType type, int depth, bool sandbox)
     {
         int origin = cursor.Position;
         int? count = ReadHeader(cursor);
@@ -641,14 +631,7 @@ public sealed class MemoryPackDecoder
             throw new InvalidDataException($"Negative member count {count} at offset {origin}.");
 
         MpMember[] members;
-        // Named EffectActionData / KeywordAction leaves carry AbilityPayload. Accept it
-        // outside a union sandbox. Inside the sandbox only the union path opts in.
-        bool allowAbility = abilityPayload || !sandbox;
-        if (allowAbility && type.AbilityPayload != null && count == type.AbilityPayload.Length)
-            members = type.AbilityPayload;
-        else if (allowAbility && type.AbilityPayloadAlt != null && count == type.AbilityPayloadAlt.Length)
-            members = type.AbilityPayloadAlt;
-        else if (count == type.Wire.Length)
+        if (count == type.Wire.Length)
             members = type.Wire;
         else if (count == type.Own.Length)
             members = type.Own;
@@ -667,13 +650,9 @@ public sealed class MemoryPackDecoder
         }
         else
         {
-            string ability = type.AbilityPayload == null
-                ? ""
-                : $", ability {type.AbilityPayload.Length}"
-                    + (type.AbilityPayloadAlt == null ? "" : $"/{type.AbilityPayloadAlt.Length}");
             throw new InvalidDataException(
                 $"memberCount {count} at offset {origin} does not match {ShortName(type)} "
-                + $"(wire {type.Wire.Length}, merged {type.Own.Length}{ability})."
+                + $"(wire {type.Wire.Length}, merged {type.Own.Length})."
             );
         }
 
@@ -773,7 +752,7 @@ public sealed class MemoryPackDecoder
         int formatterCount = resolved.Wire.Length;
         if (formatterCount <= 0 || cursor.Buffer[cursor.Position] != formatterCount)
             return false;
-        node = ReadObject(cursor, resolved, abilityPayload: false, depth, sandbox);
+        node = ReadObject(cursor, resolved, depth, sandbox);
         return true;
     }
 
@@ -783,8 +762,17 @@ public sealed class MemoryPackDecoder
     /// </summary>
     private void MaybeConsumeDictionaryValuePresence(Cursor cursor, string valueType)
     {
-        if (cursor.Remaining < 2 || _schema.KindOf(valueType) != MpKind.Object)
+        if (cursor.Remaining < 2)
             return;
+        try
+        {
+            if (_schema.KindOf(valueType) != MpKind.Object)
+                return;
+        }
+        catch (MemoryPackTypeException)
+        {
+            return;
+        }
         if (cursor.Buffer[cursor.Position] != 1)
             return;
 
@@ -799,8 +787,6 @@ public sealed class MemoryPackDecoder
         }
 
         byte next = cursor.Buffer[cursor.Position + 1];
-        int ability = resolved.AbilityPayload?.Length ?? -1;
-        int abilityAlt = resolved.AbilityPayloadAlt?.Length ?? -1;
         // memberCount 1 collides with the first byte of i32 list count 1.
         // SubSpecialPerformEntryData (wire 1) values must not eat that 0x01.
         // next==0 collides with a StringPool id whose low byte is 0
@@ -809,32 +795,43 @@ public sealed class MemoryPackDecoder
             count > 1 && header == count;
         if (next == 255 || next == 250
             || PlausibleHeader(resolved.Wire.Length, next)
-            || PlausibleHeader(resolved.Own.Length, next)
-            || PlausibleHeader(ability, next)
-            || PlausibleHeader(abilityAlt, next))
+            || PlausibleHeader(resolved.Own.Length, next))
             cursor.U8();
     }
 
     /// <summary>
     /// MemoryPack <c>WriteUnmanaged</c> of a sequential key/value pair uses the
-    /// C# ABI size, not packed field widths. <c>Dictionary&lt;ulong, int&gt;</c>
-    /// is 16 bytes/entry (8+4+4 pad). Evidence: RunePuzzleData.anchorPointToIndexMap.
+    /// C# ABI size, not packed field widths. Padding sits between key and value
+    /// when the value needs a stricter alignment, then at the end of the pair.
+    /// <c>Dictionary&lt;ulong, int&gt;</c> is 16 bytes/entry (8+4+4 trailing pad).
     /// Enum keys and ForMemoryPack values are written by formatters, not as a
     /// pair struct — padding those (EnemyHurtShakeIntensity byte + header-2
     /// config) desynchronizes EnemyAnimExtraData.
     /// </summary>
-    private int UnmanagedPairPadding(string keyType, string valueType)
+    private bool TryUnmanagedPairLayout(string keyType, string valueType, out int midPad, out int endPad)
     {
-        if (_schema.KindOf(keyType) == MpKind.Enum || _schema.HasWrapper(valueType))
-            return 0;
+        midPad = 0;
+        endPad = 0;
+        try
+        {
+            if (_schema.KindOf(keyType) == MpKind.Enum || _schema.HasWrapper(valueType))
+                return false;
+        }
+        catch (MemoryPackTypeException)
+        {
+            return false;
+        }
+
         if (!TryBlittableLayout(keyType, out int keySize, out int keyAlign)
             || !TryBlittableLayout(valueType, out int valueSize, out int valueAlign))
-            return 0;
-        int offset = Align(0, keyAlign) + keySize;
-        offset = Align(offset, valueAlign) + valueSize;
-        int pair = Align(offset, Math.Max(keyAlign, valueAlign));
-        int packed = keySize + valueSize;
-        return pair > packed ? pair - packed : 0;
+            return false;
+        int afterKey = Align(0, keyAlign) + keySize;
+        int valueStart = Align(afterKey, valueAlign);
+        int afterValue = valueStart + valueSize;
+        int pairEnd = Align(afterValue, Math.Max(keyAlign, valueAlign));
+        midPad = valueStart - afterKey;
+        endPad = pairEnd - afterValue;
+        return midPad > 0 || endPad > 0;
     }
 
     private bool TryBlittableLayout(string type, out int size, out int align)
@@ -844,11 +841,33 @@ public sealed class MemoryPackDecoder
         if (_schema.TryUnmanaged(type, out MpUnmanagedLayout? layout) && layout.PayloadSize > 0)
         {
             size = layout.PayloadSize;
-            align = size >= 8 ? 8 : size >= 4 ? 4 : size >= 2 ? 2 : 1;
+            align = 1;
+            foreach (MpUnmanagedField field in layout.Fields)
+            {
+                if (TryBlittableLayout(field.Type, out _, out int fieldAlign) && fieldAlign > align)
+                    align = fieldAlign;
+                else if (field.Size is int fieldSize)
+                {
+                    int guessed = fieldSize >= 8 ? 8 : fieldSize >= 4 ? 4 : fieldSize >= 2 ? 2 : 1;
+                    if (guessed > align)
+                        align = guessed;
+                }
+            }
+
             return true;
         }
 
-        switch (_schema.KindOf(type))
+        MpKind kind;
+        try
+        {
+            kind = _schema.KindOf(type);
+        }
+        catch (MemoryPackTypeException)
+        {
+            return false;
+        }
+
+        switch (kind)
         {
             case MpKind.Bool or MpKind.Int8 or MpKind.UInt8:
                 size = 1;
@@ -858,7 +877,7 @@ public sealed class MemoryPackDecoder
                 size = 2;
                 align = 2;
                 return true;
-            case MpKind.Int32 or MpKind.Enum or MpKind.Float32:
+            case MpKind.Int32 or MpKind.UInt32 or MpKind.Enum or MpKind.Float32:
                 size = 4;
                 align = 4;
                 return true;
@@ -886,6 +905,15 @@ public sealed class MemoryPackDecoder
     private static int Align(int value, int align) =>
         align <= 1 ? value : (value + align - 1) / align * align;
 
+    private static void SkipPad(Cursor cursor, int pad)
+    {
+        if (pad <= 0)
+            return;
+        if (cursor.Remaining < pad)
+            throw new InvalidDataException($"Dictionary pair padding {pad} at offset {cursor.Position}.");
+        cursor.Position += pad;
+    }
+
     private JsonNode? ReadDictionary(Cursor cursor, string type, int depth, bool sandbox, bool v2)
     {
         if (v2)
@@ -903,13 +931,16 @@ public sealed class MemoryPackDecoder
         (string key, string value) = SplitPair(type);
         MpKind keyKind = _schema.KindOf(key);
         bool objectKeys = keyKind is MpKind.String or MpKind.Int8 or MpKind.UInt8
-            or MpKind.Int16 or MpKind.UInt16 or MpKind.Int32 or MpKind.Int64 or MpKind.UInt64 or MpKind.Enum;
-        int pairPad = UnmanagedPairPadding(key, value);
+            or MpKind.Int16 or MpKind.UInt16 or MpKind.Int32 or MpKind.UInt32
+            or MpKind.Int64 or MpKind.UInt64 or MpKind.Enum;
+        bool padPairs = TryUnmanagedPairLayout(key, value, out int midPad, out int endPad);
         var obj = new JsonObject();
         var pairs = new JsonArray();
         for (int i = 0; i < count; i++)
         {
             JsonNode? keyNode = ReadValue(cursor, key, null, depth + 1, sandbox);
+            if (padPairs)
+                SkipPad(cursor, midPad);
             // dictionary-v2 already has a container header. A per-value 0x01
             // prefix was an obsolete guess and collides with memberCount 1.
             if (!v2)
@@ -918,12 +949,8 @@ public sealed class MemoryPackDecoder
                 && TryReadUnmanagedFormatter(cursor, value, depth + 1, sandbox, out JsonNode? formatted)
                 ? formatted
                 : ReadValue(cursor, value, null, depth + 1, sandbox);
-            if (pairPad > 0)
-            {
-                if (cursor.Remaining < pairPad)
-                    throw new InvalidDataException($"Dictionary pair padding {pairPad} at offset {cursor.Position}.");
-                cursor.Position += pairPad;
-            }
+            if (padPairs)
+                SkipPad(cursor, endPad);
             if (!objectKeys)
             {
                 var pair = new JsonArray();
@@ -936,6 +963,7 @@ public sealed class MemoryPackDecoder
             string text = keyNode switch
             {
                 JsonValue v when v.TryGetValue(out string? s) => s ?? "",
+                JsonValue v when v.TryGetValue(out uint n) => n.ToString(CultureInfo.InvariantCulture),
                 JsonValue v when v.TryGetValue(out int n) => n.ToString(CultureInfo.InvariantCulture),
                 JsonValue v when v.TryGetValue(out long n) => n.ToString(CultureInfo.InvariantCulture),
                 JsonValue v when v.TryGetValue(out ulong n) => n.ToString(CultureInfo.InvariantCulture),
@@ -1124,6 +1152,8 @@ public sealed class MemoryPackDecoder
         public byte[] Bytes(int count) => Take(count).ToArray();
 
         public int I32() => BitConverter.ToInt32(Take(4));
+
+        public uint U32() => BitConverter.ToUInt32(Take(4));
 
         public ushort U16() => BitConverter.ToUInt16(Take(2));
 
