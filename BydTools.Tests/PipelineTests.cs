@@ -64,6 +64,48 @@ public class PipelineTests
     }
 
     [Fact]
+    public void JsonData_block_decodes_memorypack_like_lua()
+    {
+        byte[] sample = File.ReadAllBytes(Path.Combine(MemoryPackFixtures(), "samples", "BambooRaftTaskTable.json"));
+        byte[] notes = "Total Size: 12\r\n[]"u8.ToArray();
+        byte[] shpi = "SHPI...."u8.ToArray();
+        using var root = new TempDir();
+        using var output = new TempDir();
+        Samples.CreateGame(
+            root.Path,
+            Samples.Entry("775A31D1", "JsonData", EVFSBlockType.JsonData, "Data/Json/BambooRaftTaskTable.json", sample),
+            Samples.Entry("775A31D1", "JsonData", EVFSBlockType.JsonData, "Data/Json/StringPool/StringPoolCounting.json", notes),
+            Samples.Entry("775A31D1", "JsonData", EVFSBlockType.JsonData, "Data/Json/StringPool/StringPoolHashIndex.byte", shpi)
+        );
+        var block = VfsArchive.Open(Vfs(root.Path), Samples.Key, new QuietLogger()).Find("JsonData")!;
+        var result = new VfsExtractor(new QuietLogger()).Dump(block, output.Path, jobs: 1);
+        Assert.Equal(0, result.Failed);
+        Assert.Contains(
+            "questConfigs",
+            File.ReadAllText(Path.Combine(output.Path, "Data", "Json", "BambooRaftTaskTable.json")),
+            StringComparison.Ordinal
+        );
+        Assert.Equal(notes, File.ReadAllBytes(Path.Combine(output.Path, "Data", "Json", "StringPool", "StringPoolCounting.json")));
+        Assert.Equal(shpi, File.ReadAllBytes(Path.Combine(output.Path, "Data", "Json", "StringPool", "StringPoolHashIndex.byte")));
+    }
+
+    [Fact]
+    public void JsonData_block_raw_copies_bytes()
+    {
+        byte[] sample = File.ReadAllBytes(Path.Combine(MemoryPackFixtures(), "samples", "BambooRaftTaskTable.json"));
+        using var root = new TempDir();
+        using var output = new TempDir();
+        Samples.CreateGame(
+            root.Path,
+            Samples.Entry("775A31D1", "JsonData", EVFSBlockType.JsonData, "Data/Json/BambooRaftTaskTable.json", sample)
+        );
+        var block = VfsArchive.Open(Vfs(root.Path), Samples.Key, new QuietLogger()).Find("JsonData")!;
+        var result = new VfsExtractor(new QuietLogger(), rawJsonData: true).Dump(block, output.Path, jobs: 1);
+        Assert.Equal(0, result.Failed);
+        Assert.Equal(sample, File.ReadAllBytes(Path.Combine(output.Path, "Data", "Json", "BambooRaftTaskTable.json")));
+    }
+
+    [Fact]
     public void Lua_block_copies_files_that_are_not_lua()
     {
         byte[] markdown = "# notes\n"u8.ToArray();
@@ -170,6 +212,23 @@ public class PipelineTests
     }
 
     private static string Vfs(string root) => Path.Combine(root, VFSDefine.VfsDirectoryName);
+
+    private static string MemoryPackFixtures()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null)
+        {
+            string candidate = Path.Combine(dir.FullName, "BydTools.Tests", "Fixtures", "MemoryPack");
+            if (Directory.Exists(candidate))
+                return candidate;
+            candidate = Path.Combine(dir.FullName, "Fixtures", "MemoryPack");
+            if (Directory.Exists(candidate))
+                return candidate;
+            dir = dir.Parent;
+        }
+
+        throw new DirectoryNotFoundException("MemoryPack fixtures were not found.");
+    }
 
     private sealed class TempDir : IDisposable
     {

@@ -1,5 +1,6 @@
 using BydTools.Extraction;
 using BydTools.Extraction.Vfs;
+using BydTools.Formats.MemoryPack;
 using BydTools.VFS;
 using Spectre.Console;
 
@@ -56,6 +57,7 @@ public sealed class VfsCommand : ICommand
                 return Fail(2, "--blocktype is required.");
         }
 
+        bool rawJsonData = parser.HasFlag("raw");
         var logger = new Logger(parser.HasFlag("verbose"));
         VfsArchive archive;
         try
@@ -67,12 +69,40 @@ public sealed class VfsCommand : ICommand
             return Fail(1, ex.Message);
         }
 
-        var extractor = new VfsExtractor(logger);
         if (debug)
         {
-            extractor.WriteDebugReport(archive);
+            new VfsExtractor(logger).WriteDebugReport(archive);
             return 0;
         }
+
+        MemoryPackSchema? jsonSchema = null;
+        IReadOnlyDictionary<string, IReadOnlyDictionary<int, string>>? unionMaps = null;
+        if (!rawJsonData)
+        {
+            string? schemaDir = parser.Get("schema-dir");
+            if (!string.IsNullOrWhiteSpace(schemaDir))
+            {
+                try
+                {
+                    MemoryPackExport.Paths paths = MemoryPackExport.Resolve(
+                        schemaDir, schema: null, index: null, unionMap: null);
+                    jsonSchema = MemoryPackSchema.Load(paths.Schema, paths.TypeIndex);
+                    unionMaps = string.IsNullOrWhiteSpace(paths.UnionMap)
+                        ? MemoryPackResources.UnionMaps
+                        : JsonDataMemoryPack.LoadUnionMap(paths.UnionMap);
+                }
+                catch (Exception ex) when (ex is ArgumentException or FileNotFoundException or InvalidDataException or IOException)
+                {
+                    return Fail(2, ex.Message);
+                }
+            }
+        }
+
+        var extractor = new VfsExtractor(
+            logger,
+            rawJsonData: rawJsonData,
+            jsonSchema: jsonSchema,
+            unionMaps: unionMaps);
 
         var blocks = new List<VfsBlock>();
         foreach (string token in blockTypeArg!.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
@@ -145,6 +175,9 @@ public sealed class VfsCommand : ICommand
             .Add("key", null, "ChaCha20 key, Base64 of 32 bytes. Overrides --platform", "base64")
             .Add("platform", null, "Key to use when --key is omitted", "name", continuation: "pc (default) or android.")
             .Add("jobs", null, "How many chunks to read at once", "n", continuation: "Default: processor count.")
+            .Add("raw", null, "Write JsonData files without MemoryPack decode")
+            .Add("schema-dir", null, "beyond-mp-schema export directory (overrides embedded)", "dir",
+                continuation: "Loads schemas/type_index/union-map/unmanaged/enums as .msgpack.lz4 or .json. Ignored with --raw.")
             .Add("debug", "d", "Scan block declarations without extracting")
             .Add("verbose", "v", "Print per-chunk and per-file details")
             .Add("help", "h", "Show help information");
@@ -155,7 +188,16 @@ public sealed class VfsCommand : ICommand
             "VFS asset dumper",
             "vfs --input <path> --output <dir> --blocktype <type>",
             parser,
-            () => HelpFormatter.WriteEnumValues("Available block types", BlockRegistry.All.Select(static d => d.Type))
+            () =>
+            {
+                HelpFormatter.WriteEnumValues("Available block types", BlockRegistry.All.Select(static d => d.Type));
+                HelpFormatter.WriteSection("Notes");
+                Console.WriteLine("  JsonData .json files are decoded to plaintext using the embedded MemoryPack schema.");
+                Console.WriteLine("  --raw copies those files unchanged. --schema-dir overrides the embed.");
+                Console.WriteLine("  StringPool*.byte in the same block is used for string ids, then copied as-is.");
+                Console.WriteLine("  Lua .lua files are decrypted in place. Table .bytes become SparkBuffer JSON.");
+                Console.WriteLine();
+            }
         );
     }
 

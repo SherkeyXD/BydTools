@@ -1,16 +1,24 @@
 using BydTools.Audio.Pck;
 using BydTools.Extraction.Sink;
 using BydTools.Formats.Lua;
+using BydTools.Formats.MemoryPack;
 using BydTools.Formats.SparkBuffer;
 using BydTools.Formats.Usm;
 
 namespace BydTools.Extraction.Vfs;
 
-public enum HandleResult
+public enum HandleStatus
 {
     Handled,
     Skipped,
     Failed,
+}
+
+public readonly record struct HandleResult(HandleStatus Status, string? Error = null)
+{
+    public static HandleResult Handled { get; } = new(HandleStatus.Handled);
+    public static HandleResult Skipped { get; } = new(HandleStatus.Skipped);
+    public static HandleResult Fail(string? error = null) => new(HandleStatus.Failed, error);
 }
 
 public interface IContentHandler
@@ -34,9 +42,61 @@ public sealed class SparkBufferHandler : IContentHandler
             output.Complete();
             return HandleResult.Handled;
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            return HandleResult.Failed;
+            return HandleResult.Fail(ex.Message);
+        }
+    }
+}
+
+public sealed class JsonDataHandler : IContentHandler
+{
+    private readonly MemoryPackSchema _schema;
+    private readonly MemoryPackDecoder _decoder;
+
+    public JsonDataHandler(BeyondStringPool? pool = null)
+        : this(MemoryPackResources.Schema, MemoryPackResources.UnionMaps, pool)
+    {
+    }
+
+    public JsonDataHandler(
+        MemoryPackSchema schema,
+        IReadOnlyDictionary<string, IReadOnlyDictionary<int, string>>? unionMaps,
+        BeyondStringPool? pool = null)
+    {
+        _schema = schema;
+        _decoder = new MemoryPackDecoder(schema, pool, unionMaps);
+    }
+
+    public bool CanHandle(string relativePath) =>
+        Path.GetExtension(relativePath).Equals(".json", StringComparison.OrdinalIgnoreCase);
+
+    public HandleResult Handle(string relativePath, ReadOnlyMemory<byte> data, IOutputSink sink)
+    {
+        try
+        {
+            JsonDataFileResult result = JsonDataMemoryPack.DecodeBytes(
+                _decoder,
+                _schema,
+                data.Span,
+                relativePath,
+                out byte[]? output
+            );
+            if (result.Kind is JsonDataFileKind.Decoded or JsonDataFileKind.PlainJson)
+            {
+                using var file = sink.Create(relativePath);
+                file.Write(output ?? data.ToArray());
+                file.Complete();
+                return HandleResult.Handled;
+            }
+
+            return result.Kind == JsonDataFileKind.Failed
+                ? HandleResult.Fail(result.Error)
+                : HandleResult.Skipped;
+        }
+        catch (Exception ex)
+        {
+            return HandleResult.Fail(ex.Message);
         }
     }
 }
@@ -52,15 +112,15 @@ public sealed class LuaHandler : IContentHandler
         {
             byte[]? decrypted = LuaDecipher.Decrypt(data.Span);
             if (decrypted == null)
-                return HandleResult.Failed;
+                return HandleResult.Fail("Lua decrypt returned no payload.");
             using var output = sink.Create(relativePath);
             output.Write(decrypted);
             output.Complete();
             return HandleResult.Handled;
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            return HandleResult.Failed;
+            return HandleResult.Fail(ex.Message);
         }
     }
 }
@@ -91,9 +151,9 @@ public sealed class UsmHandler : IContentHandler
 
             return HandleResult.Handled;
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            return HandleResult.Failed;
+            return HandleResult.Fail(ex.Message);
         }
     }
 }
@@ -114,9 +174,9 @@ public sealed class PckDecryptHandler : IContentHandler
             output.Complete();
             return HandleResult.Handled;
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            return HandleResult.Failed;
+            return HandleResult.Fail(ex.Message);
         }
     }
 }
