@@ -121,6 +121,7 @@ public static class SparkBuffer
             string key = typeDef.Type2 switch
             {
                 SparkType.String => ReadStringOffset(ref reader),
+                SparkType.Byte => reader.ReadByte().ToString(),
                 SparkType.Int => reader.ReadInt32().ToString(),
                 SparkType.Long => ReadLong(ref reader).ToString(),
                 _ => throw new NotSupportedException($"Unsupported map key type {typeDef.Type2}"),
@@ -130,6 +131,7 @@ public static class SparkBuffer
             {
                 SparkType.Bean => ReadBean(ref reader, schema, schema.Bean(typeDef.TypeHash2), pointer: true),
                 SparkType.String => ReadStringOffset(ref reader),
+                SparkType.Byte => ReadByteAligned(ref reader),
                 SparkType.Int => reader.ReadInt32(),
                 SparkType.Float => reader.ReadSingle(),
                 SparkType.Enum => ReadEnumName(ref reader, schema.Enum(typeDef.TypeHash2)),
@@ -193,6 +195,7 @@ public static class SparkBuffer
                                 SparkType.Float => JsonValue.Create(reader.ReadSingle()),
                                 SparkType.Long => JsonValue.Create(ReadLong(ref reader)),
                                 SparkType.Int or SparkType.Enum => JsonValue.Create(reader.ReadInt32()),
+                                SparkType.Byte => JsonValue.Create(reader.ReadByte()),
                                 SparkType.Bool => JsonValue.Create(reader.ReadBoolean()),
                                 SparkType.Double => JsonValue.Create(ReadDouble(ref reader)),
                                 _ => throw new NotSupportedException(
@@ -228,9 +231,16 @@ public static class SparkBuffer
                         pointer: true
                     );
                     break;
+                case SparkType.Byte:
+                    obj[beanField.Name] = reader.ReadByte();
+                    if (fieldIndex + 1 < bean.Fields.Length
+                        && bean.Fields[fieldIndex + 1].Type is not (SparkType.Bool or SparkType.Byte))
+                        reader.Align(4);
+                    break;
                 case SparkType.Bool:
                     obj[beanField.Name] = reader.ReadBoolean();
-                    if (fieldIndex + 1 < bean.Fields.Length && bean.Fields[fieldIndex + 1].Type != SparkType.Bool)
+                    if (fieldIndex + 1 < bean.Fields.Length
+                        && bean.Fields[fieldIndex + 1].Type is not (SparkType.Bool or SparkType.Byte))
                         reader.Align(4);
                     break;
                 case SparkType.Map:
@@ -286,6 +296,13 @@ public static class SparkBuffer
         return value;
     }
 
+    private static byte ReadByteAligned(ref SpanReader reader)
+    {
+        byte value = reader.ReadByte();
+        reader.Align(4);
+        return value;
+    }
+
     private static long ReadLong(ref SpanReader reader)
     {
         reader.Align(8);
@@ -333,9 +350,15 @@ public static class SparkBuffer
         private readonly Dictionary<int, BeanType> _beans = [];
         private readonly Dictionary<int, EnumType> _enums = [];
 
-        public BeanType Bean(int hash) => _beans[hash];
+        public BeanType Bean(int hash) =>
+            _beans.TryGetValue(hash, out var bean)
+                ? bean
+                : throw new InvalidDataException($"Unknown SparkBuffer bean type hash 0x{hash:X8}.");
 
-        public EnumType Enum(int hash) => _enums[hash];
+        public EnumType Enum(int hash) =>
+            _enums.TryGetValue(hash, out var enumType)
+                ? enumType
+                : throw new InvalidDataException($"Unknown SparkBuffer enum type hash 0x{hash:X8}.");
 
         public void Read(ref SpanReader reader)
         {
