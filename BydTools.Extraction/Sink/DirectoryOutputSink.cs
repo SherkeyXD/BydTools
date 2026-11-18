@@ -1,3 +1,6 @@
+using System.Collections.Concurrent;
+using BydTools.Core.IO;
+
 namespace BydTools.Extraction.Sink;
 
 public interface IOutputSink
@@ -40,11 +43,13 @@ public sealed class OutputFile : FileStream
 public sealed class DirectoryOutputSink : IOutputSink
 {
     private readonly string _root;
+    private readonly ConcurrentDictionary<string, byte> _createdDirectories = new(PathChecks.FileSystemComparer);
 
     public DirectoryOutputSink(string root)
     {
         _root = Path.GetFullPath(root);
         Directory.CreateDirectory(_root);
+        _createdDirectories.TryAdd(_root, 0);
     }
 
     public OutputFile Create(string relativePath)
@@ -53,12 +58,11 @@ public sealed class DirectoryOutputSink : IOutputSink
             throw new InvalidDataException($"Refusing path \"{relativePath}\".");
 
         string full = Path.GetFullPath(Path.Combine(_root, relativePath));
-        string prefix = _root.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        if (!full.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        if (!PathChecks.IsSubPathOf(full, _root))
             throw new InvalidDataException($"Path \"{relativePath}\" escapes the output directory.");
 
         string? directory = Path.GetDirectoryName(full);
-        if (!string.IsNullOrEmpty(directory))
+        if (!string.IsNullOrEmpty(directory) && _createdDirectories.TryAdd(directory, 0))
             Directory.CreateDirectory(directory);
         return new OutputFile(full + ".partial", full);
     }

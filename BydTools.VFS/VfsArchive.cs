@@ -1,5 +1,6 @@
 using BydTools.Core;
 using BydTools.Core.Crypto;
+using BydTools.Core.IO;
 
 namespace BydTools.VFS;
 
@@ -113,12 +114,8 @@ public sealed class VfsArchive
             throw new DirectoryNotFoundException($"VFS directory not found: {vfsDirectory}");
 
         string? persistentRoot = string.IsNullOrWhiteSpace(persistentDirectory) ? null : persistentDirectory;
-        var pathComparison = OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
-            ? StringComparison.OrdinalIgnoreCase
-            : StringComparison.Ordinal;
-
         string[] roots = persistentRoot == null
-            || string.Equals(Path.GetFullPath(persistentRoot), Path.GetFullPath(vfsDirectory), pathComparison)
+            || string.Equals(Path.GetFullPath(persistentRoot), Path.GetFullPath(vfsDirectory), PathChecks.FileSystemComparison)
             ? [vfsDirectory]
             : [persistentRoot, vfsDirectory];
 

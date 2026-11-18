@@ -246,17 +246,8 @@ public sealed class VfsExtractor
         }
     }
 
-    private static bool IsUnderDirectory(string path, string root)
-    {
-        string fullPath = Path.GetFullPath(path);
-        string fullRoot = Path.GetFullPath(root)
-            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-            + Path.DirectorySeparatorChar;
-        var comparison = OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
-            ? StringComparison.OrdinalIgnoreCase
-            : StringComparison.Ordinal;
-        return fullPath.StartsWith(fullRoot, comparison);
-    }
+    private static bool IsUnderDirectory(string path, string root) =>
+        PathChecks.IsSubPathOf(path, root);
 
     private void WriteBlockInfo(VfsBlockInfo info)
     {
