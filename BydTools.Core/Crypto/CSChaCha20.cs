@@ -15,7 +15,9 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+using System.Buffers.Binary;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
 
 namespace BydTools.Core.Crypto;
@@ -220,6 +222,150 @@ public sealed class CSChaCha20 : IDisposable
         }
 
         return SimdMode.None;
+    }
+
+    /// <summary>
+    /// Decrypts (or encrypts) <paramref name="data"/> in place without heap allocations.
+    /// </summary>
+    public static void DecryptInPlace(
+        ReadOnlySpan<byte> key,
+        ReadOnlySpan<byte> nonce,
+        uint counter,
+        Span<byte> data,
+        SimdMode simdMode = SimdMode.AutoDetect
+    )
+    {
+        if (key.Length != allowedKeyLength)
+            throw new ArgumentException($"Key length must be {allowedKeyLength}. Actual: {key.Length}", nameof(key));
+        if (nonce.Length != allowedNonceLength)
+            throw new ArgumentException($"Nonce length must be {allowedNonceLength}. Actual: {nonce.Length}", nameof(nonce));
+        if (data.IsEmpty)
+            return;
+
+        if (simdMode == SimdMode.AutoDetect)
+            simdMode = DetectSimdMode();
+
+        Span<uint> state = stackalloc uint[stateLength];
+        Span<uint> x = stackalloc uint[stateLength];
+        Span<byte> tmp = stackalloc byte[processBytesAtTime];
+
+        state[0] = BinaryPrimitives.ReadUInt32LittleEndian(sigma);
+        state[1] = BinaryPrimitives.ReadUInt32LittleEndian(sigma.AsSpan(4));
+        state[2] = BinaryPrimitives.ReadUInt32LittleEndian(sigma.AsSpan(8));
+        state[3] = BinaryPrimitives.ReadUInt32LittleEndian(sigma.AsSpan(12));
+
+        for (int i = 0; i < 8; i++)
+            state[4 + i] = BinaryPrimitives.ReadUInt32LittleEndian(key.Slice(i * 4, 4));
+
+        state[12] = counter;
+        state[13] = BinaryPrimitives.ReadUInt32LittleEndian(nonce);
+        state[14] = BinaryPrimitives.ReadUInt32LittleEndian(nonce.Slice(4));
+        state[15] = BinaryPrimitives.ReadUInt32LittleEndian(nonce.Slice(8));
+
+        try
+        {
+            int offset = 0;
+            int fullBlocks = data.Length / processBytesAtTime;
+            int tailBytes = data.Length - fullBlocks * processBytesAtTime;
+
+            for (int loop = 0; loop < fullBlocks; loop++)
+            {
+                NextBlock(state, x, tmp);
+                XorBlockInPlace(data.Slice(offset, processBytesAtTime), tmp, simdMode);
+                offset += processBytesAtTime;
+            }
+
+            if (tailBytes > 0)
+            {
+                NextBlock(state, x, tmp);
+                for (int i = 0; i < tailBytes; i++)
+                    data[offset + i] ^= tmp[i];
+            }
+        }
+        finally
+        {
+            state.Clear();
+            x.Clear();
+            tmp.Clear();
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void NextBlock(Span<uint> state, Span<uint> x, Span<byte> tmp)
+    {
+        state.CopyTo(x);
+        for (int i = 0; i < 10; i++)
+        {
+            QuarterRoundSpan(x, 0, 4, 8, 12);
+            QuarterRoundSpan(x, 1, 5, 9, 13);
+            QuarterRoundSpan(x, 2, 6, 10, 14);
+            QuarterRoundSpan(x, 3, 7, 11, 15);
+
+            QuarterRoundSpan(x, 0, 5, 10, 15);
+            QuarterRoundSpan(x, 1, 6, 11, 12);
+            QuarterRoundSpan(x, 2, 7, 8, 13);
+            QuarterRoundSpan(x, 3, 4, 9, 14);
+        }
+
+        for (int i = 0; i < stateLength; i++)
+            BinaryPrimitives.WriteUInt32LittleEndian(tmp.Slice(4 * i, 4), unchecked(x[i] + state[i]));
+
+        state[12] = unchecked(state[12] + 1);
+        if (state[12] == 0)
+            state[13] = unchecked(state[13] + 1);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void QuarterRoundSpan(Span<uint> x, int a, int b, int c, int d)
+    {
+        x[a] = unchecked(x[a] + x[b]);
+        x[d] = Util.Rotate(x[d] ^ x[a], 16);
+
+        x[c] = unchecked(x[c] + x[d]);
+        x[b] = Util.Rotate(x[b] ^ x[c], 12);
+
+        x[a] = unchecked(x[a] + x[b]);
+        x[d] = Util.Rotate(x[d] ^ x[a], 8);
+
+        x[c] = unchecked(x[c] + x[d]);
+        x[b] = Util.Rotate(x[b] ^ x[c], 7);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void XorBlockInPlace(Span<byte> block, ReadOnlySpan<byte> keystream, SimdMode simdMode)
+    {
+        ref byte dst = ref MemoryMarshal.GetReference(block);
+        ref byte src = ref MemoryMarshal.GetReference(keystream);
+        if (simdMode == SimdMode.V512)
+        {
+            var result = Vector512.LoadUnsafe(ref dst) ^ Vector512.LoadUnsafe(ref src);
+            result.StoreUnsafe(ref dst);
+        }
+        else if (simdMode == SimdMode.V256)
+        {
+            var r0 = Vector256.LoadUnsafe(ref dst) ^ Vector256.LoadUnsafe(ref src);
+            r0.StoreUnsafe(ref dst);
+            var r1 = Vector256.LoadUnsafe(ref dst, 32) ^ Vector256.LoadUnsafe(ref src, 32);
+            r1.StoreUnsafe(ref dst, 32);
+        }
+        else if (simdMode == SimdMode.V128)
+        {
+            for (nuint i = 0; i < 64; i += 16)
+            {
+                var r = Vector128.LoadUnsafe(ref dst, i) ^ Vector128.LoadUnsafe(ref src, i);
+                r.StoreUnsafe(ref dst, i);
+            }
+        }
+        else
+        {
+            for (int i = 0; i < processBytesAtTime; i += 4)
+            {
+                block[i] ^= keystream[i];
+                block[i + 1] ^= keystream[i + 1];
+                block[i + 2] ^= keystream[i + 2];
+                block[i + 3] ^= keystream[i + 3];
+            }
+        }
     }
 
     #region Encryption methods

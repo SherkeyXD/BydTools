@@ -90,8 +90,8 @@ public sealed class VfsExtractor
             options,
             chunk =>
             {
-                string? chunkPath = block.ResolveChunkPath(chunk);
-                if (chunkPath == null)
+                using var chunkReader = block.OpenChunkReader(chunk);
+                if (chunkReader == null)
                 {
                     _logger.Verbose("  Chunk file not found: {0}", chunk.FileName);
                     return;
@@ -102,7 +102,7 @@ public sealed class VfsExtractor
                     cancellationToken.ThrowIfCancellationRequested();
                     try
                     {
-                        byte[] data = block.ReadFile(chunkPath, file);
+                        byte[] data = chunkReader.ReadFile(file);
                         string relative = file.Name;
                         if (string.IsNullOrEmpty(relative) && block.Descriptor?.Kind == ContentKind.Video)
                         {
@@ -234,14 +234,14 @@ public sealed class VfsExtractor
             var files = new List<(string Name, byte[] Data)>();
             foreach (var chunk in block.Info.Chunks)
             {
-                string? chunkPath = block.ResolveChunkPath(chunk);
-                if (chunkPath == null)
+                using var chunkReader = block.OpenChunkReader(chunk);
+                if (chunkReader == null)
                     continue;
                 foreach (var file in chunk.Files)
                 {
                     if (BeyondStringPool.IndexOfFileName(file.Name) < 0)
                         continue;
-                    files.Add((file.Name, block.ReadFile(chunkPath, file)));
+                    files.Add((file.Name, chunkReader.ReadFile(file)));
                 }
             }
 

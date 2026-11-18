@@ -28,23 +28,13 @@ public static class BlcReader
             throw new InvalidDataException("BLC file is smaller than the nonce.");
 
         int nonceVersion = BinaryPrimitives.ReadInt32LittleEndian(file);
-        byte[] nonce = file[..VFSDefine.NonceLength].ToArray();
-        byte[] cipher = file[VFSDefine.NonceLength..].ToArray();
-
-        byte[] plain;
-        using (var chacha = new CSChaCha20(key, nonce, 1))
-            plain = chacha.DecryptBytes(cipher);
-
-        if (plain.Length != cipher.Length)
-            throw new InvalidDataException("ChaCha20 output length does not match the BLC payload.");
-
-        byte[] reconstructed = new byte[file.Length];
-        nonce.CopyTo(reconstructed, 0);
-        plain.CopyTo(reconstructed, VFSDefine.NonceLength);
+        ReadOnlySpan<byte> nonce = file[..VFSDefine.NonceLength];
+        byte[] plain = file[VFSDefine.NonceLength..].ToArray();
+        CSChaCha20.DecryptInPlace(key, nonce, 1, plain);
 
         try
         {
-            return ParseDecrypted(reconstructed, nonceVersion, expectedHash);
+            return ParseDecrypted(plain, nonceVersion, expectedHash);
         }
         catch (InvalidDataException ex) when (!ex.Message.Contains("hash mismatch", StringComparison.Ordinal))
         {
@@ -55,10 +45,9 @@ public static class BlcReader
         }
     }
 
-    private static VfsBlockInfo ParseDecrypted(byte[] file, int nonceVersion, string expectedHash)
+    private static VfsBlockInfo ParseDecrypted(ReadOnlySpan<byte> payload, int nonceVersion, string expectedHash)
     {
-        var reader = new SpanReader(file);
-        reader.Seek(VFSDefine.NonceLength);
+        var reader = new SpanReader(payload);
 
         // codeVersion picks the directory layout. It is not ProtocolVersion:
         // that constant only builds the ChaCha nonce for an encrypted file.
