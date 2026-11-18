@@ -1,8 +1,6 @@
-using BydTools.Extraction;
 using BydTools.Extraction.Vfs;
 using BydTools.Formats.MemoryPack;
 using BydTools.VFS;
-using Spectre.Console;
 
 namespace BydTools.CLI.Commands;
 
@@ -15,46 +13,30 @@ public sealed class VfsCommand : ICommand
     {
         var parser = CreateParser();
         if (!parser.Parse(args))
-            return Fail(2, parser.Errors[0]);
+            return CliHelpers.Fail(2, parser.Errors[0]);
         if (parser.HasFlag("help"))
         {
             PrintHelp(parser);
             return 0;
         }
 
-        string? input = parser.Get("input");
-        if (string.IsNullOrWhiteSpace(input))
-            return Fail(2, "--input is required.");
+        bool debug = parser.HasFlag("debug");
+        if (!parser.ValidateRequired(opt => debug ? opt.LongName == "input" : opt.Required))
+            return CliHelpers.Fail(2, parser.Errors[0]);
 
-        string gamePath = Path.GetFullPath(input);
-        if (!Directory.Exists(gamePath))
-            return Fail(1, "Game directory not found: \"{0}\"", gamePath);
-
-        string vfsPath = Path.Combine(gamePath, VFSDefine.VfsDirectoryName);
-        if (!Directory.Exists(vfsPath))
-            return Fail(1, "VFS directory not found under \"{0}\".", gamePath);
+        if (!CliHelpers.TryResolveVfsDirectory(parser.Get("input")!, out string vfsPath, out string? vfsError))
+            return CliHelpers.Fail(1, vfsError!);
 
         byte[] key;
         int jobs;
         try
         {
             key = VFSDefine.ResolveKey(parser.Get("platform"), parser.Get("key"));
-            jobs = ResolveJobs(parser.Get("jobs"));
+            jobs = CliHelpers.ResolveJobs(parser.Get("jobs"));
         }
         catch (ArgumentException ex)
         {
-            return Fail(2, ex.Message);
-        }
-
-        bool debug = parser.HasFlag("debug");
-        string? output = parser.Get("output");
-        string? blockTypeArg = parser.Get("blocktype");
-        if (!debug)
-        {
-            if (string.IsNullOrWhiteSpace(output))
-                return Fail(2, "--output is required.");
-            if (string.IsNullOrWhiteSpace(blockTypeArg))
-                return Fail(2, "--blocktype is required.");
+            return CliHelpers.Fail(2, ex.Message);
         }
 
         bool rawJsonData = parser.HasFlag("raw");
@@ -63,18 +45,34 @@ public sealed class VfsCommand : ICommand
         VfsArchive archive;
         try
         {
-            string? persistentVfs = ResolvePersistentVfs(parser.Get("persistent"), logger);
+            string? persistentVfs = CliHelpers.ResolvePersistentVfs(parser.Get("persistent"), logger);
             archive = VfsArchive.Open(vfsPath, key, logger, persistentVfs);
         }
         catch (Exception ex)
         {
-            return Fail(1, ex.Message);
+            return CliHelpers.Fail(1, ex.Message);
         }
 
         if (debug)
         {
             new VfsExtractor(logger).WriteDebugReport(archive);
             return 0;
+        }
+
+        var blocks = new List<VfsBlock>();
+        foreach (string token in parser.Get("blocktype")!
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var block = archive.Find(token);
+            if (block == null)
+            {
+                bool known = BlockRegistry.TryParse(token, out _);
+                return known
+                    ? CliHelpers.Fail(1, "Block \"{0}\" was not found in this VFS.", token)
+                    : CliHelpers.Fail(2, "Unknown block type: {0}", token);
+            }
+
+            blocks.Add(block);
         }
 
         MemoryPackSchema? jsonSchema = null;
@@ -95,7 +93,7 @@ public sealed class VfsCommand : ICommand
                 }
                 catch (Exception ex) when (ex is ArgumentException or FileNotFoundException or InvalidDataException or IOException)
                 {
-                    return Fail(2, ex.Message);
+                    return CliHelpers.Fail(2, ex.Message);
                 }
             }
         }
@@ -106,27 +104,12 @@ public sealed class VfsCommand : ICommand
             jsonSchema: jsonSchema,
             unionMaps: unionMaps);
 
-        var blocks = new List<VfsBlock>();
-        foreach (string token in blockTypeArg!.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-        {
-            var block = archive.Find(token);
-            if (block == null)
-            {
-                bool known = BlockRegistry.TryParse(token, out _);
-                return known
-                    ? Fail(1, "Block \"{0}\" was not found in this VFS.", token)
-                    : Fail(2, "Unknown block type: {0}", token);
-            }
-
-            blocks.Add(block);
-        }
-
-        string outputPath = Path.GetFullPath(output!);
+        string outputPath = Path.GetFullPath(parser.Get("output")!);
         int totalExtracted = 0;
         int totalFailed = 0;
         try
         {
-            if (verbose)
+            CliHelpers.RunWithProgress(logger, verbose, createProgress =>
             {
                 foreach (var block in blocks)
                 {
@@ -134,54 +117,21 @@ public sealed class VfsCommand : ICommand
                         block,
                         outputPath,
                         jobs,
-                        NullProgress.Instance,
+                        createProgress(block.DisplayName),
                         cancellationToken
                     );
                     totalExtracted += result.Extracted;
                     totalFailed += result.Failed;
                 }
-            }
-            else
-            {
-                using (logger.BeginBuffering())
-                {
-                    AnsiConsole
-                        .Progress()
-                        .AutoClear(false)
-                        .HideCompleted(false)
-                        .Columns(
-                            new TaskDescriptionColumn(),
-                            new ProgressBarColumn(),
-                            new PercentageColumn(),
-                            new RemainingTimeColumn(),
-                            new SpinnerColumn()
-                        )
-                        .Start(ctx =>
-                        {
-                            foreach (var block in blocks)
-                            {
-                                var task = ctx.AddTask(block.DisplayName, maxValue: 0);
-                                var result = extractor.Dump(
-                                    block,
-                                    outputPath,
-                                    jobs,
-                                    new SpectreProgress(task),
-                                    cancellationToken
-                                );
-                                totalExtracted += result.Extracted;
-                                totalFailed += result.Failed;
-                            }
-                        });
-                }
-            }
+            });
         }
-        catch (Exception ex) when (IsCancel(ex))
+        catch (Exception ex) when (CliHelpers.IsCancel(ex))
         {
-            return Fail(1, "Cancelled.");
+            return CliHelpers.Fail(1, "Cancelled.");
         }
         catch (Exception ex)
         {
-            return Fail(1, ex.Message);
+            return CliHelpers.Fail(1, ex.Message);
         }
 
         return totalFailed > 0 && totalExtracted == 0 ? 1 : 0;
@@ -189,9 +139,7 @@ public sealed class VfsCommand : ICommand
 
     internal static ArgParser CreateParser() =>
         new ArgParser()
-            .Add("input", "i", "Game data directory that contains the VFS folder", "path", required: true)
-            .Add("persistent", "p", "Persistent directory containing VFS; missing files fall back to --input", "path")
-            .Add("output", "o", "Output directory for extracted files", "dir", required: true)
+            .AddInputAndOutput("Output directory for extracted files")
             .Add(
                 "blocktype",
                 "t",
@@ -200,9 +148,7 @@ public sealed class VfsCommand : ICommand
                 required: true,
                 "Separate multiple types with commas."
             )
-            .Add("key", null, "ChaCha20 key, Base64 of 32 bytes. Overrides --platform", "base64")
-            .Add("platform", null, "Key to use when --key is omitted", "name", continuation: "pc (default) or android.")
-            .Add("jobs", null, "How many chunks to read at once", "n", continuation: "Default: processor count.")
+            .AddCryptoAndJobs("How many chunks to read at once")
             .Add("raw", null, "Write JsonData files without MemoryPack decode")
             .Add("schema-dir", null, "beyond-mp-schema export directory (overrides embedded)", "dir",
                 continuation: "Loads schemas/type_index/union-map/unmanaged/enums as .msgpack.lz4 or .json. Ignored with --raw.")
@@ -227,71 +173,5 @@ public sealed class VfsCommand : ICommand
                 Console.WriteLine();
             }
         );
-    }
-
-    internal static string? ResolvePersistentVfs(string? persistent, Core.ILogger logger)
-    {
-        if (string.IsNullOrWhiteSpace(persistent))
-            return null;
-
-        string persistentPath = Path.GetFullPath(persistent);
-        string persistentVfs = Path.Combine(persistentPath, VFSDefine.VfsDirectoryName);
-        if (!Directory.Exists(persistentPath))
-        {
-            logger.Info("Warning: Persistent directory not found: \"{0}\". Falling back to --input.", persistentPath);
-        }
-        else if (!Directory.Exists(persistentVfs))
-        {
-            string trimmed = persistentPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-            if (Path.GetFileName(trimmed).Equals(VFSDefine.VfsDirectoryName, StringComparison.OrdinalIgnoreCase))
-            {
-                logger.Info(
-                    "Warning: VFS directory not found under \"{0}\". Pass the Persistent directory rather than its VFS subfolder; falling back to --input.",
-                    persistentPath
-                );
-            }
-            else
-            {
-                logger.Info("Warning: VFS directory not found under \"{0}\". Falling back to --input.", persistentPath);
-            }
-        }
-
-        return persistentVfs;
-    }
-
-    internal static int ResolveJobs(string? text)
-    {
-        if (string.IsNullOrWhiteSpace(text))
-            return Environment.ProcessorCount;
-        if (!int.TryParse(text, out int jobs) || jobs < 1)
-            throw new ArgumentException("--jobs must be a positive integer.");
-        return jobs;
-    }
-
-    internal static int Fail(int code, string format, params object[] args)
-    {
-        Logger.WriteError(args.Length == 0 ? format : string.Format(format, args));
-        return code;
-    }
-
-    internal static bool IsCancel(Exception ex) =>
-        ex is OperationCanceledException
-        || (ex is AggregateException aggregate && aggregate.InnerExceptions.All(IsCancel));
-}
-
-internal sealed class SpectreProgress(ProgressTask task) : IProgressSink
-{
-    private readonly Lock _lock = new();
-
-    public void AddTotal(long amount)
-    {
-        lock (_lock)
-            task.MaxValue += amount;
-    }
-
-    public void Advance(long amount)
-    {
-        lock (_lock)
-            task.Increment(amount);
     }
 }

@@ -11,7 +11,7 @@ public sealed record CommandOption(
 );
 
 /// <summary>
-/// Small argv parser. Options are declared once and drive both parsing and help.
+/// Small argv parser. Options are declared once and drive parsing, validation, and help.
 /// </summary>
 public sealed class ArgParser
 {
@@ -80,6 +80,28 @@ public sealed class ArgParser
             }
 
             Values[option.LongName] = args[++i];
+        }
+
+        return Errors.Count == 0;
+    }
+
+    public bool ValidateRequired(Func<CommandOption, bool>? isRequiredOverride = null)
+    {
+        foreach (CommandOption option in _options)
+        {
+            bool required = isRequiredOverride?.Invoke(option) ?? option.Required;
+            if (!required)
+                continue;
+
+            if (option.IsFlag)
+            {
+                if (!Flags.Contains(option.LongName))
+                    Errors.Add($"--{option.LongName} is required.");
+            }
+            else if (!Values.TryGetValue(option.LongName, out string? value) || string.IsNullOrWhiteSpace(value))
+            {
+                Errors.Add($"--{option.LongName} is required.");
+            }
         }
 
         return Errors.Count == 0;
