@@ -32,6 +32,12 @@ public static class SparkBuffer
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
     };
 
+    private static readonly JsonWriterOptions WriterOptions = new()
+    {
+        Indented = true,
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
+
     public static string GetRootName(ReadOnlySpan<byte> data)
     {
         var reader = new SpanReader(data);
@@ -43,6 +49,36 @@ public static class SparkBuffer
     }
 
     public static string ToJson(ReadOnlySpan<byte> data) => ReadObject(data).ToJsonString(JsonOptions);
+
+    public static void WriteJson(ReadOnlySpan<byte> data, Stream output)
+    {
+        var reader = new SpanReader(data);
+        var schema = new SparkSchema();
+        int typeDefOffset = reader.ReadInt32();
+        int rootDefOffset = reader.ReadInt32();
+        int dataOffset = reader.ReadInt32();
+
+        reader.Seek(typeDefOffset);
+        schema.Read(ref reader);
+
+        reader.Seek(rootDefOffset);
+        var root = ReadFieldHeader(ref reader);
+
+        reader.Seek(dataOffset);
+        using var writer = new Utf8JsonWriter(output, WriterOptions);
+        switch (root.Type)
+        {
+            case SparkType.Bean:
+                WriteBean(ref reader, schema, schema.Bean(root.TypeHash), pointer: false, writer);
+                break;
+            case SparkType.Map:
+                WriteMap(ref reader, schema, root, writer);
+                break;
+            default:
+                throw new NotSupportedException($"Unsupported root type {root.Type}");
+        }
+        writer.Flush();
+    }
 
     public static JsonObject ReadObject(ReadOnlySpan<byte> data)
     {
@@ -313,6 +349,193 @@ public static class SparkBuffer
     {
         reader.Align(8);
         return reader.ReadDouble();
+    }
+
+    private static void WriteMap(ref SpanReader reader, SparkSchema schema, Field typeDef, Utf8JsonWriter writer)
+    {
+        int kvCount = reader.ReadInt32();
+        if (kvCount < 0)
+            throw new InvalidDataException("Negative SparkBuffer map size.");
+        reader.Skip(checked(kvCount * 8));
+
+        writer.WriteStartObject();
+        for (int i = 0; i < kvCount; i++)
+        {
+            string key = typeDef.Type2 switch
+            {
+                SparkType.String => ReadStringOffset(ref reader),
+                SparkType.Byte => reader.ReadByte().ToString(),
+                SparkType.Int => reader.ReadInt32().ToString(),
+                SparkType.Long => ReadLong(ref reader).ToString(),
+                _ => throw new NotSupportedException($"Unsupported map key type {typeDef.Type2}"),
+            };
+
+            writer.WritePropertyName(key);
+            switch (typeDef.Type3)
+            {
+                case SparkType.Bean:
+                    WriteBean(ref reader, schema, schema.Bean(typeDef.TypeHash2), pointer: true, writer);
+                    break;
+                case SparkType.String:
+                    writer.WriteStringValue(ReadStringOffset(ref reader));
+                    break;
+                case SparkType.Byte:
+                    writer.WriteNumberValue(ReadByteAligned(ref reader));
+                    break;
+                case SparkType.Int:
+                    writer.WriteNumberValue(reader.ReadInt32());
+                    break;
+                case SparkType.Float:
+                    writer.WriteNumberValue(reader.ReadSingle());
+                    break;
+                case SparkType.Enum:
+                    writer.WriteStringValue(ReadEnumName(ref reader, schema.Enum(typeDef.TypeHash2)));
+                    break;
+                case SparkType.Bool:
+                    writer.WriteBooleanValue(ReadBool(ref reader));
+                    break;
+                default:
+                    throw new NotSupportedException($"Unsupported map value type {typeDef.Type3}");
+            }
+        }
+
+        writer.WriteEndObject();
+    }
+
+    private static void WriteBean(
+        ref SpanReader reader,
+        SparkSchema schema,
+        BeanType bean,
+        bool pointer,
+        Utf8JsonWriter writer)
+    {
+        int? pointerOrigin = null;
+        if (pointer)
+        {
+            int beanOffset = reader.ReadInt32();
+            if (beanOffset == -1)
+            {
+                writer.WriteNullValue();
+                return;
+            }
+            pointerOrigin = reader.Position;
+            reader.Seek(beanOffset);
+        }
+
+        writer.WriteStartObject();
+        for (int fieldIndex = 0; fieldIndex < bean.Fields.Length; fieldIndex++)
+        {
+            Field beanField = bean.Fields[fieldIndex];
+            writer.WritePropertyName(beanField.Name);
+            int? origin = null;
+            if (beanField.Type == SparkType.Array)
+            {
+                int fieldOffset = reader.ReadInt32();
+                if (fieldOffset == -1)
+                {
+                    writer.WriteNullValue();
+                    continue;
+                }
+
+                origin = reader.Position;
+                reader.Seek(fieldOffset);
+            }
+
+            switch (beanField.Type)
+            {
+                case SparkType.Array:
+                    int itemCount = reader.ReadInt32();
+                    if (itemCount < 0)
+                        throw new InvalidDataException("Negative SparkBuffer array size.");
+                    writer.WriteStartArray();
+                    for (int n = 0; n < itemCount; n++)
+                    {
+                        switch (beanField.Type2)
+                        {
+                            case SparkType.String:
+                                writer.WriteStringValue(ReadStringOffset(ref reader));
+                                break;
+                            case SparkType.Bean:
+                                WriteBean(ref reader, schema, schema.Bean(beanField.TypeHash), pointer: true, writer);
+                                break;
+                            case SparkType.Float:
+                                writer.WriteNumberValue(reader.ReadSingle());
+                                break;
+                            case SparkType.Long:
+                                writer.WriteNumberValue(ReadLong(ref reader));
+                                break;
+                            case SparkType.Int or SparkType.Enum:
+                                writer.WriteNumberValue(reader.ReadInt32());
+                                break;
+                            case SparkType.Byte:
+                                writer.WriteNumberValue(reader.ReadByte());
+                                break;
+                            case SparkType.Bool:
+                                writer.WriteBooleanValue(reader.ReadBoolean());
+                                break;
+                            case SparkType.Double:
+                                writer.WriteNumberValue(ReadDouble(ref reader));
+                                break;
+                            default:
+                                throw new NotSupportedException(
+                                    $"Unsupported array type {beanField.Type2} at offset {reader.Position}"
+                                );
+                        }
+                    }
+
+                    writer.WriteEndArray();
+                    break;
+                case SparkType.Int:
+                case SparkType.Enum:
+                    writer.WriteNumberValue(reader.ReadInt32());
+                    break;
+                case SparkType.Long:
+                    writer.WriteNumberValue(ReadLong(ref reader));
+                    break;
+                case SparkType.Float:
+                    writer.WriteNumberValue(reader.ReadSingle());
+                    break;
+                case SparkType.Double:
+                    writer.WriteNumberValue(ReadDouble(ref reader));
+                    break;
+                case SparkType.String:
+                    writer.WriteStringValue(ReadStringOffset(ref reader));
+                    break;
+                case SparkType.Bean:
+                    WriteBean(ref reader, schema, schema.Bean(beanField.TypeHash), pointer: true, writer);
+                    break;
+                case SparkType.Byte:
+                    writer.WriteNumberValue(reader.ReadByte());
+                    if (fieldIndex + 1 < bean.Fields.Length
+                        && bean.Fields[fieldIndex + 1].Type is not (SparkType.Bool or SparkType.Byte))
+                        reader.Align(4);
+                    break;
+                case SparkType.Bool:
+                    writer.WriteBooleanValue(reader.ReadBoolean());
+                    if (fieldIndex + 1 < bean.Fields.Length
+                        && bean.Fields[fieldIndex + 1].Type is not (SparkType.Bool or SparkType.Byte))
+                        reader.Align(4);
+                    break;
+                case SparkType.Map:
+                    int mapOffset = reader.ReadInt32();
+                    int mapOrigin = reader.Position;
+                    reader.Seek(mapOffset);
+                    WriteMap(ref reader, schema, beanField, writer);
+                    reader.Seek(mapOrigin);
+                    break;
+                default:
+                    throw new NotSupportedException(
+                        $"Dumping bean field type {beanField.Type} isn't supported at offset {reader.Position}"
+                    );
+            }
+
+            if (origin is not null)
+                reader.Seek(origin.Value);
+        }
+
+        writer.WriteEndObject();
+        if (pointerOrigin is not null)
+            reader.Seek(pointerOrigin.Value);
     }
 
     private struct Field

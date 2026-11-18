@@ -57,6 +57,12 @@ public static class JsonDataMemoryPack
         NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals,
     };
 
+    public static readonly JsonWriterOptions WriterOptions = new()
+    {
+        Indented = true,
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
+
     public static JsonDataDecodeReport DecodeTree(
         MemoryPackSchema schema,
         string inputDirectory,
@@ -349,6 +355,79 @@ public static class JsonDataMemoryPack
         return i;
     }
 
+    public static JsonDataFileResult DecodeToStream(
+        MemoryPackDecoder decoder,
+        MemoryPackSchema schema,
+        ReadOnlyMemory<byte> data,
+        string relative,
+        Action<Action<Stream>> writeStream)
+    {
+        try
+        {
+            ReadOnlySpan<byte> span = data.Span;
+            if (span.Length == 0)
+            {
+                return new JsonDataFileResult
+                {
+                    RelativePath = relative,
+                    Kind = JsonDataFileKind.Skipped,
+                    Error = "Empty file.",
+                };
+            }
+
+            if (span.StartsWith("USPC"u8) || span.StartsWith("SHPI"u8))
+            {
+                return new JsonDataFileResult
+                {
+                    RelativePath = relative,
+                    Kind = JsonDataFileKind.Skipped,
+                    Error = "USPC/SHPI container.",
+                };
+            }
+
+            if (IsPlainJson(span) || IsPlainText(span))
+            {
+                writeStream(stream => stream.Write(data.Span));
+                return new JsonDataFileResult { RelativePath = relative, Kind = JsonDataFileKind.PlainJson };
+            }
+
+            if (!schema.TryIdentifyRoot(relative, span, out string? root, out string? error))
+            {
+                return new JsonDataFileResult
+                {
+                    RelativePath = relative,
+                    Kind = JsonDataFileKind.Failed,
+                    Error = error,
+                };
+            }
+
+            JsonNode? node = decoder.Decode(span, root!);
+            writeStream(stream =>
+            {
+                if (node == null)
+                {
+                    stream.Write("null\n"u8);
+                    return;
+                }
+
+                using var writer = new Utf8JsonWriter(stream, WriterOptions);
+                node.WriteTo(writer, JsonOptions);
+                writer.Flush();
+                stream.Write("\n"u8);
+            });
+            return new JsonDataFileResult { RelativePath = relative, Kind = JsonDataFileKind.Decoded };
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return new JsonDataFileResult
+            {
+                RelativePath = relative,
+                Kind = JsonDataFileKind.Failed,
+                Error = ex.Message,
+            };
+        }
+    }
+
     public static JsonDataFileResult DecodeBytes(
         MemoryPackDecoder decoder,
         MemoryPackSchema schema,
@@ -395,7 +474,9 @@ public static class JsonDataMemoryPack
                 };
             }
 
-            output = Encoding.UTF8.GetBytes(decoder.ToJson(data, root!));
+            using var buffer = new MemoryStream();
+            decoder.WriteJson(data, root!, buffer);
+            output = buffer.ToArray();
             return new JsonDataFileResult { RelativePath = relative, Kind = JsonDataFileKind.Decoded };
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -420,15 +501,13 @@ public static class JsonDataMemoryPack
         try
         {
             byte[] data = File.ReadAllBytes(path);
-            JsonDataFileResult result = DecodeBytes(decoder, schema, data, relative, out byte[]? output);
-            if (output != null && result.Kind is JsonDataFileKind.Decoded or JsonDataFileKind.PlainJson)
+            return DecodeToStream(decoder, schema, data, relative, write =>
             {
                 string destination = Path.Combine(outputDirectory, relative);
                 Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-                File.WriteAllBytes(destination, output);
-            }
-
-            return result;
+                using var fs = new FileStream(destination, FileMode.Create, FileAccess.Write, FileShare.None);
+                write(fs);
+            });
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
