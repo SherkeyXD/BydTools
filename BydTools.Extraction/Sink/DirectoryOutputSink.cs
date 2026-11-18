@@ -62,8 +62,11 @@ public sealed class DirectoryOutputSink : IOutputSink
             throw new InvalidDataException($"Path \"{relativePath}\" escapes the output directory.");
 
         string? directory = Path.GetDirectoryName(full);
-        if (!string.IsNullOrEmpty(directory) && _createdDirectories.TryAdd(directory, 0))
+        if (!string.IsNullOrEmpty(directory) && !_createdDirectories.ContainsKey(directory))
+        {
             Directory.CreateDirectory(directory);
+            _createdDirectories.TryAdd(directory, 0);
+        }
         return new OutputFile(full + ".partial", full);
     }
 }
