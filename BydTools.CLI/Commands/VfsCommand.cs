@@ -58,7 +58,8 @@ public sealed class VfsCommand : ICommand
         }
 
         bool rawJsonData = parser.HasFlag("raw");
-        var logger = new Logger(parser.HasFlag("verbose"));
+        bool verbose = parser.HasFlag("verbose");
+        var logger = new Logger(verbose);
         VfsArchive archive;
         try
         {
@@ -121,33 +122,58 @@ public sealed class VfsCommand : ICommand
         }
 
         string outputPath = Path.GetFullPath(output!);
+        int totalExtracted = 0;
+        int totalFailed = 0;
         try
         {
-            AnsiConsole
-                .Progress()
-                .AutoClear(false)
-                .HideCompleted(false)
-                .Columns(
-                    new TaskDescriptionColumn(),
-                    new ProgressBarColumn(),
-                    new PercentageColumn(),
-                    new RemainingTimeColumn(),
-                    new SpinnerColumn()
-                )
-                .Start(ctx =>
+            if (verbose)
+            {
+                foreach (var block in blocks)
                 {
-                    foreach (var block in blocks)
-                    {
-                        var task = ctx.AddTask(block.DisplayName, maxValue: 0);
-                        extractor.Dump(
-                            block,
-                            outputPath,
-                            jobs,
-                            new SpectreProgress(task),
-                            cancellationToken
-                        );
-                    }
-                });
+                    var result = extractor.Dump(
+                        block,
+                        outputPath,
+                        jobs,
+                        NullProgress.Instance,
+                        cancellationToken
+                    );
+                    totalExtracted += result.Extracted;
+                    totalFailed += result.Failed;
+                }
+            }
+            else
+            {
+                using (logger.BeginBuffering())
+                {
+                    AnsiConsole
+                        .Progress()
+                        .AutoClear(false)
+                        .HideCompleted(false)
+                        .Columns(
+                            new TaskDescriptionColumn(),
+                            new ProgressBarColumn(),
+                            new PercentageColumn(),
+                            new RemainingTimeColumn(),
+                            new SpinnerColumn()
+                        )
+                        .Start(ctx =>
+                        {
+                            foreach (var block in blocks)
+                            {
+                                var task = ctx.AddTask(block.DisplayName, maxValue: 0);
+                                var result = extractor.Dump(
+                                    block,
+                                    outputPath,
+                                    jobs,
+                                    new SpectreProgress(task),
+                                    cancellationToken
+                                );
+                                totalExtracted += result.Extracted;
+                                totalFailed += result.Failed;
+                            }
+                        });
+                }
+            }
         }
         catch (Exception ex) when (IsCancel(ex))
         {
@@ -158,7 +184,7 @@ public sealed class VfsCommand : ICommand
             return Fail(1, ex.Message);
         }
 
-        return 0;
+        return totalFailed > 0 && totalExtracted == 0 ? 1 : 0;
     }
 
     internal static ArgParser CreateParser() =>
@@ -255,7 +281,17 @@ public sealed class VfsCommand : ICommand
 
 internal sealed class SpectreProgress(ProgressTask task) : IProgressSink
 {
-    public void AddTotal(long amount) => task.MaxValue += amount;
+    private readonly Lock _lock = new();
 
-    public void Advance(long amount) => task.Increment(amount);
+    public void AddTotal(long amount)
+    {
+        lock (_lock)
+            task.MaxValue += amount;
+    }
+
+    public void Advance(long amount)
+    {
+        lock (_lock)
+            task.Increment(amount);
+    }
 }

@@ -56,7 +56,8 @@ public sealed class PckCommand : ICommand
         if (!Directory.Exists(vfsPath))
             return VfsCommand.Fail(1, "VFS directory not found under \"{0}\".", gamePath);
 
-        var logger = new Logger(parser.HasFlag("verbose"));
+        bool verbose = parser.HasFlag("verbose");
+        var logger = new Logger(verbose);
         VfsArchive archive;
         try
         {
@@ -82,35 +83,56 @@ public sealed class PckCommand : ICommand
         IWemDecoder? decoder = mode == AudioExportMode.Wav ? WemDecoders.Create() : null;
 
         string outputPath = Path.GetFullPath(output);
+        bool mapNames = !parser.HasFlag("no-map");
         try
         {
             AudioExportResult? result = null;
-            AnsiConsole
-                .Progress()
-                .AutoClear(false)
-                .HideCompleted(false)
-                .Columns(
-                    new TaskDescriptionColumn(),
-                    new ProgressBarColumn(),
-                    new PercentageColumn(),
-                    new RemainingTimeColumn(),
-                    new SpinnerColumn()
-                )
-                .Start(ctx =>
+            if (verbose)
+            {
+                result = new AudioExportService(logger).Export(
+                    archive,
+                    block,
+                    outputPath,
+                    mode,
+                    mapNames,
+                    decoder,
+                    jobs,
+                    NullProgress.Instance,
+                    cancellationToken
+                );
+            }
+            else
+            {
+                using (logger.BeginBuffering())
                 {
-                    var task = ctx.AddTask("Exporting", maxValue: 0);
-                    result = new AudioExportService(logger).Export(
-                        archive,
-                        block,
-                        outputPath,
-                        mode,
-                        mapNames: !parser.HasFlag("no-map"),
-                        decoder,
-                        jobs,
-                        new SpectreProgress(task),
-                        cancellationToken
-                    );
-                });
+                    AnsiConsole
+                        .Progress()
+                        .AutoClear(false)
+                        .HideCompleted(false)
+                        .Columns(
+                            new TaskDescriptionColumn(),
+                            new ProgressBarColumn(),
+                            new PercentageColumn(),
+                            new RemainingTimeColumn(),
+                            new SpinnerColumn()
+                        )
+                        .Start(ctx =>
+                        {
+                            var task = ctx.AddTask("Exporting", maxValue: 0);
+                            result = new AudioExportService(logger).Export(
+                                archive,
+                                block,
+                                outputPath,
+                                mode,
+                                mapNames,
+                                decoder,
+                                jobs,
+                                new SpectreProgress(task),
+                                cancellationToken
+                            );
+                        });
+                }
+            }
 
             decoder?.Dispose();
             if (result == null)
