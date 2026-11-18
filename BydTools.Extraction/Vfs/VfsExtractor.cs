@@ -181,13 +181,17 @@ public sealed class VfsExtractor
             string typeLabel = Enum.IsDefined(info.BlockType)
                 ? $"{info.BlockType} ({(byte)info.BlockType})"
                 : $"Unknown ({(byte)info.BlockType})";
+            string sourceSuffix = string.IsNullOrWhiteSpace(archive.PersistentRoot)
+                ? ""
+                : $"  |  source = {(IsUnderDirectory(block.DirectoryPath, archive.PersistentRoot) ? "Persistent" : "StreamingAssets")}";
             _logger.Info(
-                "  [{0}] groupCfgName = {1}  |  blockType = {2}  |  chunks = {3}  |  files = {4}",
+                "  [{0}] groupCfgName = {1}  |  blockType = {2}  |  chunks = {3}  |  files = {4}{5}",
                 info.GroupCfgHashName,
                 info.GroupCfgName,
                 typeLabel,
                 info.Chunks.Count,
-                info.GroupFileInfoNum
+                info.GroupFileInfoNum,
+                sourceSuffix
             );
             WriteBlockInfo(info);
         }
@@ -240,6 +244,18 @@ public sealed class VfsExtractor
             _logger.Verbose("  String pool was not loaded: {0}", ex.Message);
             return null;
         }
+    }
+
+    private static bool IsUnderDirectory(string path, string root)
+    {
+        string fullPath = Path.GetFullPath(path);
+        string fullRoot = Path.GetFullPath(root)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            + Path.DirectorySeparatorChar;
+        var comparison = OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        return fullPath.StartsWith(fullRoot, comparison);
     }
 
     private void WriteBlockInfo(VfsBlockInfo info)

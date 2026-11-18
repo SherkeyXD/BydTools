@@ -112,13 +112,30 @@ public sealed class VfsArchive
         if (!Directory.Exists(vfsDirectory))
             throw new DirectoryNotFoundException($"VFS directory not found: {vfsDirectory}");
 
-        string[] roots = string.IsNullOrWhiteSpace(persistentDirectory)
+        string? persistentRoot = string.IsNullOrWhiteSpace(persistentDirectory) ? null : persistentDirectory;
+        var pathComparison = OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+
+        string[] roots = persistentRoot == null
+            || string.Equals(Path.GetFullPath(persistentRoot), Path.GetFullPath(vfsDirectory), pathComparison)
             ? [vfsDirectory]
-            : [persistentDirectory, vfsDirectory];
-        string[] directoryNames = roots
-            .Where(Directory.Exists)
-            .SelectMany(static root => Directory.GetDirectories(root))
-            .Select(static dir => Path.GetFileName(dir))
+            : [persistentRoot, vfsDirectory];
+
+        var rootMaps = new List<Dictionary<string, string>>(roots.Length);
+        foreach (string root in roots)
+        {
+            if (!Directory.Exists(root))
+                continue;
+
+            var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string dir in Directory.GetDirectories(root).Order(StringComparer.Ordinal))
+                map.TryAdd(Path.GetFileName(dir), dir);
+            rootMaps.Add(map);
+        }
+
+        string[] directoryNames = rootMaps
+            .SelectMany(static map => map.Keys)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Order(StringComparer.Ordinal)
             .ToArray();
@@ -127,10 +144,14 @@ public sealed class VfsArchive
         Exception? firstError = null;
         foreach (string dirName in directoryNames)
         {
-            string[] chunkDirectories = roots.Select(root => Path.Combine(root, dirName)).ToArray();
+            string[] chunkDirectories = rootMaps
+                .Select(map => map.TryGetValue(dirName, out string? dir) ? dir : null)
+                .Where(static dir => dir != null)
+                .Cast<string>()
+                .ToArray();
             string? blcPath = chunkDirectories
-                .Select(dir => Path.Combine(dir, dirName + ".blc"))
-                .FirstOrDefault(File.Exists);
+                .Select(dir => FindBlcPath(dir, dirName))
+                .FirstOrDefault(static path => path != null);
             if (blcPath == null)
             {
                 logger.Verbose("  [{0}] No BLC file found, skipping.", dirName);
@@ -179,7 +200,20 @@ public sealed class VfsArchive
         if (blocks.Count == 0 && firstError != null)
             throw firstError;
 
-        return new VfsArchive(vfsDirectory, persistentDirectory, blocks);
+        return new VfsArchive(vfsDirectory, persistentRoot, blocks);
+    }
+
+    private static string? FindBlcPath(string directory, string dirName)
+    {
+        string exact = Path.Combine(directory, Path.GetFileName(directory) + ".blc");
+        if (File.Exists(exact))
+            return exact;
+
+        return Directory
+            .EnumerateFiles(directory, "*.blc")
+            .FirstOrDefault(path =>
+                Path.GetFileNameWithoutExtension(path).Equals(dirName, StringComparison.OrdinalIgnoreCase)
+            );
     }
 
     public VfsBlock? Find(string nameOrType)

@@ -1,4 +1,6 @@
+using System.Buffers.Binary;
 using System.Text;
+using BydTools.Audio.Pck;
 using BydTools.CLI;
 using BydTools.Core;
 using BydTools.Extraction.Audio;
@@ -385,6 +387,136 @@ public class PipelineTests
             hasPersistentAudio ? "RIFF-edit-data" : "RIFF-demo-data",
             File.ReadAllText(Path.Combine(output.Path, "Audio", "unmapped", "Sfx", "99.wem"))
         );
+    }
+
+    [Fact]
+    public void VfsArchive_normalizes_whitespace_persistent_and_resolves_mixed_case_directories()
+    {
+        using var root = new TempDir();
+        using var persistent = new TempDir();
+        Samples.CreateGame(
+            root.Path,
+            Samples.Entry("42A8FCA6", "Table", EVFSBlockType.Table, "row.txt", "base"u8.ToArray())
+        );
+        Samples.CreateGame(
+            persistent.Path,
+            Samples.Entry("42A8FCA6", "Table", EVFSBlockType.Table, "row.txt", "edit"u8.ToArray())
+        );
+
+        var whitespaceArchive = VfsArchive.Open(Vfs(root.Path), Samples.Key, new QuietLogger(), "   ");
+        Assert.Null(whitespaceArchive.PersistentRoot);
+
+        string persistentUpper = Path.Combine(Vfs(persistent.Path), "42A8FCA6");
+        string persistentLower = Path.Combine(Vfs(persistent.Path), "42a8fca6");
+        if (!string.Equals(persistentUpper, persistentLower, StringComparison.Ordinal))
+        {
+            string tempDir = Path.Combine(Vfs(persistent.Path), "42A8FCA6_tmp");
+            Directory.Move(persistentUpper, tempDir);
+            Directory.Move(tempDir, persistentLower);
+        }
+        File.Delete(Path.Combine(persistentLower, "42A8FCA6.blc"));
+
+        var archive = VfsArchive.Open(Vfs(root.Path), Samples.Key, new QuietLogger(), Vfs(persistent.Path));
+        var block = Assert.Single(archive.Blocks);
+        string chunkPath = block.ResolveChunkPath(Assert.Single(block.Info.Chunks))!;
+        Assert.Equal("edit", Encoding.ASCII.GetString(block.ReadFile(chunkPath, Assert.Single(block.Info.Chunks[0].Files))));
+    }
+
+    [Fact]
+    public void Cli_uses_persistent_blc_with_streaming_chunk_fallback()
+    {
+        using var root = new TempDir();
+        using var persistent = new TempDir();
+        using var output = new TempDir();
+        Samples.CreateGame(
+            root.Path,
+            Samples.Entry("42A8FCA6", "Table", EVFSBlockType.Table, "old.txt", "base"u8.ToArray())
+        );
+        Samples.CreateGame(
+            persistent.Path,
+            Samples.Entry("42A8FCA6", "Table", EVFSBlockType.Table, "new.txt", "base"u8.ToArray())
+        );
+        File.Delete(Directory.GetFiles(Path.Combine(Vfs(persistent.Path), "42A8FCA6"), "*.chk").Single());
+
+        Assert.Equal(
+            0,
+            Program.Main([
+                "vfs", "-i", root.Path, "-p", persistent.Path, "-o", output.Path,
+                "-t", "Table", "--key", Convert.ToBase64String(Samples.Key), "--jobs", "1",
+            ])
+        );
+        Assert.Equal("base", File.ReadAllText(Path.Combine(output.Path, "new.txt")));
+        Assert.False(File.Exists(Path.Combine(output.Path, "old.txt")));
+    }
+
+    [Fact]
+    public void Pck_command_maps_names_using_persistent_audio_dialog()
+    {
+        using var root = new TempDir();
+        using var persistent = new TempDir();
+        using var output = new TempDir();
+
+        ulong mappedId = PckMapper.Fnv1_64("sfx/main/v1d0/a.wem"u8);
+        Samples.CreateGame(
+            root.Path,
+            Samples.Entry("24ED34CF", "Audio", EVFSBlockType.Audio, "bank.pck", ExternalPck(mappedId, "RIFF-mapped-wem"u8))
+        );
+        Samples.CreateGame(
+            persistent.Path,
+            Samples.Entry("42A8FCA6", "Table", EVFSBlockType.Table, "AudioDialog.bytes", Samples.AudioDialogMap())
+        );
+
+        Assert.Equal(
+            0,
+            Program.Main([
+                "pck", "-i", root.Path, "-p", persistent.Path, "-o", output.Path,
+                "-t", "Audio", "-m", "raw", "--key", Convert.ToBase64String(Samples.Key),
+                "--jobs", "1",
+            ])
+        );
+        Assert.Equal(
+            "RIFF-mapped-wem",
+            File.ReadAllText(Path.Combine(output.Path, "Audio", "Main", "sfx", "v1d0", "a.wem"))
+        );
+    }
+
+    private static byte[] ExternalPck(ulong fileId, ReadOnlySpan<byte> payload)
+    {
+        using var lang = new MemoryStream();
+        using (var lw = new BinaryWriter(lang))
+        {
+            lw.Write(1u);
+            lw.Write(12u);
+            lw.Write(1u);
+            lw.Write("sfx\0"u8);
+        }
+
+        byte[] langBytes = lang.ToArray();
+        const int externalsLength = 4 + 24;
+        int headerLength = 20 + langBytes.Length + externalsLength;
+
+        byte[] extBytes = new byte[externalsLength];
+        BinaryPrimitives.WriteUInt32LittleEndian(extBytes.AsSpan(0, 4), 1u);
+        BinaryPrimitives.WriteUInt32LittleEndian(extBytes.AsSpan(4, 4), (uint)fileId);
+        BinaryPrimitives.WriteUInt32LittleEndian(extBytes.AsSpan(8, 4), (uint)(fileId >> 32));
+        BinaryPrimitives.WriteUInt32LittleEndian(extBytes.AsSpan(12, 4), 0u);
+        BinaryPrimitives.WriteUInt32LittleEndian(extBytes.AsSpan(16, 4), (uint)payload.Length);
+        BinaryPrimitives.WriteUInt32LittleEndian(extBytes.AsSpan(20, 4), (uint)(8 + headerLength));
+        BinaryPrimitives.WriteUInt32LittleEndian(extBytes.AsSpan(24, 4), 1u);
+
+        using var ms = new MemoryStream();
+        using var w = new BinaryWriter(ms);
+        w.Write(0x4B504B41u);
+        w.Write((uint)headerLength);
+        w.Write(1u);
+        w.Write((uint)langBytes.Length);
+        w.Write(0u);
+        w.Write(0u);
+        w.Write((uint)externalsLength);
+        w.Write(langBytes);
+        w.Write(extBytes);
+        w.Write(payload);
+        return ms.ToArray();
     }
 
     private static string Vfs(string root) => Path.Combine(root, VFSDefine.VfsDirectoryName);

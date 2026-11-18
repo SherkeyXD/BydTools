@@ -60,10 +60,7 @@ public sealed class PckCommand : ICommand
         VfsArchive archive;
         try
         {
-            string? persistent = parser.Get("persistent");
-            string? persistentVfs = string.IsNullOrWhiteSpace(persistent)
-                ? null
-                : Path.Combine(Path.GetFullPath(persistent), VFSDefine.VfsDirectoryName);
+            string? persistentVfs = VfsCommand.ResolvePersistentVfs(parser.Get("persistent"), logger);
             archive = VfsArchive.Open(vfsPath, key, logger, persistentVfs);
         }
         catch (Exception ex)

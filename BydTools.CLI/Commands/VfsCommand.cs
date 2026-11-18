@@ -62,10 +62,7 @@ public sealed class VfsCommand : ICommand
         VfsArchive archive;
         try
         {
-            string? persistent = parser.Get("persistent");
-            string? persistentVfs = string.IsNullOrWhiteSpace(persistent)
-                ? null
-                : Path.Combine(Path.GetFullPath(persistent), VFSDefine.VfsDirectoryName);
+            string? persistentVfs = ResolvePersistentVfs(parser.Get("persistent"), logger);
             archive = VfsArchive.Open(vfsPath, key, logger, persistentVfs);
         }
         catch (Exception ex)
@@ -204,6 +201,36 @@ public sealed class VfsCommand : ICommand
                 Console.WriteLine();
             }
         );
+    }
+
+    internal static string? ResolvePersistentVfs(string? persistent, Core.ILogger logger)
+    {
+        if (string.IsNullOrWhiteSpace(persistent))
+            return null;
+
+        string persistentPath = Path.GetFullPath(persistent);
+        string persistentVfs = Path.Combine(persistentPath, VFSDefine.VfsDirectoryName);
+        if (!Directory.Exists(persistentPath))
+        {
+            logger.Info("Warning: Persistent directory not found: \"{0}\". Falling back to --input.", persistentPath);
+        }
+        else if (!Directory.Exists(persistentVfs))
+        {
+            string trimmed = persistentPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            if (Path.GetFileName(trimmed).Equals(VFSDefine.VfsDirectoryName, StringComparison.OrdinalIgnoreCase))
+            {
+                logger.Info(
+                    "Warning: VFS directory not found under \"{0}\". Pass the Persistent directory rather than its VFS subfolder; falling back to --input.",
+                    persistentPath
+                );
+            }
+            else
+            {
+                logger.Info("Warning: VFS directory not found under \"{0}\". Falling back to --input.", persistentPath);
+            }
+        }
+
+        return persistentVfs;
     }
 
     internal static int ResolveJobs(string? text)
