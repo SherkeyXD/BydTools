@@ -49,7 +49,7 @@ SOFTWARE.
 - **Source**: https://github.com/Escartem/AnimeWwise
 - **License**: CC BY-NC-SA 4.0
 - **Copyright**: Escartem and contributors
-- **Usage**: `PckParser.cs` references the AKPK sector-based parsing approach
+- **Usage**: `PckArchive.cs` references the AKPK sector-based parsing approach
   from `wavescan.py`; `PckMapper.cs` is a C# port of `mapper.py`.
 
 ---
