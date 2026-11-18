@@ -111,30 +111,38 @@ public sealed class VfsExtractor
                             _logger.Verbose("    Recovered USM name: {0}", relative);
                         }
 
-                        bool handled = false;
                         if (handler != null && handler.CanHandle(relative))
                         {
                             HandleResult result = handler.Handle(relative, data, sink);
-                            if (result.Status == HandleStatus.Handled)
-                                handled = true;
-                            else if (result.Status == HandleStatus.Failed)
+                            switch (result.Status)
                             {
-                                Interlocked.Increment(ref failed);
-                                _logger.Verbose(
-                                    "  Failed {0}: {1}",
-                                    relative,
-                                    result.Error ?? "content handler failed");
+                                case HandleStatus.Handled:
+                                    Interlocked.Increment(ref extracted);
+                                    break;
+                                case HandleStatus.Skipped:
+                                {
+                                    using var output = sink.Create(relative);
+                                    output.Write(data);
+                                    output.Complete();
+                                    Interlocked.Increment(ref extracted);
+                                    break;
+                                }
+                                case HandleStatus.Failed:
+                                    Interlocked.Increment(ref failed);
+                                    _logger.Verbose(
+                                        "  Failed {0}: {1}",
+                                        relative,
+                                        result.Error ?? "content handler failed");
+                                    break;
                             }
                         }
-
-                        if (!handled)
+                        else
                         {
                             using var output = sink.Create(relative);
                             output.Write(data);
                             output.Complete();
+                            Interlocked.Increment(ref extracted);
                         }
-
-                        Interlocked.Increment(ref extracted);
                     }
                     catch (OperationCanceledException)
                     {
