@@ -10,6 +10,7 @@ public enum ContentKind
     Lua,
     Video,
     Audio,
+    JsonData,
 }
 
 /// <summary>
@@ -38,7 +39,7 @@ public static class BlockRegistry
         new(EVFSBlockType.Video, "55FC21C6", ContentKind.Video),
         new(EVFSBlockType.IV, "A63D7E6A", ContentKind.Generic),
         new(EVFSBlockType.Streaming, "C3442D43", ContentKind.Generic),
-        new(EVFSBlockType.JsonData, "775A31D1", ContentKind.Generic),
+        new(EVFSBlockType.JsonData, "775A31D1", ContentKind.JsonData),
         new(EVFSBlockType.Lua, "19E3AE45", ContentKind.Lua),
         new(EVFSBlockType.IFixPatchOut, "DAFE52C9", ContentKind.Generic),
         new(EVFSBlockType.ExtendData, "D6E622F7", ContentKind.Generic),

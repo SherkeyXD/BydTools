@@ -1,32 +1,13 @@
 # BydTools
 
 > [!CAUTION]
-> 请不要通过任何渠道宣传本项目，该项目仅供学习交流，严禁用于商业用途，下载后请于24小时内删除  
+> 请不要通过任何渠道宣传本项目，该项目仅供学习交流，严禁用于商业用途，下载后请于24小时内删除
 > Please do not promote this project through any channels. This project is for learning and communication purposes only. Commercial use is strictly prohibited. Please delete it within 24 hours after downloading.
 
 ---
 
 > [!WARNING]
 > AI codes are everywhere
-
-## TODO
-
-### VFS
-
-- [ ] `JsonData` (MemoryPack):
-  - AnimationConfig
-  - AtmosphericNpcData
-  - Interactive
-  - LevelConfig
-  - LevelData
-  - LevelScriptData
-  - LevelScriptTemplateData
-  - LipSync
-  - NPC
-  - NavMesh
-  - NonGeneratedConfigs
-  - SkillData
-  - SpawnerConfig
 
 ## Prerequisites
 
@@ -38,15 +19,13 @@
 > [!NOTE]
 > Dumping `Bundle` or extracting audio can write a large number of small files.
 
-Exit codes: `0` success, `2` bad arguments, `1` a runtime failure. Ctrl+C stops the run and deletes files that were only partly written.
-
 ```text
 Usage:
   BydTools <command> [options]
 
 Commands:
-  vfs             Dump files from VFS
-  pck             Extract audio from VFS
+  vfs   Dump files from VFS
+  pck   Extract audio from VFS
 ```
 
 ### vfs
@@ -63,6 +42,8 @@ Options:
   --key <base64>             ChaCha20 key (32 bytes). Overrides --platform.
   --platform <name>          pc (default) or android, used when --key is omitted.
   --jobs <n>                 Chunks read at once. Default: processor count.
+  --raw                      Write JsonData files without MemoryPack decode.
+  --schema-dir <dir>         beyond-mp-schema export (overrides the embed). Ignored with --raw.
   -d, --debug                Print block declarations without extracting.
   -v, --verbose              Per-chunk and per-file details.
   -h, --help
@@ -73,8 +54,6 @@ Block types:
   Bundle, Audio, Video, IV, Streaming, DynamicStreaming, Lua, Table, JsonData,
   ExtendData, HotfixAudio, AudioChinese, AudioEnglish, AudioJapanese, AudioKorean
 ```
-
-A directory that is not in this list can still be dumped by its `groupCfgName`. `All`, `Raw`, and numbers that are not a real block type are rejected. `--debug` prints the blocks actually present, including ones the catalog does not know yet.
 
 ### pck
 
@@ -102,14 +81,13 @@ Audio block types:
   AuditAudio, HotfixAudio
 ```
 
-Files with no AudioDialog match go under `<block>/unmapped/<language>/`. The language is the one stored in the PCK when it is known, otherwise the block's own language (Main, Chinese, Hotfix, and so on). `PLUG` entries are written as `.plg` in `raw` mode and skipped in `wav` mode. Extracting a USM again overwrites the previous video and audio streams instead of creating `_2`, `_3`, and so on.
-
 ## License
 
 This project is licensed under [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/).
 
 This project includes code ported from or inspired by the following open-source projects:
 
+- Original BeyondTools
 - [AnimeStudio](https://github.com/Escartem/AnimeStudio)
 - [AnimeWwise](https://github.com/Escartem/AnimeWwise)
 - [vgmstream](https://github.com/vgmstream/vgmstream), [ww2ogg](https://github.com/hcs64/ww2ogg), [NVorbis](https://github.com/NVorbis/NVorbis) and [Concentus](https://github.com/lostromb/concentus), via `WemDecoder/`
