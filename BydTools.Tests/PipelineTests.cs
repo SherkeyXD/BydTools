@@ -1,4 +1,6 @@
+using System.Buffers.Binary;
 using System.Text;
+using BydTools.Audio.Pck;
 using BydTools.CLI;
 using BydTools.Core;
 using BydTools.Extraction.Audio;
@@ -227,6 +229,294 @@ public class PipelineTests
             jsonSample,
             File.ReadAllBytes(Path.Combine(rawOutput.Path, "Data", "Json", "BambooRaftTaskTable.json"))
         );
+    }
+
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public void Persistent_blc_and_chunks_are_resolved_independently(bool hasBlc, bool hasChunk)
+    {
+        using var root = new TempDir();
+        using var persistent = new TempDir();
+        Samples.CreateGame(
+            root.Path,
+            Samples.Entry("42A8FCA6", "Table", EVFSBlockType.Table, "row.txt", "base"u8.ToArray(), encrypt: true)
+        );
+        Samples.CreateGame(
+            persistent.Path,
+            Samples.Entry("42A8FCA6", "Table", EVFSBlockType.Table, "row.txt", "edit"u8.ToArray(), encrypt: true, codeVersion: 5)
+        );
+        string persistentBlock = Path.Combine(Vfs(persistent.Path), "42A8FCA6");
+        if (!hasBlc)
+            File.Delete(Path.Combine(persistentBlock, "42A8FCA6.blc"));
+        if (!hasChunk)
+            File.Delete(Directory.GetFiles(persistentBlock, "*.chk").Single());
+
+        var archive = VfsArchive.Open(Vfs(root.Path), Samples.Key, new QuietLogger(), Vfs(persistent.Path));
+        var block = Assert.Single(archive.Blocks);
+        Assert.Equal(hasBlc ? 5 : 3, block.Info.CodeVersion);
+        var chunk = Assert.Single(block.Info.Chunks);
+        string chunkPath = block.ResolveChunkPath(chunk)!;
+        Assert.Equal(
+            Path.Combine(hasChunk ? persistentBlock : Path.Combine(Vfs(root.Path), "42A8FCA6"), chunk.FileName),
+            chunkPath
+        );
+        Assert.Equal(
+            hasChunk ? "edit" : "base",
+            Encoding.ASCII.GetString(block.ReadFile(chunkPath, Assert.Single(chunk.Files)))
+        );
+
+        // A second CHK in this block falls back independently of the first.
+        var baseOnlyChunk = chunk with { Md5Name = 2 };
+        string baseOnlyPath = Path.Combine(Vfs(root.Path), "42A8FCA6", baseOnlyChunk.FileName);
+        File.Copy(Path.Combine(Vfs(root.Path), "42A8FCA6", chunk.FileName), baseOnlyPath);
+        Assert.Equal(baseOnlyPath, block.ResolveChunkPath(baseOnlyChunk));
+        Assert.Null(block.ResolveChunkPath(chunk with { Md5Name = 3 }));
+    }
+
+    [Fact]
+    public void Persistent_and_streaming_only_blocks_are_both_discovered()
+    {
+        using var root = new TempDir();
+        using var persistent = new TempDir();
+        Samples.CreateGame(
+            root.Path,
+            Samples.Entry("42A8FCA6", "Table", EVFSBlockType.Table, "base.txt", "base"u8.ToArray()),
+            Samples.Entry("24ED34CF", "Audio", EVFSBlockType.Audio, "bank.pck", Samples.PlainPck())
+        );
+        Samples.CreateGame(
+            persistent.Path,
+            Samples.Entry("42A8FCA6", "Table", EVFSBlockType.Table, "updated.txt", "edit"u8.ToArray()),
+            Samples.Entry("19E3AE45", "Lua", EVFSBlockType.Lua, "patch.txt", "lua"u8.ToArray())
+        );
+        var archive = VfsArchive.Open(Vfs(root.Path), Samples.Key, new QuietLogger(), Vfs(persistent.Path));
+        Assert.Equal(3, archive.Blocks.Count);
+        Assert.NotNull(archive.Find("Audio"));
+        Assert.NotNull(archive.Find("Lua"));
+        Assert.Equal("updated.txt", archive.Find("Table")!.Info.Chunks[0].Files[0].Name);
+    }
+
+    [Theory]
+    [InlineData("empty")]
+    [InlineData("empty-vfs")]
+    [InlineData("missing")]
+    public void Cli_falls_back_when_persistent_has_no_files(string state)
+    {
+        using var root = new TempDir();
+        using var persistent = new TempDir();
+        using var output = new TempDir();
+        Samples.CreateGame(
+            root.Path,
+            Samples.Entry("42A8FCA6", "Table", EVFSBlockType.Table, "row.bytes", Samples.MinimalBean())
+        );
+        string persistentPath = persistent.Path;
+        if (state == "empty-vfs")
+            Directory.CreateDirectory(Vfs(persistent.Path));
+        else if (state == "missing")
+            persistentPath = Path.Combine(persistent.Path, "missing");
+
+        Assert.Equal(
+            0,
+            Program.Main([
+                "vfs", "-i", root.Path, "-p", persistentPath, "-o", output.Path,
+                "-t", "Table", "--key", Convert.ToBase64String(Samples.Key), "--jobs", "1",
+            ])
+        );
+        Assert.Contains("\"value\": 42", File.ReadAllText(Path.Combine(output.Path, "row.json")));
+    }
+
+    [Theory]
+    [InlineData("-p")]
+    [InlineData("--persistent")]
+    public void Cli_dumps_the_persistent_declaration_and_data(string option)
+    {
+        using var root = new TempDir();
+        using var persistent = new TempDir();
+        using var output = new TempDir();
+        Samples.CreateGame(
+            root.Path,
+            Samples.Entry("42A8FCA6", "Table", EVFSBlockType.Table, "old.txt", "base"u8.ToArray())
+        );
+        Samples.CreateGame(
+            persistent.Path,
+            Samples.Entry("42A8FCA6", "Table", EVFSBlockType.Table, "new.txt", "edit"u8.ToArray(), encrypt: true)
+        );
+        Assert.Equal(
+            0,
+            Program.Main([
+                "vfs", "-i", root.Path, option, persistent.Path, "-o", output.Path,
+                "-t", "Table", "--key", Convert.ToBase64String(Samples.Key), "--jobs", "1",
+            ])
+        );
+        Assert.Equal("edit", File.ReadAllText(Path.Combine(output.Path, "new.txt")));
+        Assert.False(File.Exists(Path.Combine(output.Path, "old.txt")));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Pck_command_uses_persistent_and_falls_back_to_streaming(bool hasPersistentAudio)
+    {
+        using var root = new TempDir();
+        using var persistent = new TempDir();
+        using var output = new TempDir();
+        Samples.CreateGame(
+            root.Path,
+            Samples.Entry("24ED34CF", "Audio", EVFSBlockType.Audio, "bank.pck", Samples.PlainPck())
+        );
+        if (hasPersistentAudio)
+        {
+            byte[] patched = Samples.PlainPck();
+            "RIFF-edit-data"u8.CopyTo(patched.AsSpan(patched.Length - 14));
+            Samples.CreateGame(
+                persistent.Path,
+                Samples.Entry("24ED34CF", "Audio", EVFSBlockType.Audio, "bank.pck", patched, encrypt: true)
+            );
+        }
+
+        Assert.Equal(
+            0,
+            Program.Main([
+                "pck", "-i", root.Path, "--persistent", persistent.Path, "-o", output.Path,
+                "-t", "Audio", "-m", "raw", "--no-map", "--key", Convert.ToBase64String(Samples.Key),
+                "--jobs", "1",
+            ])
+        );
+        Assert.Equal(
+            hasPersistentAudio ? "RIFF-edit-data" : "RIFF-demo-data",
+            File.ReadAllText(Path.Combine(output.Path, "Audio", "unmapped", "Sfx", "99.wem"))
+        );
+    }
+
+    [Fact]
+    public void VfsArchive_normalizes_whitespace_persistent_and_resolves_mixed_case_directories()
+    {
+        using var root = new TempDir();
+        using var persistent = new TempDir();
+        Samples.CreateGame(
+            root.Path,
+            Samples.Entry("42A8FCA6", "Table", EVFSBlockType.Table, "row.txt", "base"u8.ToArray())
+        );
+        Samples.CreateGame(
+            persistent.Path,
+            Samples.Entry("42A8FCA6", "Table", EVFSBlockType.Table, "row.txt", "edit"u8.ToArray())
+        );
+
+        var whitespaceArchive = VfsArchive.Open(Vfs(root.Path), Samples.Key, new QuietLogger(), "   ");
+        Assert.Null(whitespaceArchive.PersistentRoot);
+
+        string persistentUpper = Path.Combine(Vfs(persistent.Path), "42A8FCA6");
+        string persistentLower = Path.Combine(Vfs(persistent.Path), "42a8fca6");
+        if (!string.Equals(persistentUpper, persistentLower, StringComparison.Ordinal))
+        {
+            string tempDir = Path.Combine(Vfs(persistent.Path), "42A8FCA6_tmp");
+            Directory.Move(persistentUpper, tempDir);
+            Directory.Move(tempDir, persistentLower);
+        }
+        File.Delete(Path.Combine(persistentLower, "42A8FCA6.blc"));
+
+        var archive = VfsArchive.Open(Vfs(root.Path), Samples.Key, new QuietLogger(), Vfs(persistent.Path));
+        var block = Assert.Single(archive.Blocks);
+        string chunkPath = block.ResolveChunkPath(Assert.Single(block.Info.Chunks))!;
+        Assert.Equal("edit", Encoding.ASCII.GetString(block.ReadFile(chunkPath, Assert.Single(block.Info.Chunks[0].Files))));
+    }
+
+    [Fact]
+    public void Cli_uses_persistent_blc_with_streaming_chunk_fallback()
+    {
+        using var root = new TempDir();
+        using var persistent = new TempDir();
+        using var output = new TempDir();
+        Samples.CreateGame(
+            root.Path,
+            Samples.Entry("42A8FCA6", "Table", EVFSBlockType.Table, "old.txt", "base"u8.ToArray())
+        );
+        Samples.CreateGame(
+            persistent.Path,
+            Samples.Entry("42A8FCA6", "Table", EVFSBlockType.Table, "new.txt", "base"u8.ToArray())
+        );
+        File.Delete(Directory.GetFiles(Path.Combine(Vfs(persistent.Path), "42A8FCA6"), "*.chk").Single());
+
+        Assert.Equal(
+            0,
+            Program.Main([
+                "vfs", "-i", root.Path, "-p", persistent.Path, "-o", output.Path,
+                "-t", "Table", "--key", Convert.ToBase64String(Samples.Key), "--jobs", "1",
+            ])
+        );
+        Assert.Equal("base", File.ReadAllText(Path.Combine(output.Path, "new.txt")));
+        Assert.False(File.Exists(Path.Combine(output.Path, "old.txt")));
+    }
+
+    [Fact]
+    public void Pck_command_maps_names_using_persistent_audio_dialog()
+    {
+        using var root = new TempDir();
+        using var persistent = new TempDir();
+        using var output = new TempDir();
+
+        ulong mappedId = PckMapper.Fnv1_64("sfx/main/v1d0/a.wem"u8);
+        Samples.CreateGame(
+            root.Path,
+            Samples.Entry("24ED34CF", "Audio", EVFSBlockType.Audio, "bank.pck", ExternalPck(mappedId, "RIFF-mapped-wem"u8))
+        );
+        Samples.CreateGame(
+            persistent.Path,
+            Samples.Entry("42A8FCA6", "Table", EVFSBlockType.Table, "AudioDialog.bytes", Samples.AudioDialogMap())
+        );
+
+        Assert.Equal(
+            0,
+            Program.Main([
+                "pck", "-i", root.Path, "-p", persistent.Path, "-o", output.Path,
+                "-t", "Audio", "-m", "raw", "--key", Convert.ToBase64String(Samples.Key),
+                "--jobs", "1",
+            ])
+        );
+        Assert.Equal(
+            "RIFF-mapped-wem",
+            File.ReadAllText(Path.Combine(output.Path, "Audio", "Main", "sfx", "v1d0", "a.wem"))
+        );
+    }
+
+    private static byte[] ExternalPck(ulong fileId, ReadOnlySpan<byte> payload)
+    {
+        using var lang = new MemoryStream();
+        using (var lw = new BinaryWriter(lang))
+        {
+            lw.Write(1u);
+            lw.Write(12u);
+            lw.Write(1u);
+            lw.Write("sfx\0"u8);
+        }
+
+        byte[] langBytes = lang.ToArray();
+        const int externalsLength = 4 + 24;
+        int headerLength = 20 + langBytes.Length + externalsLength;
+
+        byte[] extBytes = new byte[externalsLength];
+        BinaryPrimitives.WriteUInt32LittleEndian(extBytes.AsSpan(0, 4), 1u);
+        BinaryPrimitives.WriteUInt32LittleEndian(extBytes.AsSpan(4, 4), (uint)fileId);
+        BinaryPrimitives.WriteUInt32LittleEndian(extBytes.AsSpan(8, 4), (uint)(fileId >> 32));
+        BinaryPrimitives.WriteUInt32LittleEndian(extBytes.AsSpan(12, 4), 0u);
+        BinaryPrimitives.WriteUInt32LittleEndian(extBytes.AsSpan(16, 4), (uint)payload.Length);
+        BinaryPrimitives.WriteUInt32LittleEndian(extBytes.AsSpan(20, 4), (uint)(8 + headerLength));
+        BinaryPrimitives.WriteUInt32LittleEndian(extBytes.AsSpan(24, 4), 1u);
+
+        using var ms = new MemoryStream();
+        using var w = new BinaryWriter(ms);
+        w.Write(0x4B504B41u);
+        w.Write((uint)headerLength);
+        w.Write(1u);
+        w.Write((uint)langBytes.Length);
+        w.Write(0u);
+        w.Write(0u);
+        w.Write((uint)externalsLength);
+        w.Write(langBytes);
+        w.Write(extBytes);
+        w.Write(payload);
+        return ms.ToArray();
     }
 
     private static string Vfs(string root) => Path.Combine(root, VFSDefine.VfsDirectoryName);

@@ -6,13 +6,21 @@ namespace BydTools.VFS;
 public sealed class VfsBlock
 {
     private readonly byte[] _key;
+    private readonly IReadOnlyList<string> _chunkDirectories;
 
-    internal VfsBlock(string directoryPath, VfsBlockInfo info, BlockDescriptor? descriptor, byte[] key)
+    internal VfsBlock(
+        string directoryPath,
+        VfsBlockInfo info,
+        BlockDescriptor? descriptor,
+        byte[] key,
+        IReadOnlyList<string> chunkDirectories
+    )
     {
         DirectoryPath = directoryPath;
         Info = info;
         Descriptor = descriptor;
         _key = key;
+        _chunkDirectories = chunkDirectories;
     }
 
     public string DirectoryPath { get; }
@@ -25,8 +33,14 @@ public sealed class VfsBlock
 
     public string? ResolveChunkPath(VfsChunk chunk)
     {
-        string path = Path.Combine(DirectoryPath, chunk.FileName);
-        return File.Exists(path) ? path : null;
+        foreach (string directory in _chunkDirectories)
+        {
+            string path = Path.Combine(directory, chunk.FileName);
+            if (File.Exists(path))
+                return path;
+        }
+
+        return null;
     }
 
     public byte[] ReadFile(string chunkPath, VfsFile file)
@@ -73,27 +87,72 @@ public sealed class VfsBlock
 /// </summary>
 public sealed class VfsArchive
 {
-    private VfsArchive(string root, IReadOnlyList<VfsBlock> blocks)
+    private VfsArchive(string root, string? persistentRoot, IReadOnlyList<VfsBlock> blocks)
     {
         Root = root;
+        PersistentRoot = persistentRoot;
         Blocks = blocks;
     }
 
     public string Root { get; }
+    public string? PersistentRoot { get; }
     public IReadOnlyList<VfsBlock> Blocks { get; }
 
-    public static VfsArchive Open(string vfsDirectory, byte[] key, ILogger logger)
+    /// <summary>
+    /// Opens StreamingAssets/VFS with an optional Persistent/VFS overlay.
+    /// Each BLC and CHK is resolved independently, preferring Persistent.
+    /// </summary>
+    public static VfsArchive Open(
+        string vfsDirectory,
+        byte[] key,
+        ILogger logger,
+        string? persistentDirectory = null
+    )
     {
         if (!Directory.Exists(vfsDirectory))
             throw new DirectoryNotFoundException($"VFS directory not found: {vfsDirectory}");
 
+        string? persistentRoot = string.IsNullOrWhiteSpace(persistentDirectory) ? null : persistentDirectory;
+        var pathComparison = OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+
+        string[] roots = persistentRoot == null
+            || string.Equals(Path.GetFullPath(persistentRoot), Path.GetFullPath(vfsDirectory), pathComparison)
+            ? [vfsDirectory]
+            : [persistentRoot, vfsDirectory];
+
+        var rootMaps = new List<Dictionary<string, string>>(roots.Length);
+        foreach (string root in roots)
+        {
+            if (!Directory.Exists(root))
+                continue;
+
+            var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string dir in Directory.GetDirectories(root).Order(StringComparer.Ordinal))
+                map.TryAdd(Path.GetFileName(dir), dir);
+            rootMaps.Add(map);
+        }
+
+        string[] directoryNames = rootMaps
+            .SelectMany(static map => map.Keys)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
         var blocks = new List<VfsBlock>();
         Exception? firstError = null;
-        foreach (var dir in Directory.GetDirectories(vfsDirectory).OrderBy(static d => d, StringComparer.Ordinal))
+        foreach (string dirName in directoryNames)
         {
-            string dirName = Path.GetFileName(dir);
-            string blcPath = Path.Combine(dir, dirName + ".blc");
-            if (!File.Exists(blcPath))
+            string[] chunkDirectories = rootMaps
+                .Select(map => map.TryGetValue(dirName, out string? dir) ? dir : null)
+                .Where(static dir => dir != null)
+                .Cast<string>()
+                .ToArray();
+            string? blcPath = chunkDirectories
+                .Select(dir => FindBlcPath(dir, dirName))
+                .FirstOrDefault(static path => path != null);
+            if (blcPath == null)
             {
                 logger.Verbose("  [{0}] No BLC file found, skipping.", dirName);
                 continue;
@@ -129,7 +188,7 @@ public sealed class VfsArchive
                     );
                 }
 
-                blocks.Add(new VfsBlock(dir, info, descriptor, key));
+                blocks.Add(new VfsBlock(Path.GetDirectoryName(blcPath)!, info, descriptor, key, chunkDirectories));
             }
             catch (Exception ex)
             {
@@ -141,7 +200,20 @@ public sealed class VfsArchive
         if (blocks.Count == 0 && firstError != null)
             throw firstError;
 
-        return new VfsArchive(vfsDirectory, blocks);
+        return new VfsArchive(vfsDirectory, persistentRoot, blocks);
+    }
+
+    private static string? FindBlcPath(string directory, string dirName)
+    {
+        string exact = Path.Combine(directory, Path.GetFileName(directory) + ".blc");
+        if (File.Exists(exact))
+            return exact;
+
+        return Directory
+            .EnumerateFiles(directory, "*.blc")
+            .FirstOrDefault(path =>
+                Path.GetFileNameWithoutExtension(path).Equals(dirName, StringComparison.OrdinalIgnoreCase)
+            );
     }
 
     public VfsBlock? Find(string nameOrType)

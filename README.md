@@ -39,6 +39,7 @@ Required:
   -t, --blocktype <type>     Block type. Commas separate several types.
 
 Options:
+  -p, --persistent <path>    Persistent directory containing VFS. Preferred over --input.
   --key <base64>             ChaCha20 key (32 bytes). Overrides --platform.
   --platform <name>          pc (default) or android, used when --key is omitted.
   --jobs <n>                 Chunks read at once. Default: processor count.
@@ -52,7 +53,18 @@ Block types:
   InitAudio, InitBundle, InitialExtendData, BundleManifest, IFixPatchOut,
   AuditStreaming, AuditDynamicStreaming, AuditIV, AuditAudio, AuditVideo,
   Bundle, Audio, Video, IV, Streaming, DynamicStreaming, Lua, Table, JsonData,
-  ExtendData, HotfixAudio, AudioChinese, AudioEnglish, AudioJapanese, AudioKorean
+  ExtendData, HotfixAudio, Terrain, AudioChinese, AudioEnglish, AudioJapanese,
+  AudioKorean, JsonLipChinese, JsonLipEnglish, JsonLipJapanese, JsonLipKorean
+```
+
+Pass the game's `StreamingAssets` directory to `-i` and optionally its `Persistent`
+directory to `-p`. Each `.blc` declaration and `.chk` file is read from
+`Persistent/VFS` when present, otherwise from `StreamingAssets/VFS`. Empty or
+missing Persistent directories fall back to `-i`. Blocks found only in Persistent
+are also included.
+
+```powershell
+BydTools vfs -i "D:\Program Files\Endfield Game\Endfield_Data\StreamingAssets" -p "D:\Program Files\Endfield Game\Endfield_Data\Persistent" -t Table -o output
 ```
 
 ### pck
@@ -68,6 +80,7 @@ Required:
   -t, --type <type>          Audio block, or a groupCfgName found in this VFS.
 
 Options:
+  -p, --persistent <path>    Persistent directory containing VFS. Preferred over --input.
   -m, --mode <mode>          wav (default) or raw.
   --key <base64>             ChaCha20 key (32 bytes). Overrides --platform.
   --platform <name>          pc (default) or android.
@@ -80,6 +93,9 @@ Audio block types:
   InitAudio, Audio, AudioChinese, AudioEnglish, AudioJapanese, AudioKorean,
   AuditAudio, HotfixAudio
 ```
+
+`--persistent` uses the same file-by-file priority as `vfs`, including the Table
+block used for AudioDialog name mapping.
 
 ## License
 
