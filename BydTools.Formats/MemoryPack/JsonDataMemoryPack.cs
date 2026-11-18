@@ -5,6 +5,7 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using MessagePack;
 
 namespace BydTools.Formats.MemoryPack;
 
@@ -163,16 +164,70 @@ public static class JsonDataMemoryPack
     /// Loads <c>{ "AbilityActionData": { "296": "PlayAnimationActionData", ... }, "ActionBase": { ... } }</c>.
     /// A flat <c>{ "296": "..." }</c> object is treated as AbilityActionData only (legacy).
     /// </summary>
-    public static IReadOnlyDictionary<string, IReadOnlyDictionary<int, string>> LoadUnionMap(string path)
+    public static IReadOnlyDictionary<string, IReadOnlyDictionary<int, string>> LoadUnionMap(string path) =>
+        SchemaFile.Parse(path, LoadUnionMap, LoadUnionMapMsgPack);
+
+    public static IReadOnlyDictionary<string, IReadOnlyDictionary<int, string>> LoadUnionMap(byte[] data) =>
+        SchemaFile.Parse(data, LoadUnionMap, LoadUnionMapMsgPack);
+
+    private static IReadOnlyDictionary<string, IReadOnlyDictionary<int, string>> LoadUnionMapMsgPack(
+        ref MessagePackReader reader)
     {
-        using var doc = SchemaFile.Parse(path);
-        return LoadUnionMap(doc.RootElement);
+        if (reader.NextMessagePackType != MessagePackType.Map)
+            throw new InvalidDataException("Union map must be a JSON object.");
+
+        var maps = new Dictionary<string, IReadOnlyDictionary<int, string>>(StringComparer.Ordinal);
+        Dictionary<int, string>? flat = null;
+        int count = reader.ReadMapHeader();
+        for (int i = 0; i < count; i++)
+        {
+            string? key = SchemaFile.ReadNullableString(ref reader);
+            if (key == null)
+            {
+                reader.Skip();
+                continue;
+            }
+
+            if (reader.NextMessagePackType == MessagePackType.Map)
+            {
+                maps[key] = ReadTagMapMsgPack(ref reader);
+            }
+            else if (int.TryParse(key, out int tag) && reader.NextMessagePackType == MessagePackType.String)
+            {
+                string? name = SchemaFile.ReadNullableString(ref reader);
+                if (string.IsNullOrWhiteSpace(name))
+                    throw new InvalidDataException($"Union tag {tag} has an empty type name.");
+                flat ??= new Dictionary<int, string>();
+                flat[tag] = name;
+            }
+            else
+            {
+                reader.Skip();
+            }
+        }
+
+        if (maps.Count == 0 && flat != null)
+            maps["AbilityActionData"] = flat;
+
+        return maps;
     }
 
-    public static IReadOnlyDictionary<string, IReadOnlyDictionary<int, string>> LoadUnionMap(byte[] data)
+    private static Dictionary<int, string> ReadTagMapMsgPack(ref MessagePackReader reader)
     {
-        using var doc = SchemaFile.Parse(data);
-        return LoadUnionMap(doc.RootElement);
+        int count = reader.ReadMapHeader();
+        var map = new Dictionary<int, string>(count);
+        for (int i = 0; i < count; i++)
+        {
+            string? tagText = SchemaFile.ReadNullableString(ref reader);
+            if (tagText == null || !int.TryParse(tagText, out int tag))
+                throw new InvalidDataException($"Union tag \"{tagText}\" is not an integer.");
+            string? name = SchemaFile.ReadNullableString(ref reader);
+            if (string.IsNullOrWhiteSpace(name))
+                throw new InvalidDataException($"Union tag {tag} has an empty type name.");
+            map[tag] = name;
+        }
+
+        return map;
     }
 
     public static IReadOnlyDictionary<string, IReadOnlyDictionary<int, string>> LoadUnionMap(JsonElement root)

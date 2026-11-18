@@ -1,5 +1,3 @@
-using System.Text.Json;
-
 namespace BydTools.Formats.MemoryPack;
 
 /// <summary>
@@ -33,17 +31,14 @@ public static class MemoryPackResources
         return buffer.ToArray();
     }
 
-    private static Bundle Load()
-    {
-        using JsonDocument schemas = SchemaFile.Parse(Read("schemas.msgpack.lz4"));
-        using JsonDocument index = SchemaFile.Parse(Read("type_index.msgpack.lz4"));
-        using JsonDocument enums = SchemaFile.Parse(Read("enums.msgpack.lz4"));
-        using JsonDocument unmanaged = SchemaFile.Parse(Read("unmanaged.msgpack.lz4"));
-        return new Bundle(
-            MemoryPackSchema.Load(schemas, index, enums, unmanaged),
-            JsonDataMemoryPack.LoadUnionMap(Read("union-map.msgpack.lz4"))
-        );
-    }
+    private static Bundle Load() =>
+        new(
+            MemoryPackSchema.LoadFromBytes(
+                Read("schemas.msgpack.lz4"),
+                Read("type_index.msgpack.lz4"),
+                Read("enums.msgpack.lz4"),
+                Read("unmanaged.msgpack.lz4")),
+            JsonDataMemoryPack.LoadUnionMap(Read("union-map.msgpack.lz4")));
 
     private readonly record struct Bundle(
         MemoryPackSchema Schema,
