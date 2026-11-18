@@ -99,7 +99,7 @@ public sealed class PckCommand : ICommand
                 result.Converted,
                 result.Failed
             );
-            return result.Failed > 0 && result.Extracted == 0 ? 1 : 0;
+            return result.Failed > 0 ? 1 : 0;
         }
         catch (Exception ex) when (CliHelpers.IsCancel(ex))
         {

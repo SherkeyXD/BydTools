@@ -133,7 +133,7 @@ public sealed class VfsCommand : ICommand
             return CliHelpers.Fail(1, ex.Message);
         }
 
-        return totalFailed > 0 && totalExtracted == 0 ? 1 : 0;
+        return totalFailed > 0 ? 1 : 0;
     }
 
     internal static ArgParser CreateParser() =>
