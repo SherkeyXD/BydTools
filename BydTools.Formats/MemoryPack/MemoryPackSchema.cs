@@ -50,7 +50,6 @@ public sealed class MpType
     public required string WrapperType { get; init; }
     public required bool HasDeserialize { get; init; }
     public required MpMember[] Wire { get; set; }
-    public required MpMember[] Own { get; set; }
     public int? MinFieldOffset { get; init; }
     public bool SerializeMarker { get; set; }
     /// <summary>Exporter <c>parent_type</c>. Union fallback collects wrappers with this parent.</summary>
@@ -213,7 +212,6 @@ public sealed class MemoryPackSchema
                     WrapperType = wrapperType,
                     HasDeserialize = hasDeserialize,
                     Wire = wire,
-                    Own = wire,
                     MinFieldOffset = minOffset,
                     SerializeMarker = markers.Contains(target),
                     ParentType = parentType,
@@ -1025,7 +1023,7 @@ public sealed class MemoryPackSchema
         {
             if (list.Count == 0)
                 continue;
-            MpType type = list[0];
+            MpType type = list.FirstOrDefault(t => t.SerializeMarker) ?? list[0];
             HashSet<string> nameTokens = Tokens(name);
             nameTokens.ExceptWith(IdentityStopwords);
             if (nameTokens.Count == 0)

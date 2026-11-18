@@ -30,7 +30,7 @@ static class Lz4Block
             byte token = src[s++];
             int literal = token >> 4;
             if (literal == 15)
-                literal += ReadLength(src, ref s);
+                literal += ReadLength(src, ref s, dst.Length - d - literal);
             if ((uint)literal > (uint)(src.Length - s) || (uint)literal > (uint)(dst.Length - d))
                 throw new InvalidDataException("LZ4 literal run exceeds the buffer.");
             src.Slice(s, literal).CopyTo(dst.Slice(d));
@@ -48,7 +48,7 @@ static class Lz4Block
 
             int match = (token & 0x0F) + 4;
             if ((token & 0x0F) == 15)
-                match += ReadLength(src, ref s);
+                match += ReadLength(src, ref s, dst.Length - d - match);
             if ((uint)match > (uint)(dst.Length - d))
                 throw new InvalidDataException("LZ4 match run exceeds the output.");
             int from = d - offset;
@@ -59,7 +59,7 @@ static class Lz4Block
         return d;
     }
 
-    private static int ReadLength(ReadOnlySpan<byte> src, ref int s)
+    private static int ReadLength(ReadOnlySpan<byte> src, ref int s, int maxAdditional)
     {
         int length = 0;
         byte extra;
@@ -68,6 +68,8 @@ static class Lz4Block
             if (s >= src.Length)
                 throw new InvalidDataException("LZ4 length extension is truncated.");
             extra = src[s++];
+            if (extra > maxAdditional - length)
+                throw new InvalidDataException("LZ4 run exceeds the output.");
             length += extra;
         } while (extra == 255);
 

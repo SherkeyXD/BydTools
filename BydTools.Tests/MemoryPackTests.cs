@@ -74,25 +74,33 @@ public class MemoryPackTests
     [Fact]
     public void SchemaFile_parses_plain_msgpack_and_lz4_block()
     {
+        using var dir = new TempDir();
         // {"ok":true}
         byte[] msgpack = [0x81, 0xA2, (byte)'o', (byte)'k', 0xC3];
-        string plain = Path.Combine(Path.GetTempPath(), "bydtools-schema-plain.msgpack.lz4");
+        string plain = Path.Combine(dir.Path, "bydtools-schema-plain.msgpack.lz4");
         File.WriteAllBytes(plain, msgpack);
         using (JsonDocument doc = SchemaFile.Parse(plain))
             Assert.True(doc.RootElement.GetProperty("ok").GetBoolean());
 
         byte[] wrapped = WrapLz4Block(msgpack);
-        string packed = Path.Combine(Path.GetTempPath(), "bydtools-schema-lz4.msgpack.lz4");
+        string packed = Path.Combine(dir.Path, "bydtools-schema-lz4.msgpack.lz4");
         File.WriteAllBytes(packed, wrapped);
-        using JsonDocument packedDoc = SchemaFile.Parse(packed);
-        Assert.True(packedDoc.RootElement.GetProperty("ok").GetBoolean());
+        using (JsonDocument packedDoc = SchemaFile.Parse(packed))
+            Assert.True(packedDoc.RootElement.GetProperty("ok").GetBoolean());
+
+        // Compact positive fixint uncompressed length (MessagePack-CSharp WriteInt32 format).
+        byte[] compact = [0xC7, (byte)(2 + msgpack.Length), 99, (byte)msgpack.Length, (byte)(msgpack.Length << 4), .. msgpack];
+        string compactPath = Path.Combine(dir.Path, "bydtools-schema-compact.msgpack.lz4");
+        File.WriteAllBytes(compactPath, compact);
+        using JsonDocument compactDoc = SchemaFile.Parse(compactPath);
+        Assert.True(compactDoc.RootElement.GetProperty("ok").GetBoolean());
     }
 
     [Fact]
     public void Export_directory_prefers_msgpack_lz4()
     {
-        string dir = Path.Combine(Path.GetTempPath(), "bydtools-schema-prefer-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(dir);
+        using var temp = new TempDir();
+        string dir = temp.Path;
         File.WriteAllText(Path.Combine(dir, "schemas.json"), "{\"wrappers\":[]}");
         File.WriteAllText(Path.Combine(dir, "type_index.json"), "{}");
         File.WriteAllBytes(Path.Combine(dir, "schemas.msgpack.lz4"), [0x81, 0xA8, .. Encoding.UTF8.GetBytes("wrappers"), 0x90]);
@@ -105,6 +113,7 @@ public class MemoryPackTests
     [Fact]
     public void LoadUnionMap_reads_msgpack_nested_tags()
     {
+        using var dir = new TempDir();
         // {"AbilityActionData":{"296":"PlayAnimationActionData"}}
         byte[] typeName = "AbilityActionData"u8.ToArray();
         byte[] concrete = "PlayAnimationActionData"u8.ToArray();
@@ -115,7 +124,7 @@ public class MemoryPackTests
         msgpack.AddRange("296"u8.ToArray());
         msgpack.Add((byte)(0xA0 + concrete.Length));
         msgpack.AddRange(concrete);
-        string path = Path.Combine(Path.GetTempPath(), "bydtools-union-map.msgpack.lz4");
+        string path = Path.Combine(dir.Path, "bydtools-union-map.msgpack.lz4");
         File.WriteAllBytes(path, msgpack.ToArray());
         IReadOnlyDictionary<string, IReadOnlyDictionary<int, string>> maps =
             JsonDataMemoryPack.LoadUnionMap(path);

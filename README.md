@@ -24,9 +24,8 @@ Usage:
   BydTools <command> [options]
 
 Commands:
-  vfs               Dump files from VFS
-  pck               Extract audio from VFS
-  decode-jsondata   Re-decode a raw JsonData dump (embedded schema by default)
+  vfs   Dump files from VFS
+  pck   Extract audio from VFS
 ```
 
 ### vfs

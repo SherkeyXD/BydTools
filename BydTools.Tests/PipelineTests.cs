@@ -193,22 +193,40 @@ public class PipelineTests
     {
         Assert.Equal(0, Program.Main([]));
         Assert.Equal(2, Program.Main(["nope"]));
+        Assert.Equal(2, Program.Main(["decode-jsondata"]));
         Assert.Equal(2, Program.Main(["vfs"]));
 
         using var root = new TempDir();
         using var output = new TempDir();
+        byte[] jsonSample = File.ReadAllBytes(Path.Combine(MemoryPackFixtures(), "samples", "BambooRaftTaskTable.json"));
         Samples.CreateGame(
             root.Path,
-            Samples.Entry("42A8FCA6", "Table", EVFSBlockType.Table, "row.bytes", Samples.MinimalBean())
+            Samples.Entry("42A8FCA6", "Table", EVFSBlockType.Table, "row.bytes", Samples.MinimalBean()),
+            Samples.Entry("775A31D1", "JsonData", EVFSBlockType.JsonData, "Data/Json/BambooRaftTaskTable.json", jsonSample)
         );
         string key = Convert.ToBase64String(Samples.Key);
         Assert.Equal(2, Program.Main(["vfs", "-i", root.Path, "-o", output.Path, "-t", "50", "--key", key]));
         Assert.Equal(2, Program.Main(["vfs", "-i", root.Path, "-o", output.Path, "-t", "All", "--key", key]));
         Assert.Equal(
             0,
-            Program.Main(["vfs", "-i", root.Path, "-o", output.Path, "-t", "Table", "--key", key, "--jobs", "1"])
+            Program.Main(["vfs", "-i", root.Path, "-o", output.Path, "-t", "Table,JsonData", "--key", key, "--jobs", "1"])
         );
         Assert.True(File.Exists(Path.Combine(output.Path, "row.json")));
+        Assert.Contains(
+            "questConfigs",
+            File.ReadAllText(Path.Combine(output.Path, "Data", "Json", "BambooRaftTaskTable.json")),
+            StringComparison.Ordinal
+        );
+
+        using var rawOutput = new TempDir();
+        Assert.Equal(
+            0,
+            Program.Main(["vfs", "-i", root.Path, "-o", rawOutput.Path, "-t", "JsonData", "--raw", "--key", key, "--jobs", "1"])
+        );
+        Assert.Equal(
+            jsonSample,
+            File.ReadAllBytes(Path.Combine(rawOutput.Path, "Data", "Json", "BambooRaftTaskTable.json"))
+        );
     }
 
     private static string Vfs(string root) => Path.Combine(root, VFSDefine.VfsDirectoryName);

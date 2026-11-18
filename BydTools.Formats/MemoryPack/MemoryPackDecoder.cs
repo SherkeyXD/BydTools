@@ -479,7 +479,7 @@ public sealed class MemoryPackDecoder
         if (count != 2)
         {
             throw new InvalidDataException(
-                $"memberCount {count} at offset {origin} does not match {type} (wire 2, merged 2)."
+                $"memberCount {count} at offset {origin} does not match {type} (wire 2)."
             );
         }
 
@@ -633,8 +633,6 @@ public sealed class MemoryPackDecoder
         MpMember[] members;
         if (count == type.Wire.Length)
             members = type.Wire;
-        else if (count == type.Own.Length)
-            members = type.Own;
         else if (count == 0 && type.Wire.Length > 0 && AllowsEmptyMemberCount(type, sandbox))
         {
             // MemoryPack empty instance / Optional-Param defaults.
@@ -652,7 +650,7 @@ public sealed class MemoryPackDecoder
         {
             throw new InvalidDataException(
                 $"memberCount {count} at offset {origin} does not match {ShortName(type)} "
-                + $"(wire {type.Wire.Length}, merged {type.Own.Length})."
+                + $"(wire {type.Wire.Length})."
             );
         }
 
@@ -794,8 +792,7 @@ public sealed class MemoryPackDecoder
         static bool PlausibleHeader(int count, byte header) =>
             count > 1 && header == count;
         if (next == 255 || next == 250
-            || PlausibleHeader(resolved.Wire.Length, next)
-            || PlausibleHeader(resolved.Own.Length, next))
+            || PlausibleHeader(resolved.Wire.Length, next))
             cursor.U8();
     }
 
