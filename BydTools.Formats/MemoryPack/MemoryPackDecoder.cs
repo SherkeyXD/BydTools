@@ -25,9 +25,6 @@ public sealed class MemoryPackDecoder
     private readonly MemoryPackUnionResolver _unions;
     private readonly ConcurrentDictionary<string, TypePlan> _plans = new(StringComparer.Ordinal);
 
-    /// <summary>Optional field-consumption log for schema analysis. Null in production.</summary>
-    public TextWriter? FieldTrace { get; set; }
-
     public MemoryPackDecoder(
         MemoryPackSchema schema,
         BeyondStringPool? pool = null,
@@ -820,22 +817,8 @@ public sealed class MemoryPackDecoder
         var obj = new JsonObject();
         foreach (MpMember member in members)
         {
-            int start = cursor.Position;
-            try
-            {
-                obj[member.Name] = ReadValue(
-                    ref cursor, member.Type, member.Name, depth + 1, sandbox, member.CollectionEncoding);
-            }
-            catch (Exception ex) when (FieldTrace != null)
-            {
-                FieldTrace.WriteLine(
-                    $"{new string(' ', depth * 2)}FAIL {ShortName(type)}.{member.Name} ({member.Type}) @{start} {ex.Message}"
-                );
-                throw;
-            }
-            FieldTrace?.WriteLine(
-                $"{new string(' ', depth * 2)}{ShortName(type)}.{member.Name} ({member.Type}) {start}..{cursor.Position} +{cursor.Position - start}"
-            );
+            obj[member.Name] = ReadValue(
+                ref cursor, member.Type, member.Name, depth + 1, sandbox, member.CollectionEncoding);
         }
         return obj;
     }

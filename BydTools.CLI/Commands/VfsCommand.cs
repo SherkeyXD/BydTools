@@ -84,8 +84,7 @@ public sealed class VfsCommand : ICommand
             {
                 try
                 {
-                    MemoryPackExport.Paths paths = MemoryPackExport.Resolve(
-                        schemaDir, schema: null, index: null, unionMap: null);
+                    MemoryPackExport.Paths paths = MemoryPackExport.Resolve(schemaDir);
                     jsonSchema = MemoryPackSchema.Load(paths.Schema, paths.TypeIndex);
                     unionMaps = string.IsNullOrWhiteSpace(paths.UnionMap)
                         ? MemoryPackResources.UnionMaps
