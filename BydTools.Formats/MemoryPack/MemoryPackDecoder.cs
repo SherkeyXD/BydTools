@@ -22,7 +22,7 @@ public sealed class MemoryPackDecoder
 {
     private readonly MemoryPackSchema _schema;
     private readonly BeyondStringPool? _pool;
-    private readonly Dictionary<string, Dictionary<int, string>> _unionMaps;
+    private readonly MemoryPackUnionResolver _unions;
     private readonly ConcurrentDictionary<string, TypePlan> _plans = new(StringComparer.Ordinal);
 
     /// <summary>Optional field-consumption log for schema analysis. Null in production.</summary>
@@ -35,11 +35,7 @@ public sealed class MemoryPackDecoder
     {
         _schema = schema;
         _pool = pool;
-        _unionMaps = [];
-        if (unionMaps == null)
-            return;
-        foreach (var (key, tags) in unionMaps)
-            _unionMaps[key] = new Dictionary<int, string>(tags);
+        _unions = new MemoryPackUnionResolver(schema, unionMaps);
     }
 
     private TypePlan GetPlan(string type) => _plans.GetOrAdd(type, BuildPlan);
@@ -85,8 +81,8 @@ public sealed class MemoryPackDecoder
             };
         }
 
-        Dictionary<int, string>? unionMap = LookupUnionMap(type);
-        bool isTaggedUnion = unionMap != null || IsHardcodedTaggedUnion(type);
+        Dictionary<int, string>? unionMap = _unions.LookupUnionMap(type);
+        bool isTaggedUnion = unionMap != null || MemoryPackUnionResolver.IsHardcodedTaggedUnion(type);
         if (isTaggedUnion)
         {
             return new TypePlan
@@ -245,74 +241,8 @@ public sealed class MemoryPackDecoder
         }
     }
 
-    private bool TryMappedConcrete(string staticType, TypePlan plan, int tag, string? hint, out MpType concrete)
-    {
-        concrete = null!;
-        string? roleKey = DataRoleKey(staticType, hint);
-        Dictionary<int, string>? map = roleKey != null
-            ? LookupUnionMap(roleKey)
-            : plan.DirectUnionMap ?? LookupUnionMap(staticType);
-        if (map == null || !map.TryGetValue(tag, out string? mapped))
-            return false;
-        concrete = _schema.ResolveNamed(mapped);
-        return true;
-    }
-
-    private static string? DataRoleKey(string staticType, string? hint)
-    {
-        if (staticType != "Data" || string.IsNullOrEmpty(hint))
-            return null;
-        if (hint.Contains("finder", StringComparison.OrdinalIgnoreCase))
-            return "Finder.Data";
-        if (hint.Contains("validator", StringComparison.OrdinalIgnoreCase))
-            return "Validator.Data";
-        if (hint.Contains("postprocessor", StringComparison.OrdinalIgnoreCase)
-            || hint.Contains("processor", StringComparison.OrdinalIgnoreCase))
-            return "PostProcessor.Data";
-        return null;
-    }
-
-    private Dictionary<int, string>? LookupUnionMap(string staticType)
-    {
-        if (_unionMaps.TryGetValue(staticType, out var map))
-            return map;
-
-        string dotted = staticType.Replace('+', '.');
-        if (dotted != staticType && _unionMaps.TryGetValue(dotted, out map))
-            return map;
-
-        string plused = staticType.Replace('.', '+');
-        if (plused != staticType && _unionMaps.TryGetValue(plused, out map))
-            return map;
-
-        int dot = staticType.LastIndexOf('.');
-        if (dot >= 0 && _unionMaps.TryGetValue(staticType[(dot + 1)..], out map))
-            return map;
-
-        string nested = dot >= 0 ? staticType[(dot + 1)..] : staticType;
-        int plus = nested.IndexOf('+');
-        if (plus >= 0)
-        {
-            if (_unionMaps.TryGetValue(nested, out map))
-                return map;
-
-            int lastPlus = nested.LastIndexOf('+');
-            int prevPlus = nested.LastIndexOf('+', lastPlus - 1);
-            string tailTwo = prevPlus >= 0 ? nested[(prevPlus + 1)..] : nested;
-            if (tailTwo != nested && _unionMaps.TryGetValue(tailTwo, out map))
-                return map;
-
-            string tailOne = nested[(lastPlus + 1)..];
-            if (_unionMaps.TryGetValue(tailOne, out map))
-                return map;
-
-            string tailTwoDotted = tailTwo.Replace('+', '.');
-            if (_unionMaps.TryGetValue(tailTwoDotted, out map))
-                return map;
-        }
-
-        return null;
-    }
+    private bool TryMappedConcrete(string staticType, TypePlan plan, int tag, string? hint, out MpType concrete) =>
+        _unions.TryMappedConcrete(staticType, plan.DirectUnionMap, tag, hint, out concrete);
 
     public JsonNode? Decode(ReadOnlySpan<byte> data, string rootType)
     {
@@ -456,37 +386,6 @@ public sealed class MemoryPackDecoder
             }
         }
     }
-
-    private static bool IsHardcodedTaggedUnion(string type) =>
-        type is "AbilityActionData"
-            or "Beyond.Gameplay.Actions.ActionBase"
-            or "Beyond.Gameplay.Actions.PureGetter"
-            or "Beyond.Gameplay.Actions.ActionHeader"
-            or "Beyond.Gameplay.Core.ModelViewStateController.AbstractBehaviorData"
-            or "Beyond.Gameplay.Core.DamageProcessorBase"
-            or "Beyond.Gameplay.Core.HealProcessorBase"
-            or "HealProcessorBase"
-            or "Beyond.Gameplay.Core.PoiseProcessorBase"
-            or "PoiseProcessorBase"
-            or "Beyond.Gameplay.ConditionRuntimeBase"
-            or "Beyond.Gameplay.GameCondition"
-            or "Beyond.Gameplay.Core.CalculationBase"
-            or "CalculationBase"
-            or "Finder.Data"
-            or "Beyond.Gameplay.Core.Selector.Finder.Data"
-            or "Beyond.Gameplay.Core.Selector+Finder+Data"
-            or "Validator.Data"
-            or "Beyond.Gameplay.Core.Selector.Validator.Data"
-            or "Beyond.Gameplay.Core.Selector+Validator+Data"
-            or "PostProcessor.Data"
-            or "Beyond.Gameplay.Core.Selector.PostProcessor.Data"
-            or "Beyond.Gameplay.Core.Selector+PostProcessor+Data"
-            or "SpawnerPreprocess.Data"
-            or "Beyond.Gameplay.SpawnerPreprocess.Data"
-            or "Beyond.Gameplay.SpawnerPreprocess+Data"
-            or "SpawnerActionData"
-            or "Beyond.Gameplay.SpawnerActionData"
-            or "Data";
 
     /// <summary>
     /// Valuetype memcpy payload from schema <c>unmanaged.json</c>. No object header.
@@ -813,7 +712,7 @@ public sealed class MemoryPackDecoder
 
         int afterTag = cursor.Position;
         byte? headerByte = afterTag < cursor.Length ? cursor.Buffer[afterTag] : null;
-        IReadOnlyList<MpType> candidates = _schema.UnionCandidates(staticType, hint);
+        IReadOnlyList<MpType> candidates = _unions.GetCandidates(staticType, hint);
         var matches = new List<(MpType Type, int End, JsonObject Value)>();
         foreach (MpType candidate in candidates)
         {
