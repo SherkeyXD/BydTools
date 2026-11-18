@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.Json.Nodes;
 using BydTools.Audio.Bnk;
 using BydTools.Audio.Naming;
 using BydTools.Audio.Pck;
@@ -344,7 +345,7 @@ public sealed class AudioExportService
                     if (SparkBuffer.GetRootName(data) != "AudioDialog")
                         continue;
                     _logger.Info("  Found AudioDialog, parsing...");
-                    var mapper = new PckMapper(SparkBuffer.ReadObject(data), language);
+                    var mapper = new PckMapper(ExtractAudioDialogPaths(SparkBuffer.ReadObject(data)), language);
                     _logger.Info("  Mapped {0} entries (lang={1})", mapper.Count, language);
                     return mapper;
                 }
@@ -360,6 +361,20 @@ public sealed class AudioExportService
         }
 
         return null;
+    }
+
+    private static IEnumerable<string> ExtractAudioDialogPaths(JsonObject root)
+    {
+        foreach (var entry in root)
+        {
+            if (entry.Value is not JsonObject row)
+                continue;
+            if (!row.TryGetPropertyValue("path", out var pathNode) || pathNode is null)
+                continue;
+            string? path = pathNode.GetValue<string>();
+            if (!string.IsNullOrWhiteSpace(path))
+                yield return path;
+        }
     }
 
     private static void Write(IOutputSink sink, string relativePath, ReadOnlySpan<byte> data)
