@@ -90,8 +90,8 @@ public sealed class VfsExtractor
             options,
             chunk =>
             {
-                string? chunkPath = block.ResolveChunkPath(chunk);
-                if (chunkPath == null)
+                using var chunkReader = block.OpenChunkReader(chunk);
+                if (chunkReader == null)
                 {
                     _logger.Verbose("  Chunk file not found: {0}", chunk.FileName);
                     return;
@@ -102,7 +102,7 @@ public sealed class VfsExtractor
                     cancellationToken.ThrowIfCancellationRequested();
                     try
                     {
-                        byte[] data = block.ReadFile(chunkPath, file);
+                        byte[] data = chunkReader.ReadFile(file);
                         string relative = file.Name;
                         if (string.IsNullOrEmpty(relative) && block.Descriptor?.Kind == ContentKind.Video)
                         {
@@ -111,30 +111,38 @@ public sealed class VfsExtractor
                             _logger.Verbose("    Recovered USM name: {0}", relative);
                         }
 
-                        bool handled = false;
                         if (handler != null && handler.CanHandle(relative))
                         {
                             HandleResult result = handler.Handle(relative, data, sink);
-                            if (result.Status == HandleStatus.Handled)
-                                handled = true;
-                            else if (result.Status == HandleStatus.Failed)
+                            switch (result.Status)
                             {
-                                Interlocked.Increment(ref failed);
-                                _logger.Verbose(
-                                    "  Failed {0}: {1}",
-                                    relative,
-                                    result.Error ?? "content handler failed");
+                                case HandleStatus.Handled:
+                                    Interlocked.Increment(ref extracted);
+                                    break;
+                                case HandleStatus.Skipped:
+                                {
+                                    using var output = sink.Create(relative);
+                                    output.Write(data);
+                                    output.Complete();
+                                    Interlocked.Increment(ref extracted);
+                                    break;
+                                }
+                                case HandleStatus.Failed:
+                                    Interlocked.Increment(ref failed);
+                                    _logger.Verbose(
+                                        "  Failed {0}: {1}",
+                                        relative,
+                                        result.Error ?? "content handler failed");
+                                    break;
                             }
                         }
-
-                        if (!handled)
+                        else
                         {
                             using var output = sink.Create(relative);
                             output.Write(data);
                             output.Complete();
+                            Interlocked.Increment(ref extracted);
                         }
-
-                        Interlocked.Increment(ref extracted);
                     }
                     catch (OperationCanceledException)
                     {
@@ -226,14 +234,16 @@ public sealed class VfsExtractor
             var files = new List<(string Name, byte[] Data)>();
             foreach (var chunk in block.Info.Chunks)
             {
-                string? chunkPath = block.ResolveChunkPath(chunk);
-                if (chunkPath == null)
+                if (!chunk.Files.Any(static file => BeyondStringPool.IndexOfFileName(file.Name) >= 0))
+                    continue;
+                using var chunkReader = block.OpenChunkReader(chunk);
+                if (chunkReader == null)
                     continue;
                 foreach (var file in chunk.Files)
                 {
                     if (BeyondStringPool.IndexOfFileName(file.Name) < 0)
                         continue;
-                    files.Add((file.Name, block.ReadFile(chunkPath, file)));
+                    files.Add((file.Name, chunkReader.ReadFile(file)));
                 }
             }
 
@@ -246,17 +256,8 @@ public sealed class VfsExtractor
         }
     }
 
-    private static bool IsUnderDirectory(string path, string root)
-    {
-        string fullPath = Path.GetFullPath(path);
-        string fullRoot = Path.GetFullPath(root)
-            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-            + Path.DirectorySeparatorChar;
-        var comparison = OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
-            ? StringComparison.OrdinalIgnoreCase
-            : StringComparison.Ordinal;
-        return fullPath.StartsWith(fullRoot, comparison);
-    }
+    private static bool IsUnderDirectory(string path, string root) =>
+        PathChecks.IsSubPathOf(path, root);
 
     private void WriteBlockInfo(VfsBlockInfo info)
     {

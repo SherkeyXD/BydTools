@@ -28,19 +28,6 @@ public sealed class BeyondStringPool
     public int BlockCount => _blocks.Length;
     public int Stride => _stride;
 
-    public static BeyondStringPool Load(string directory)
-    {
-        if (!Directory.Exists(directory))
-            throw new DirectoryNotFoundException($"String pool directory not found: {directory}");
-
-        var files = Directory
-            .EnumerateFiles(directory, "StringPool*.byte", SearchOption.TopDirectoryOnly)
-            .Select(path => (Name: path, Data: File.ReadAllBytes(path)))
-            .ToList();
-        return TryLoad(files)
-            ?? throw new InvalidDataException($"No StringPool*.byte files in \"{directory}\".");
-    }
-
     /// <summary>
     /// Builds a pool from <c>StringPoolN.byte</c> entries. Returns null when none match.
     /// </summary>

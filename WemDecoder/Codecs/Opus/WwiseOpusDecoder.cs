@@ -230,7 +230,7 @@ internal sealed class WwiseOpusDecoder : SampleDecoder
             {
                 decoded = _decoder.DecodeMultistream(_file.Span.Slice(offset, size), _pcm, MaxFrameSize, false);
             }
-            catch (Exception)
+            catch (Exception ex) when (ex is Concentus.OpusException or ArgumentException or InvalidDataException)
             {
                 // FFmpeg rejects the packet and vgmstream moves on to the next one.
                 continue;

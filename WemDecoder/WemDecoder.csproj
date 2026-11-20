@@ -10,6 +10,5 @@
 
   <ItemGroup>
     <EmbeddedResource Include="Resources\*.bin" LogicalName="WemDecoder.Resources.%(Filename)%(Extension)" />
-    <InternalsVisibleTo Include="WemDecoder.Tests" />
   </ItemGroup>
 </Project>

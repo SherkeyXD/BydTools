@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Text;
+using BydTools.Core.IO;
 
 namespace BydTools.Audio.Pck;
 
@@ -204,48 +205,5 @@ public sealed class PckArchive
         }
 
         reader.Seek(sectorStart + (int)sectorSize);
-    }
-
-    private ref struct SpanReader
-    {
-        private readonly ReadOnlySpan<byte> _span;
-        private int _position;
-
-        public SpanReader(ReadOnlySpan<byte> span) => _span = span;
-
-        public int Position => _position;
-        public int Remaining => _span.Length - _position;
-
-        public void Seek(int position)
-        {
-            if ((uint)position > (uint)_span.Length)
-                throw new InvalidDataException($"PCK seek to {position} is outside the header.");
-            _position = position;
-        }
-
-        public uint ReadUInt32()
-        {
-            var slice = Take(4);
-            return BinaryPrimitives.ReadUInt32LittleEndian(slice);
-        }
-
-        public long ReadInt64()
-        {
-            var slice = Take(8);
-            return BinaryPrimitives.ReadInt64LittleEndian(slice);
-        }
-
-        public byte ReadByte() => Take(1)[0];
-
-        public ReadOnlySpan<byte> ReadBytes(int count) => Take(count);
-
-        private ReadOnlySpan<byte> Take(int count)
-        {
-            if ((uint)count > (uint)Remaining)
-                throw new InvalidDataException($"PCK header ended at offset {_position}.");
-            var slice = _span.Slice(_position, count);
-            _position += count;
-            return slice;
-        }
     }
 }

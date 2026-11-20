@@ -1,5 +1,4 @@
 using BydTools.Audio.Wem;
-using BydTools.Extraction;
 using BydTools.Extraction.Audio;
 using BydTools.VFS;
 using Spectre.Console;
@@ -15,26 +14,19 @@ public sealed class PckCommand : ICommand
     {
         var parser = CreateParser();
         if (!parser.Parse(args))
-            return VfsCommand.Fail(2, parser.Errors[0]);
+            return CliHelpers.Fail(2, parser.Errors[0]);
         if (parser.HasFlag("help"))
         {
             PrintHelp(parser);
             return 0;
         }
 
-        string? input = parser.Get("input");
-        string? output = parser.Get("output");
-        string? typeArg = parser.Get("type");
-        if (string.IsNullOrWhiteSpace(input))
-            return VfsCommand.Fail(2, "--input is required.");
-        if (string.IsNullOrWhiteSpace(output))
-            return VfsCommand.Fail(2, "--output is required.");
-        if (string.IsNullOrWhiteSpace(typeArg))
-            return VfsCommand.Fail(2, "--type is required.");
+        if (!parser.ValidateRequired())
+            return CliHelpers.Fail(2, parser.Errors[0]);
 
         string modeArg = parser.Get("mode") ?? "wav";
         if (modeArg is not ("wav" or "raw"))
-            return VfsCommand.Fail(2, "--mode must be one of: wav, raw.");
+            return CliHelpers.Fail(2, "--mode must be one of: wav, raw.");
         var mode = modeArg == "raw" ? AudioExportMode.Raw : AudioExportMode.Wav;
 
         byte[] key;
@@ -42,77 +34,63 @@ public sealed class PckCommand : ICommand
         try
         {
             key = VFSDefine.ResolveKey(parser.Get("platform"), parser.Get("key"));
-            jobs = VfsCommand.ResolveJobs(parser.Get("jobs"));
+            jobs = CliHelpers.ResolveJobs(parser.Get("jobs"));
         }
         catch (ArgumentException ex)
         {
-            return VfsCommand.Fail(2, ex.Message);
+            return CliHelpers.Fail(2, ex.Message);
         }
 
-        string gamePath = Path.GetFullPath(input);
-        if (!Directory.Exists(gamePath))
-            return VfsCommand.Fail(1, "Game directory not found: \"{0}\"", gamePath);
-        string vfsPath = Path.Combine(gamePath, VFSDefine.VfsDirectoryName);
-        if (!Directory.Exists(vfsPath))
-            return VfsCommand.Fail(1, "VFS directory not found under \"{0}\".", gamePath);
+        if (!CliHelpers.TryResolveVfsDirectory(parser.Get("input")!, out string vfsPath, out string? vfsError))
+            return CliHelpers.Fail(1, vfsError!);
 
-        var logger = new Logger(parser.HasFlag("verbose"));
+        bool verbose = parser.HasFlag("verbose");
+        var logger = new Logger(verbose);
         VfsArchive archive;
         try
         {
-            string? persistentVfs = VfsCommand.ResolvePersistentVfs(parser.Get("persistent"), logger);
+            string? persistentVfs = CliHelpers.ResolvePersistentVfs(parser.Get("persistent"), logger);
             archive = VfsArchive.Open(vfsPath, key, logger, persistentVfs);
         }
         catch (Exception ex)
         {
-            return VfsCommand.Fail(1, ex.Message);
+            return CliHelpers.Fail(1, ex.Message);
         }
 
+        string typeArg = parser.Get("type")!;
         var block = archive.Find(typeArg);
         if (block == null)
         {
             return BlockRegistry.TryParse(typeArg, out _)
-                ? VfsCommand.Fail(1, "Block \"{0}\" was not found in this VFS.", typeArg)
-                : VfsCommand.Fail(2, "Unknown block type: {0}", typeArg);
+                ? CliHelpers.Fail(1, "Block \"{0}\" was not found in this VFS.", typeArg)
+                : CliHelpers.Fail(2, "Unknown block type: {0}", typeArg);
         }
 
         if (block.Descriptor is { Kind: not ContentKind.Audio })
             logger.Info("Warning: {0} is not an audio block. Only .pck files inside it will be exported.", block.DisplayName);
 
-        IWemDecoder? decoder = mode == AudioExportMode.Wav ? WemDecoders.Create() : null;
+        using IWemDecoder? decoder = mode == AudioExportMode.Wav ? WemDecoders.Create() : null;
 
-        string outputPath = Path.GetFullPath(output);
+        string outputPath = Path.GetFullPath(parser.Get("output")!);
+        bool mapNames = !parser.HasFlag("no-map");
         try
         {
             AudioExportResult? result = null;
-            AnsiConsole
-                .Progress()
-                .AutoClear(false)
-                .HideCompleted(false)
-                .Columns(
-                    new TaskDescriptionColumn(),
-                    new ProgressBarColumn(),
-                    new PercentageColumn(),
-                    new RemainingTimeColumn(),
-                    new SpinnerColumn()
-                )
-                .Start(ctx =>
-                {
-                    var task = ctx.AddTask("Exporting", maxValue: 0);
-                    result = new AudioExportService(logger).Export(
-                        archive,
-                        block,
-                        outputPath,
-                        mode,
-                        mapNames: !parser.HasFlag("no-map"),
-                        decoder,
-                        jobs,
-                        new SpectreProgress(task),
-                        cancellationToken
-                    );
-                });
+            CliHelpers.RunWithProgress(logger, verbose, createProgress =>
+            {
+                result = new AudioExportService(logger).Export(
+                    archive,
+                    block,
+                    outputPath,
+                    mode,
+                    mapNames,
+                    decoder,
+                    jobs,
+                    createProgress("Exporting"),
+                    cancellationToken
+                );
+            });
 
-            decoder?.Dispose();
             if (result == null)
                 return 1;
             logger.Info(
@@ -121,30 +99,24 @@ public sealed class PckCommand : ICommand
                 result.Converted,
                 result.Failed
             );
-            return result.Failed > 0 && result.Extracted == 0 ? 1 : 0;
+            return result.Failed > 0 ? 1 : 0;
         }
-        catch (Exception ex) when (VfsCommand.IsCancel(ex))
+        catch (Exception ex) when (CliHelpers.IsCancel(ex))
         {
-            decoder?.Dispose();
-            return VfsCommand.Fail(1, "Cancelled.");
+            return CliHelpers.Fail(1, "Cancelled.");
         }
         catch (Exception ex)
         {
-            decoder?.Dispose();
-            return VfsCommand.Fail(1, ex.Message);
+            return CliHelpers.Fail(1, ex.Message);
         }
     }
 
     private static ArgParser CreateParser() =>
         new ArgParser()
-            .Add("input", "i", "Game data directory that contains the VFS folder", "path", required: true)
-            .Add("persistent", "p", "Persistent directory containing VFS; missing files fall back to --input", "path")
-            .Add("output", "o", "Output directory", "dir", required: true)
+            .AddInputAndOutput("Output directory")
             .Add("type", "t", "Audio block type", "type", required: true)
             .Add("mode", "m", "Output mode", "mode", continuation: "wav (default) or raw.")
-            .Add("key", null, "ChaCha20 key, Base64 of 32 bytes. Overrides --platform", "base64")
-            .Add("platform", null, "Key to use when --key is omitted", "name", continuation: "pc (default) or android.")
-            .Add("jobs", null, "How many WEM files to convert at once", "n", continuation: "Default: processor count.")
+            .AddCryptoAndJobs("How many WEM files to convert at once")
             .Add("no-map", null, "Skip AudioDialog name mapping")
             .Add("verbose", "v", "Print per-file details")
             .Add("help", "h", "Show help information");

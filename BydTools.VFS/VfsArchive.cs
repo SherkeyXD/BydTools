@@ -1,7 +1,26 @@
+using System.Buffers.Binary;
 using BydTools.Core;
 using BydTools.Core.Crypto;
+using BydTools.Core.IO;
+using Microsoft.Win32.SafeHandles;
 
 namespace BydTools.VFS;
+
+public sealed class VfsChunkReader : IDisposable
+{
+    private readonly VfsBlock _block;
+    private readonly SafeFileHandle _handle;
+
+    internal VfsChunkReader(VfsBlock block, SafeFileHandle handle)
+    {
+        _block = block;
+        _handle = handle;
+    }
+
+    public byte[] ReadFile(VfsFile file) => _block.ReadFile(_handle, file);
+
+    public void Dispose() => _handle.Dispose();
+}
 
 public sealed class VfsBlock
 {
@@ -43,19 +62,34 @@ public sealed class VfsBlock
         return null;
     }
 
+    public VfsChunkReader? OpenChunkReader(VfsChunk chunk)
+    {
+        string? path = ResolveChunkPath(chunk);
+        if (path == null)
+            return null;
+
+        var handle = File.OpenHandle(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        return new VfsChunkReader(this, handle);
+    }
+
     public byte[] ReadFile(string chunkPath, VfsFile file)
     {
-        if (file.Length < 0 || file.Length > int.MaxValue)
-            throw new InvalidDataException($"File '{file.Name}' has an invalid length ({file.Length}).");
-
-        int length = (int)file.Length;
-        byte[] data = new byte[length];
         using var handle = File.OpenHandle(
             chunkPath,
             FileMode.Open,
             FileAccess.Read,
             FileShare.Read
         );
+        return ReadFile(handle, file);
+    }
+
+    internal byte[] ReadFile(SafeFileHandle handle, VfsFile file)
+    {
+        if (file.Length < 0 || file.Length > int.MaxValue)
+            throw new InvalidDataException($"File '{file.Name}' has an invalid length ({file.Length}).");
+
+        int length = (int)file.Length;
+        byte[] data = new byte[length];
         int got = 0;
         while (got < length)
         {
@@ -74,10 +108,10 @@ public sealed class VfsBlock
             return data;
 
         Span<byte> nonce = stackalloc byte[VFSDefine.NonceLength];
-        System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(nonce, VFSDefine.ProtocolVersion);
-        System.Buffers.Binary.BinaryPrimitives.WriteInt64LittleEndian(nonce[4..], file.IvSeed);
-        using var chacha = new CSChaCha20(_key, nonce, 1);
-        return chacha.DecryptBytes(data);
+        BinaryPrimitives.WriteInt32LittleEndian(nonce, VFSDefine.ProtocolVersion);
+        BinaryPrimitives.WriteInt64LittleEndian(nonce[4..], file.IvSeed);
+        CSChaCha20.DecryptInPlace(_key, nonce, 1, data);
+        return data;
     }
 }
 
@@ -113,12 +147,8 @@ public sealed class VfsArchive
             throw new DirectoryNotFoundException($"VFS directory not found: {vfsDirectory}");
 
         string? persistentRoot = string.IsNullOrWhiteSpace(persistentDirectory) ? null : persistentDirectory;
-        var pathComparison = OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
-            ? StringComparison.OrdinalIgnoreCase
-            : StringComparison.Ordinal;
-
         string[] roots = persistentRoot == null
-            || string.Equals(Path.GetFullPath(persistentRoot), Path.GetFullPath(vfsDirectory), pathComparison)
+            || string.Equals(Path.GetFullPath(persistentRoot), Path.GetFullPath(vfsDirectory), PathChecks.FileSystemComparison)
             ? [vfsDirectory]
             : [persistentRoot, vfsDirectory];
 

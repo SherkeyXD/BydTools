@@ -36,9 +36,8 @@ public sealed class SparkBufferHandler : IContentHandler
     {
         try
         {
-            string json = SparkBuffer.ToJson(data.Span);
             using var output = sink.Create(Path.ChangeExtension(relativePath, ".json"));
-            output.Write(System.Text.Encoding.UTF8.GetBytes(json));
+            SparkBuffer.WriteJson(data.Span, output);
             output.Complete();
             return HandleResult.Handled;
         }
@@ -75,20 +74,20 @@ public sealed class JsonDataHandler : IContentHandler
     {
         try
         {
-            JsonDataFileResult result = JsonDataMemoryPack.DecodeBytes(
+            JsonDataFileResult result = JsonDataMemoryPack.DecodeToStream(
                 _decoder,
                 _schema,
-                data.Span,
+                data,
                 relativePath,
-                out byte[]? output
+                write =>
+                {
+                    using var file = sink.Create(relativePath);
+                    write(file);
+                    file.Complete();
+                }
             );
             if (result.Kind is JsonDataFileKind.Decoded or JsonDataFileKind.PlainJson)
-            {
-                using var file = sink.Create(relativePath);
-                file.Write(output ?? data.ToArray());
-                file.Complete();
                 return HandleResult.Handled;
-            }
 
             return result.Kind == JsonDataFileKind.Failed
                 ? HandleResult.Fail(result.Error)
@@ -134,22 +133,18 @@ public sealed class UsmHandler : IContentHandler
     {
         try
         {
-            var streams = CriUsmDemuxer.Demux(data.Span);
-            if (streams.Length == 0)
-                return HandleResult.Skipped;
             string basePath = Path.ChangeExtension(relativePath, null) ?? relativePath;
             var seen = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-            foreach (var stream in streams)
+            int emitted = CriUsmDemuxer.Demux(data.Span, (ext, payload) =>
             {
-                seen.TryGetValue(stream.Extension, out int index);
-                string name = index == 0 ? basePath + stream.Extension : $"{basePath}_{index}{stream.Extension}";
-                seen[stream.Extension] = index + 1;
+                seen.TryGetValue(ext, out int index);
+                string name = index == 0 ? basePath + ext : $"{basePath}_{index}{ext}";
+                seen[ext] = index + 1;
                 using var output = sink.Create(name);
-                output.Write(stream.Data);
+                output.Write(payload);
                 output.Complete();
-            }
-
-            return HandleResult.Handled;
+            });
+            return emitted == 0 ? HandleResult.Skipped : HandleResult.Handled;
         }
         catch (Exception ex)
         {

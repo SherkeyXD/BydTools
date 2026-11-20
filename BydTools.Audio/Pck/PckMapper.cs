@@ -1,10 +1,11 @@
+using System.Buffers;
+using System.Globalization;
 using System.Text;
-using System.Text.Json.Nodes;
 
 namespace BydTools.Audio.Pck;
 
 /// <summary>
-/// Resolves Wwise ids to paths using an AudioDialog object.
+/// Resolves Wwise ids to paths using an AudioDialog entry list.
 /// Ids are FNV-1 64-bit hashes of <c>{soundType}/{language}/{path}</c>.
 /// </summary>
 public sealed class PckMapper
@@ -15,9 +16,9 @@ public sealed class PckMapper
 
     private readonly Dictionary<ulong, string> _idToPath;
 
-    public PckMapper(JsonObject root, string language)
+    public PckMapper(IEnumerable<string> audioPaths, string language)
     {
-        _idToPath = Parse(root, language);
+        _idToPath = Parse(audioPaths, language);
     }
 
     public int Count => _idToPath.Count;
@@ -45,32 +46,96 @@ public sealed class PckMapper
         return hash;
     }
 
-    private static Dictionary<ulong, string> Parse(JsonObject root, string language)
+    private static Dictionary<ulong, string> Parse(IEnumerable<string> audioPaths, string language)
     {
-        string lang = language.ToLowerInvariant();
-        var map = new Dictionary<ulong, string>(root.Count * KnownSoundTypes.Length);
-        foreach (var entry in root)
+        string langLower = language.ToLowerInvariant();
+        byte[][] prefixUtf8 = KnownSoundTypes
+            .Select(type => Encoding.UTF8.GetBytes($"{type}/{langLower}/"))
+            .ToArray();
+
+        var map = new Dictionary<ulong, string>();
+        Span<char> charStack = stackalloc char[512];
+        Span<char> lowerStack = stackalloc char[512];
+        Span<byte> byteStack = stackalloc byte[512];
+
+        foreach (string rawPath in audioPaths)
         {
-            if (entry.Value is not JsonObject row)
-                continue;
-            if (!row.TryGetPropertyValue("path", out var pathNode) || pathNode is null)
-                continue;
-            string? rawPath = pathNode.GetValue<string>();
             if (string.IsNullOrWhiteSpace(rawPath))
                 continue;
 
-            string normalized = rawPath.Replace('\\', '/').Trim();
-            foreach (string soundType in KnownSoundTypes)
+            ReadOnlySpan<char> trimmed = rawPath.AsSpan().Trim();
+            int len = trimmed.Length;
+            char[]? rentedChars = null;
+            Span<char> normalizedChars = len <= charStack.Length
+                ? charStack[..len]
+                : (rentedChars = ArrayPool<char>.Shared.Rent(len)).AsSpan(0, len);
+
+            char[]? rentedLower = null;
+            Span<char> lowerChars = len <= lowerStack.Length
+                ? lowerStack[..len]
+                : (rentedLower = ArrayPool<char>.Shared.Rent(len)).AsSpan(0, len);
+
+            try
             {
-                string hashInput = $"{soundType}/{language}/{rawPath}".Replace('\\', '/').ToLowerInvariant();
-                ulong hash = Fnv1_64(Encoding.UTF8.GetBytes(hashInput));
-                string output = $"{soundType}/{lang}/{normalized}";
-                if (output.EndsWith(".wem", StringComparison.OrdinalIgnoreCase))
-                    output = output[..^4];
-                map.TryAdd(hash, output);
+                for (int i = 0; i < len; i++)
+                    normalizedChars[i] = trimmed[i] == '\\' ? '/' : trimmed[i];
+
+                ReadOnlySpan<char> outputTail = normalizedChars.EndsWith(".wem", StringComparison.OrdinalIgnoreCase)
+                    ? normalizedChars[..^4]
+                    : normalizedChars;
+
+                int lowerLen = normalizedChars.ToLowerInvariant(lowerChars);
+                int maxUtf8 = Encoding.UTF8.GetMaxByteCount(lowerLen);
+                byte[]? rentedBytes = null;
+                Span<byte> pathUtf8 = maxUtf8 <= byteStack.Length
+                    ? byteStack[..maxUtf8]
+                    : (rentedBytes = ArrayPool<byte>.Shared.Rent(maxUtf8)).AsSpan(0, maxUtf8);
+
+                try
+                {
+                    int utf8Len = Encoding.UTF8.GetBytes(lowerChars[..lowerLen], pathUtf8);
+                    ReadOnlySpan<byte> pathBytes = pathUtf8[..utf8Len];
+
+                    for (int s = 0; s < KnownSoundTypes.Length; s++)
+                    {
+                        ulong hash = Fnv1_64Append(prefixUtf8[s], pathBytes);
+                        if (!map.ContainsKey(hash))
+                            map.Add(hash, $"{KnownSoundTypes[s]}/{langLower}/{outputTail}");
+                    }
+                }
+                finally
+                {
+                    if (rentedBytes != null)
+                        ArrayPool<byte>.Shared.Return(rentedBytes);
+                }
+            }
+            finally
+            {
+                if (rentedChars != null)
+                    ArrayPool<char>.Shared.Return(rentedChars);
+                if (rentedLower != null)
+                    ArrayPool<char>.Shared.Return(rentedLower);
             }
         }
 
         return map;
+    }
+
+    private static ulong Fnv1_64Append(ReadOnlySpan<byte> prefix, ReadOnlySpan<byte> tail)
+    {
+        ulong hash = FnvOffset;
+        foreach (byte b in prefix)
+        {
+            hash = unchecked(hash * FnvPrime);
+            hash ^= b;
+        }
+
+        foreach (byte b in tail)
+        {
+            hash = unchecked(hash * FnvPrime);
+            hash ^= b;
+        }
+
+        return hash;
     }
 }

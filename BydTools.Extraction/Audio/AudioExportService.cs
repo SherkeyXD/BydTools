@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.Json.Nodes;
 using BydTools.Audio.Bnk;
 using BydTools.Audio.Naming;
 using BydTools.Audio.Pck;
@@ -50,7 +51,7 @@ public sealed class AudioExportService
         string? language = block.Descriptor?.AudioLanguage;
         PckMapper? mapper = null;
         if (mapNames && language != null)
-            mapper = LoadMapper(archive, language);
+            mapper = LoadMapper(archive, language, cancellationToken);
         else if (mapNames)
             _logger.Info("Auto-mapping skipped: no language context for {0}", block.DisplayName);
 
@@ -66,8 +67,8 @@ public sealed class AudioExportService
         foreach (var chunk in block.Info.Chunks)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            string? chunkPath = block.ResolveChunkPath(chunk);
-            if (chunkPath == null)
+            using var chunkReader = block.OpenChunkReader(chunk);
+            if (chunkReader == null)
             {
                 _logger.Verbose("  Chunk not found, skipping");
                 continue;
@@ -81,7 +82,7 @@ public sealed class AudioExportService
                 byte[] data;
                 try
                 {
-                    data = block.ReadFile(chunkPath, file);
+                    data = chunkReader.ReadFile(file);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
@@ -295,7 +296,7 @@ public sealed class AudioExportService
         extracted += localConverted + localFailed;
     }
 
-    private PckMapper? LoadMapper(VfsArchive archive, string language)
+    private PckMapper? LoadMapper(VfsArchive archive, string language, CancellationToken cancellationToken)
     {
         _logger.Info("Loading AudioDialog from Table block...");
         VfsBlock? table = archive.Find(nameof(EVFSBlockType.Table));
@@ -305,22 +306,46 @@ public sealed class AudioExportService
             return null;
         }
 
+        var mapper = TryLoadAudioDialog(
+            table,
+            language,
+            static file => file.Name.Contains("AudioDialog", StringComparison.OrdinalIgnoreCase),
+            cancellationToken);
+        mapper ??= TryLoadAudioDialog(
+            table,
+            language,
+            static file => !file.Name.Contains("AudioDialog", StringComparison.OrdinalIgnoreCase),
+            cancellationToken);
+        if (mapper != null)
+            return mapper;
+
+        _logger.Info("  AudioDialog not found in Table block, skipping auto-map");
+        return null;
+    }
+
+    private PckMapper? TryLoadAudioDialog(
+        VfsBlock table,
+        string language,
+        Func<VfsFile, bool> predicate,
+        CancellationToken cancellationToken)
+    {
         foreach (var chunk in table.Info.Chunks)
         {
-            string? chunkPath = table.ResolveChunkPath(chunk);
-            if (chunkPath == null)
+            cancellationToken.ThrowIfCancellationRequested();
+            using var chunkReader = table.OpenChunkReader(chunk);
+            if (chunkReader == null)
                 continue;
             foreach (var file in chunk.Files)
             {
-                if (!file.Name.EndsWith(".bytes", StringComparison.OrdinalIgnoreCase))
+                if (!file.Name.EndsWith(".bytes", StringComparison.OrdinalIgnoreCase) || !predicate(file))
                     continue;
                 try
                 {
-                    byte[] data = table.ReadFile(chunkPath, file);
+                    byte[] data = chunkReader.ReadFile(file);
                     if (SparkBuffer.GetRootName(data) != "AudioDialog")
                         continue;
                     _logger.Info("  Found AudioDialog, parsing...");
-                    var mapper = new PckMapper(SparkBuffer.ReadObject(data), language);
+                    var mapper = new PckMapper(ExtractAudioDialogPaths(SparkBuffer.ReadObject(data)), language);
                     _logger.Info("  Mapped {0} entries (lang={1})", mapper.Count, language);
                     return mapper;
                 }
@@ -335,8 +360,21 @@ public sealed class AudioExportService
             }
         }
 
-        _logger.Info("  AudioDialog not found in Table block, skipping auto-map");
         return null;
+    }
+
+    private static IEnumerable<string> ExtractAudioDialogPaths(JsonObject root)
+    {
+        foreach (var entry in root)
+        {
+            if (entry.Value is not JsonObject row)
+                continue;
+            if (!row.TryGetPropertyValue("path", out var pathNode) || pathNode is null)
+                continue;
+            string? path = pathNode.GetValue<string>();
+            if (!string.IsNullOrWhiteSpace(path))
+                yield return path;
+        }
     }
 
     private static void Write(IOutputSink sink, string relativePath, ReadOnlySpan<byte> data)

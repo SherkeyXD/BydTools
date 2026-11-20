@@ -102,7 +102,7 @@ internal sealed class WwiseVorbisDecoder : SampleDecoder
         {
             decoder = new StreamDecoder(headers.Identification, headers.Comment, headers.Setup, reader.ReadNext);
         }
-        catch (Exception)
+        catch (Exception ex) when (ex is InvalidDataException or NotSupportedException or ArgumentException)
         {
             return null;
         }
@@ -127,7 +127,7 @@ internal sealed class WwiseVorbisDecoder : SampleDecoder
         {
             read = _decoder.Read(_buffer.AsSpan(0, count));
         }
-        catch (Exception)
+        catch (Exception ex) when (ex is InvalidDataException or NotSupportedException or ArgumentException or IndexOutOfRangeException)
         {
             // vgmstream never aborts mid-stream; the undecodable tail becomes silence.
             read = 0;

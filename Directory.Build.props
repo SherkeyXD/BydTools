@@ -5,6 +5,6 @@
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
     <Deterministic>true</Deterministic>
-    <IsAotCompatible Condition="'$(IsTestProject)' != 'true' and '$(OutputType)' != 'Exe'">true</IsAotCompatible>
+    <IsAotCompatible Condition="'$(OutputType)' != 'Exe'">true</IsAotCompatible>
   </PropertyGroup>
 </Project>

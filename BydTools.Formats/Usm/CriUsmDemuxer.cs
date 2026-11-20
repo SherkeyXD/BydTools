@@ -41,11 +41,20 @@ public static class CriUsmDemuxer
         0x3D, 0x00,
     ];
 
+    public delegate void UsmStreamHandler(string extension, ReadOnlySpan<byte> payload);
+
     public static UsmStream[] Demux(ReadOnlySpan<byte> usm)
+    {
+        var output = new List<UsmStream>();
+        Demux(usm, (ext, payload) => output.Add(new UsmStream(ext, payload.ToArray())));
+        return output.ToArray();
+    }
+
+    public static int Demux(ReadOnlySpan<byte> usm, UsmStreamHandler onStream)
     {
         int start = usm.IndexOf(Crid);
         if (start < 0)
-            return [];
+            return 0;
 
         var order = new List<uint>();
         var streams = new Dictionary<uint, MemoryStream>();
@@ -87,11 +96,13 @@ public static class CriUsmDemuxer
                 pos += 8 + (int)blockSize;
             }
 
-            var output = new List<UsmStream>(order.Count);
+            int emitted = 0;
             foreach (uint key in order)
             {
-                byte[] elementary = streams[key].ToArray();
-                var span = elementary.AsSpan();
+                MemoryStream ms = streams[key];
+                ReadOnlySpan<byte> span = ms.TryGetBuffer(out ArraySegment<byte> seg)
+                    ? seg.AsSpan()
+                    : ms.ToArray();
                 int headerEnd = span.IndexOf(HeaderEnd);
                 int metadataEnd = span.IndexOf(MetadataEnd);
                 int dataStart;
@@ -108,11 +119,14 @@ public static class CriUsmDemuxer
                 if (dataLength <= 0)
                     continue;
 
-                var payload = span.Slice(dataStart, dataLength).ToArray();
-                output.Add(new UsmStream(DetectExtension(key, payload), payload));
+                ReadOnlySpan<byte> payload = span.Slice(dataStart, dataLength);
+                onStream(DetectExtension(key, payload), payload);
+                emitted++;
+                ms.Dispose();
+                streams.Remove(key);
             }
 
-            return output.ToArray();
+            return emitted;
         }
         finally
         {
