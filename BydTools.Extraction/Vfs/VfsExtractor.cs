@@ -234,6 +234,8 @@ public sealed class VfsExtractor
             var files = new List<(string Name, byte[] Data)>();
             foreach (var chunk in block.Info.Chunks)
             {
+                if (!chunk.Files.Any(static file => BeyondStringPool.IndexOfFileName(file.Name) >= 0))
+                    continue;
                 using var chunkReader = block.OpenChunkReader(chunk);
                 if (chunkReader == null)
                     continue;

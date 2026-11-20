@@ -102,7 +102,7 @@ internal static class CliHelpers
                     new RemainingTimeColumn(),
                     new SpinnerColumn()
                 )
-                .Start(ctx => execute(name => new SpectreProgress(ctx.AddTask(name, maxValue: 0))));
+                .Start(ctx => execute(name => new SpectreProgress(ctx.AddTask(Markup.Escape(name), maxValue: 0))));
         }
     }
 
