@@ -61,15 +61,44 @@ public sealed class ArgParser
         for (int i = 0; i < args.Length; i++)
         {
             string arg = args[i];
+            string? inlineValue = null;
+            if (arg.StartsWith("--", StringComparison.Ordinal))
+            {
+                int eq = arg.IndexOf('=');
+                if (eq >= 0)
+                {
+                    inlineValue = arg[(eq + 1)..];
+                    arg = arg[..eq];
+                }
+            }
+
             if (!_lookup.TryGetValue(arg, out var option))
             {
-                Errors.Add($"Unknown argument: {arg}");
+                Errors.Add($"Unknown argument: {args[i]}");
                 continue;
             }
 
             if (option.IsFlag)
             {
+                if (inlineValue != null)
+                {
+                    Errors.Add($"Flag {arg} does not take a value.");
+                    continue;
+                }
+
                 Flags.Add(option.LongName);
+                continue;
+            }
+
+            if (inlineValue != null)
+            {
+                if (string.IsNullOrWhiteSpace(inlineValue))
+                {
+                    Errors.Add($"Missing value for {arg}");
+                    continue;
+                }
+
+                Values[option.LongName] = inlineValue;
                 continue;
             }
 

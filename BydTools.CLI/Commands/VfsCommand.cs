@@ -12,50 +12,23 @@ public sealed class VfsCommand : ICommand
     public int Execute(string[] args, CancellationToken cancellationToken)
     {
         var parser = CreateParser();
-        if (!parser.Parse(args))
-            return CliHelpers.Fail(2, parser.Errors[0]);
-        if (parser.HasFlag("help"))
+        bool debug = false;
+        if (!CliHelpers.TryParseAndValidate(
+            parser,
+            args,
+            PrintHelp,
+            out int validationExit,
+            opt => (debug = parser.HasFlag("debug")) ? opt.LongName == "input" : opt.Required))
         {
-            PrintHelp(parser);
-            return 0;
+            return validationExit;
         }
 
-        bool debug = parser.HasFlag("debug");
-        if (!parser.ValidateRequired(opt => debug ? opt.LongName == "input" : opt.Required))
-            return CliHelpers.Fail(2, parser.Errors[0]);
-
-        if (!CliHelpers.TryResolveVfsDirectory(parser.Get("input")!, out string vfsPath, out string? vfsError))
-            return CliHelpers.Fail(1, vfsError!);
-
-        byte[] key;
-        int jobs;
-        try
-        {
-            key = VFSDefine.ResolveKey(parser.Get("platform"), parser.Get("key"));
-            jobs = CliHelpers.ResolveJobs(parser.Get("jobs"));
-        }
-        catch (ArgumentException ex)
-        {
-            return CliHelpers.Fail(2, ex.Message);
-        }
-
-        bool rawMode = parser.HasFlag("raw");
-        bool verbose = parser.HasFlag("verbose");
-        var logger = new Logger(verbose);
-        VfsArchive archive;
-        try
-        {
-            string? persistentVfs = CliHelpers.ResolvePersistentVfs(parser.Get("persistent"), logger);
-            archive = VfsArchive.Open(vfsPath, key, logger, persistentVfs);
-        }
-        catch (Exception ex)
-        {
-            return CliHelpers.Fail(1, ex.Message);
-        }
+        if (!VfsSession.TryOpen(parser, requireOutput: !debug, out VfsSession? session, out int openExit))
+            return openExit;
 
         if (debug)
         {
-            new VfsExtractor(logger).WriteDebugReport(archive);
+            new VfsExtractor(session.Logger).WriteDebugReport(session.Archive);
             return 0;
         }
 
@@ -63,24 +36,18 @@ public sealed class VfsCommand : ICommand
         foreach (string token in parser.Get("blocktype")!
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
-            var block = archive.Find(token);
-            if (block == null)
-            {
-                bool known = BlockRegistry.TryParse(token, out _);
-                return known
-                    ? CliHelpers.Fail(1, "Block \"{0}\" was not found in this VFS.", token)
-                    : CliHelpers.Fail(2, "Unknown block type: {0}", token);
-            }
-
+            if (!session.TryFindBlock(token, out VfsBlock? block, out int findExit))
+                return findExit;
             blocks.Add(block);
         }
 
+        bool rawMode = parser.HasFlag("raw");
         MemoryPackSchema? jsonSchema = null;
         IReadOnlyDictionary<string, IReadOnlyDictionary<int, string>>? unionMaps = null;
         if (!rawMode)
         {
             string? schemaDir = parser.Get("schema-dir");
-            if (!string.IsNullOrWhiteSpace(schemaDir))
+            if (schemaDir != null)
             {
                 try
                 {
@@ -90,7 +57,11 @@ public sealed class VfsCommand : ICommand
                         ? MemoryPackResources.UnionMaps
                         : JsonDataMemoryPack.LoadUnionMap(paths.UnionMap);
                 }
-                catch (Exception ex) when (ex is ArgumentException or FileNotFoundException or InvalidDataException or IOException)
+                catch (ArgumentException)
+                {
+                    return CliHelpers.Fail(2, "--schema-dir cannot be empty.");
+                }
+                catch (Exception ex) when (ex is FileNotFoundException or InvalidDataException or IOException)
                 {
                     return CliHelpers.Fail(2, ex.Message);
                 }
@@ -98,44 +69,31 @@ public sealed class VfsCommand : ICommand
         }
 
         var extractor = new VfsExtractor(
-            logger,
+            session.Logger,
             rawJsonData: rawMode,
             jsonSchema: jsonSchema,
             unionMaps: unionMaps,
             rawBundles: rawMode,
             rawManifests: rawMode);
 
-        string outputPath = Path.GetFullPath(parser.Get("output")!);
-        int totalExtracted = 0;
-        int totalFailed = 0;
-        try
+        string outputPath = session.OutputPath!;
+        return session.RunWithProgress(createProgress =>
         {
-            CliHelpers.RunWithProgress(logger, verbose, createProgress =>
+            int totalFailed = 0;
+            foreach (var block in blocks)
             {
-                foreach (var block in blocks)
-                {
-                    var result = extractor.Dump(
-                        block,
-                        outputPath,
-                        jobs,
-                        createProgress(block.DisplayName),
-                        cancellationToken
-                    );
-                    totalExtracted += result.Extracted;
-                    totalFailed += result.Failed;
-                }
-            });
-        }
-        catch (Exception ex) when (CliHelpers.IsCancel(ex))
-        {
-            return CliHelpers.Fail(1, "Cancelled.");
-        }
-        catch (Exception ex)
-        {
-            return CliHelpers.Fail(1, ex.Message);
-        }
+                var result = extractor.Dump(
+                    block,
+                    outputPath,
+                    session.Jobs,
+                    createProgress(block.DisplayName),
+                    cancellationToken
+                );
+                totalFailed += result.Failed;
+            }
 
-        return totalFailed > 0 ? 1 : 0;
+            return totalFailed > 0 ? 1 : 0;
+        });
     }
 
     internal static ArgParser CreateParser() =>

@@ -18,6 +18,57 @@ internal static class CliHelpers
             .Add("platform", null, "Key to use when --key is omitted", "name", continuation: "pc (default) or android.")
             .Add("jobs", null, jobsDescription, "n", continuation: "Default: processor count.");
 
+    public static bool TryParseAndValidate(
+        ArgParser parser,
+        string[] args,
+        Action<ArgParser> printHelp,
+        out int exitCode,
+        Func<CommandOption, bool>? isRequiredOverride = null)
+    {
+        parser.Parse(args);
+        if (parser.HasFlag("help"))
+        {
+            printHelp(parser);
+            exitCode = 0;
+            return false;
+        }
+
+        if (parser.Errors.Count > 0 || !parser.ValidateRequired(isRequiredOverride))
+        {
+            exitCode = FailAll(2, parser.Errors);
+            return false;
+        }
+
+        exitCode = 0;
+        return true;
+    }
+
+    public static byte[] ResolveKey(string? platform, string? keyBase64)
+    {
+        if (!string.IsNullOrWhiteSpace(keyBase64))
+        {
+            try
+            {
+                return VFSDefine.DecodeKey(keyBase64);
+            }
+            catch (ArgumentException ex)
+            {
+                throw new ArgumentException(
+                    ex.Message.Replace("Key ", "--key ", StringComparison.Ordinal),
+                    ex);
+            }
+        }
+
+        try
+        {
+            return VFSDefine.GetPlatformKey(platform);
+        }
+        catch (ArgumentException ex)
+        {
+            throw new ArgumentException("--platform must be one of: pc, android.", ex);
+        }
+    }
+
     public static bool TryResolveVfsDirectory(string input, out string vfsPath, out string? error)
     {
         string gamePath = Path.GetFullPath(input);
@@ -89,7 +140,7 @@ internal static class CliHelpers
             return;
         }
 
-        using (logger.BeginBuffering())
+        using (logger.BeginLiveProgress())
         {
             AnsiConsole
                 .Progress()
@@ -112,24 +163,14 @@ internal static class CliHelpers
         return code;
     }
 
+    public static int FailAll(int code, IEnumerable<string> messages)
+    {
+        foreach (string message in messages)
+            Logger.WriteError(message);
+        return code;
+    }
+
     public static bool IsCancel(Exception ex) =>
         ex is OperationCanceledException
         || (ex is AggregateException aggregate && aggregate.InnerExceptions.All(IsCancel));
-}
-
-internal sealed class SpectreProgress(ProgressTask task) : IProgressSink
-{
-    private readonly Lock _lock = new();
-
-    public void AddTotal(long amount)
-    {
-        lock (_lock)
-            task.MaxValue += amount;
-    }
-
-    public void Advance(long amount)
-    {
-        lock (_lock)
-            task.Increment(amount);
-    }
 }

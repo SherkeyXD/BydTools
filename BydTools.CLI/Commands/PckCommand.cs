@@ -13,102 +13,49 @@ public sealed class PckCommand : ICommand
     public int Execute(string[] args, CancellationToken cancellationToken)
     {
         var parser = CreateParser();
-        if (!parser.Parse(args))
-            return CliHelpers.Fail(2, parser.Errors[0]);
-        if (parser.HasFlag("help"))
-        {
-            PrintHelp(parser);
-            return 0;
-        }
-
-        if (!parser.ValidateRequired())
-            return CliHelpers.Fail(2, parser.Errors[0]);
+        if (!CliHelpers.TryParseAndValidate(parser, args, PrintHelp, out int validationExit))
+            return validationExit;
 
         string modeArg = parser.Get("mode") ?? "wav";
         if (modeArg is not ("wav" or "raw"))
             return CliHelpers.Fail(2, "--mode must be one of: wav, raw.");
         var mode = modeArg == "raw" ? AudioExportMode.Raw : AudioExportMode.Wav;
 
-        byte[] key;
-        int jobs;
-        try
-        {
-            key = VFSDefine.ResolveKey(parser.Get("platform"), parser.Get("key"));
-            jobs = CliHelpers.ResolveJobs(parser.Get("jobs"));
-        }
-        catch (ArgumentException ex)
-        {
-            return CliHelpers.Fail(2, ex.Message);
-        }
+        if (!VfsSession.TryOpen(parser, requireOutput: true, out VfsSession? session, out int openExit))
+            return openExit;
 
-        if (!CliHelpers.TryResolveVfsDirectory(parser.Get("input")!, out string vfsPath, out string? vfsError))
-            return CliHelpers.Fail(1, vfsError!);
-
-        bool verbose = parser.HasFlag("verbose");
-        var logger = new Logger(verbose);
-        VfsArchive archive;
-        try
-        {
-            string? persistentVfs = CliHelpers.ResolvePersistentVfs(parser.Get("persistent"), logger);
-            archive = VfsArchive.Open(vfsPath, key, logger, persistentVfs);
-        }
-        catch (Exception ex)
-        {
-            return CliHelpers.Fail(1, ex.Message);
-        }
-
-        string typeArg = parser.Get("type")!;
-        var block = archive.Find(typeArg);
-        if (block == null)
-        {
-            return BlockRegistry.TryParse(typeArg, out _)
-                ? CliHelpers.Fail(1, "Block \"{0}\" was not found in this VFS.", typeArg)
-                : CliHelpers.Fail(2, "Unknown block type: {0}", typeArg);
-        }
+        if (!session.TryFindBlock(parser.Get("type")!, out VfsBlock? block, out int findExit))
+            return findExit;
 
         if (block.Descriptor is { Kind: not ContentKind.Audio })
-            logger.Info("Warning: {0} is not an audio block. Only .pck files inside it will be exported.", block.DisplayName);
+            session.Logger.Info("Warning: {0} is not an audio block. Only .pck files inside it will be exported.", block.DisplayName);
 
         using IWemDecoder? decoder = mode == AudioExportMode.Wav ? WemDecoders.Create() : null;
-
-        string outputPath = Path.GetFullPath(parser.Get("output")!);
+        string outputPath = session.OutputPath!;
         bool mapNames = !parser.HasFlag("no-map");
-        try
-        {
-            AudioExportResult? result = null;
-            CliHelpers.RunWithProgress(logger, verbose, createProgress =>
-            {
-                result = new AudioExportService(logger).Export(
-                    archive,
-                    block,
-                    outputPath,
-                    mode,
-                    mapNames,
-                    decoder,
-                    jobs,
-                    createProgress("Exporting"),
-                    cancellationToken
-                );
-            });
 
-            if (result == null)
-                return 1;
-            logger.Info(
+        return session.RunWithProgress(createProgress =>
+        {
+            AudioExportResult result = new AudioExportService(session.Logger).Export(
+                session.Archive,
+                block,
+                outputPath,
+                mode,
+                mapNames,
+                decoder,
+                session.Jobs,
+                createProgress("Exporting"),
+                cancellationToken
+            );
+
+            session.Logger.Info(
                 "Done. {0} files extracted, {1} converted, {2} failed.",
                 result.Extracted,
                 result.Converted,
                 result.Failed
             );
             return result.Failed > 0 ? 1 : 0;
-        }
-        catch (Exception ex) when (CliHelpers.IsCancel(ex))
-        {
-            return CliHelpers.Fail(1, "Cancelled.");
-        }
-        catch (Exception ex)
-        {
-            return CliHelpers.Fail(1, ex.Message);
-        }
+        });
     }
 
     private static ArgParser CreateParser() =>

@@ -1,19 +1,22 @@
+using Spectre.Console;
+
 namespace BydTools.CLI;
 
 public sealed class Logger : BydTools.Core.ILogger
 {
     private readonly bool _verbose;
     private readonly Lock _lock = new();
-    private readonly List<(bool IsError, string Message)> _buffered = [];
-    private int _bufferDepth;
+    private int _liveDepth;
 
     public Logger(bool verbose) => _verbose = verbose;
 
-    public IDisposable BeginBuffering()
+    public bool IsVerboseEnabled => _verbose;
+
+    public IDisposable BeginLiveProgress()
     {
         lock (_lock)
-            _bufferDepth++;
-        return new BufferScope(this);
+            _liveDepth++;
+        return new LiveScope(this);
     }
 
     public void Info(string message) => Write(isError: false, message);
@@ -47,40 +50,33 @@ public sealed class Logger : BydTools.Core.ILogger
     {
         lock (_lock)
         {
-            if (_bufferDepth > 0)
+            if (_liveDepth > 0 && !isError)
             {
-                _buffered.Add((isError, message));
+                AnsiConsole.WriteLine(message);
                 return;
             }
 
-            WriteDirect(isError, message);
+            (isError ? Console.Error : Console.Out).WriteLine(message);
         }
     }
 
-    private void EndBuffering()
+    private void EndLiveProgress()
     {
         lock (_lock)
         {
-            if (_bufferDepth == 0 || --_bufferDepth > 0)
-                return;
-
-            foreach (var (isError, message) in _buffered)
-                WriteDirect(isError, message);
-            _buffered.Clear();
+            if (_liveDepth > 0)
+                _liveDepth--;
         }
     }
 
-    private static void WriteDirect(bool isError, string message) =>
-        (isError ? Console.Error : Console.Out).WriteLine(message);
-
-    private sealed class BufferScope(Logger owner) : IDisposable
+    private sealed class LiveScope(Logger owner) : IDisposable
     {
         private int _disposed;
 
         public void Dispose()
         {
             if (Interlocked.Exchange(ref _disposed, 1) == 0)
-                owner.EndBuffering();
+                owner.EndLiveProgress();
         }
     }
 }
