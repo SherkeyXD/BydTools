@@ -9,9 +9,11 @@ Each component retains its original license and copyright.
 
 - **Source**: https://github.com/Escartem/AnimeStudio
 - **License**: MIT (full text below)
-- **Copyright**: (c) 2016 Radu; (c) 2016-2020 Perfare; (c) 2022-2024 Razmoth; (c) 2024-2025 Escartem
-- **Usage**: VFS block structure parsing and asset extraction logic in `BydTools.VFS`
-  is inspired by AnimeStudio's Unity asset handling approach.
+- **Copyright**: (c) 2016 Radu; (c) 2016-2020 Perfare; (c) 2022-2024 Razmoth; (c) 2024-2026 Escartem
+- **Usage**: VFS block structure parsing and asset extraction logic in `BydTools.VFS`,
+  as well as Endfield `.ab` VFS bundle cipher, LZ4Inv decompression, and UnityFS
+  repacking in `BydTools.Formats/Bundle` (`EndfieldVfsCipher.cs`, `Lz4InvBlock.cs`,
+  `EndfieldBundle.cs`), are ported from or inspired by AnimeStudio.
 
 ### MIT License Text
 
@@ -21,7 +23,7 @@ MIT License
 Copyright (c) 2016 Radu
 Copyright (c) 2016-2020 Perfare
 Copyright (c) 2022-2024 Razmoth
-Copyright (c) 2024-2025 Escartem
+Copyright (c) 2024-2026 Escartem
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
