@@ -12,17 +12,17 @@ public sealed class VfsCommand : ICommand
     public int Execute(string[] args, CancellationToken cancellationToken)
     {
         var parser = CreateParser();
-        bool debug = false;
         if (!CliHelpers.TryParseAndValidate(
             parser,
             args,
             PrintHelp,
             out int validationExit,
-            opt => (debug = parser.HasFlag("debug")) ? opt.LongName == "input" : opt.Required))
+            opt => parser.HasFlag("debug") ? opt.LongName == "input" : opt.Required))
         {
             return validationExit;
         }
 
+        bool debug = parser.HasFlag("debug");
         if (!VfsSession.TryOpen(parser, requireOutput: !debug, out VfsSession? session, out int openExit))
             return openExit;
 
@@ -57,9 +57,11 @@ public sealed class VfsCommand : ICommand
                         ? MemoryPackResources.UnionMaps
                         : JsonDataMemoryPack.LoadUnionMap(paths.UnionMap);
                 }
-                catch (ArgumentException)
+                catch (ArgumentException ex)
                 {
-                    return CliHelpers.Fail(2, "--schema-dir cannot be empty.");
+                    return CliHelpers.Fail(
+                        2,
+                        string.IsNullOrWhiteSpace(schemaDir) ? "--schema-dir cannot be empty." : ex.Message);
                 }
                 catch (Exception ex) when (ex is FileNotFoundException or InvalidDataException or IOException)
                 {

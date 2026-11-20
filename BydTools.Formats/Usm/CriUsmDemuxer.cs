@@ -63,7 +63,7 @@ public static class CriUsmDemuxer
 
             bool isAudio = sig.SequenceEqual(Sfa);
             bool isVideo = sig.SequenceEqual(Sfv);
-            if (isAudio || isVideo)
+            if ((isAudio || isVideo) && blockSize >= 4)
             {
                 byte streamId = isAudio && pos + 0xC < usm.Length ? usm[pos + 0xC] : (byte)0;
                 uint blockId = BinaryPrimitives.ReadUInt32LittleEndian(sig);
@@ -103,7 +103,7 @@ public static class CriUsmDemuxer
                     uint blockSize = BinaryPrimitives.ReadUInt32BigEndian(usm.Slice(pos + 4, 4));
                     bool isAudio = sig.SequenceEqual(Sfa);
                     bool isVideo = sig.SequenceEqual(Sfv);
-                    if (isAudio || isVideo)
+                    if ((isAudio || isVideo) && blockSize >= 4)
                     {
                         byte streamId = isAudio && pos + 0xC < usm.Length ? usm[pos + 0xC] : (byte)0;
                         uint blockId = BinaryPrimitives.ReadUInt32LittleEndian(sig);

@@ -53,9 +53,15 @@ internal static class CliHelpers
             }
             catch (ArgumentException ex)
             {
-                throw new ArgumentException(
-                    ex.Message.Replace("Key ", "--key ", StringComparison.Ordinal),
-                    ex);
+                string message = ex.Message.Replace("Key ", "--key ", StringComparison.Ordinal);
+                if (ex.ParamName != null)
+                {
+                    string suffix = $" (Parameter '{ex.ParamName}')";
+                    if (message.EndsWith(suffix, StringComparison.Ordinal))
+                        message = message[..^suffix.Length];
+                }
+
+                throw new ArgumentException(message, ex);
             }
         }
 

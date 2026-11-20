@@ -1251,8 +1251,17 @@ public sealed class MemoryPackDecoder
                 }
 
                 writer.WriteEndObject();
-                return true;
             }
+            else
+            {
+                for (int i = 1; i < members.Length; i++)
+                {
+                    MpMember m = members[i];
+                    WriteValue(ref reader, m.Type, memberPlans[i], m.Name, depth + 1, sandbox, m.CollectionEncoding, writer: null);
+                }
+            }
+
+            return true;
         }
 
         reader.Position = origin;
@@ -1444,8 +1453,16 @@ public sealed class MemoryPackDecoder
         {
             if (objectKeys)
             {
-                string keyText = ReadKeyText(ref reader, key, keyPlan, depth + 1, sandbox);
-                writer?.WritePropertyName(keyText);
+                if (writer != null)
+                {
+                    string keyText = ReadKeyText(ref reader, key, keyPlan, depth + 1, sandbox);
+                    writer.WritePropertyName(keyText);
+                }
+                else
+                {
+                    WriteValue(ref reader, key, keyPlan, null, depth + 1, sandbox, MpCollectionEncoding.None, writer: null);
+                }
+
                 if (padPairs)
                     SkipPad(ref reader, midPad);
                 if (!plan.IsV2)

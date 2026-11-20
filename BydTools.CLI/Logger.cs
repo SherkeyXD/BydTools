@@ -6,6 +6,7 @@ public sealed class Logger : BydTools.Core.ILogger
 {
     private readonly bool _verbose;
     private readonly Lock _lock = new();
+    private readonly List<string> _bufferedErrors = [];
     private int _liveDepth;
 
     public Logger(bool verbose) => _verbose = verbose;
@@ -50,9 +51,12 @@ public sealed class Logger : BydTools.Core.ILogger
     {
         lock (_lock)
         {
-            if (_liveDepth > 0 && !isError)
+            if (_liveDepth > 0)
             {
-                AnsiConsole.WriteLine(message);
+                if (isError)
+                    _bufferedErrors.Add(message);
+                else
+                    AnsiConsole.WriteLine(message);
                 return;
             }
 
@@ -64,8 +68,12 @@ public sealed class Logger : BydTools.Core.ILogger
     {
         lock (_lock)
         {
-            if (_liveDepth > 0)
-                _liveDepth--;
+            if (_liveDepth == 0 || --_liveDepth > 0)
+                return;
+
+            foreach (string message in _bufferedErrors)
+                Console.Error.WriteLine(message);
+            _bufferedErrors.Clear();
         }
     }
 

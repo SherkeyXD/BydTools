@@ -55,7 +55,8 @@ public static class JsonDataMemoryPack
             {
                 maps[key] = ReadTagMapMsgPack(ref reader);
             }
-            else if (int.TryParse(key, out int tag) && reader.NextMessagePackType == MessagePackType.String)
+            else if (int.TryParse(key, out int tag)
+                && reader.NextMessagePackType is MessagePackType.String or MessagePackType.Nil)
             {
                 string? name = SchemaFile.ReadNullableString(ref reader);
                 if (string.IsNullOrWhiteSpace(name))

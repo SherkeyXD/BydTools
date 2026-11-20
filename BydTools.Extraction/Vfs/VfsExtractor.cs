@@ -80,7 +80,7 @@ public sealed class VfsExtractor
             : null;
         IContentHandler? handler = CreateHandler(kind, pool);
 
-        List<ChunkBatch> batches = BuildBatches(block, info, totalFiles, jobs);
+        List<ChunkBatch> batches = BuildBatches(block, info, totalFiles, jobs, progress);
         int extracted = 0;
         int failed = 0;
         var options = new ParallelOptions
@@ -94,15 +94,17 @@ public sealed class VfsExtractor
             options,
             batch =>
             {
+                int end = batch.StartIndex + batch.Count;
                 using var chunkReader = block.OpenChunkReader(batch.Chunk);
                 if (chunkReader == null)
                 {
                     if (_logger.IsVerboseEnabled)
                         _logger.Verbose("  Chunk file not found: {0}", batch.Chunk.FileName);
+                    for (int i = batch.StartIndex; i < end; i++)
+                        progress.Advance(Math.Max(0, batch.Chunk.Files[i].Length));
                     return;
                 }
 
-                int end = batch.StartIndex + batch.Count;
                 for (int i = batch.StartIndex; i < end; i++)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
@@ -179,7 +181,12 @@ public sealed class VfsExtractor
         return new VfsExtractResult(extracted, failed);
     }
 
-    private List<ChunkBatch> BuildBatches(VfsBlock block, VfsBlockInfo info, int totalFiles, int jobs)
+    private List<ChunkBatch> BuildBatches(
+        VfsBlock block,
+        VfsBlockInfo info,
+        int totalFiles,
+        int jobs,
+        IProgressSink progress)
     {
         int targetBatches = Math.Max(1, jobs) * 4;
         int maxFilesPerBatch = Math.Clamp(totalFiles / targetBatches, 16, 256);
@@ -194,6 +201,11 @@ public sealed class VfsExtractor
             {
                 if (_logger.IsVerboseEnabled)
                     _logger.Verbose("  Chunk file not found: {0}", chunk.FileName);
+                long missingBytes = 0;
+                foreach (var file in chunk.Files)
+                    missingBytes += Math.Max(0, file.Length);
+                if (missingBytes > 0)
+                    progress.Advance(missingBytes);
                 continue;
             }
 
