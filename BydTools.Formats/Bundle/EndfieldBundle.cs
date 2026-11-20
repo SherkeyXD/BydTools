@@ -413,7 +413,8 @@ public static class EndfieldBundle
                 if (nameLen >= MaxNodePathBytes)
                     throw new InvalidDataException($"Node {i} path exceeds {MaxNodePathBytes} bytes.");
 
-                nameBuffer[nameLen++] = (byte)(bt ^ ((nameLen ^ 0x97) & 0xFF));
+                nameBuffer[nameLen] = (byte)(bt ^ ((nameLen ^ 0x97) & 0xFF));
+                nameLen++;
             }
 
             if (!terminated)

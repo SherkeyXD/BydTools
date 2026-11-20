@@ -150,6 +150,24 @@ public sealed class EndfieldBundleTests
         Assert.Equal(compInfoSize, uncompInfoSize);
         Assert.Equal(0x40u, outFlags);
 
+        // Verify directory node names in output UnityFS BlocksInfo are accurately unmasked
+        int infoStart = metaStart + 20;
+        int pos = infoStart + 16;
+        int outBlockCount = BinaryPrimitives.ReadInt32BigEndian(unityFs.AsSpan(pos, 4));
+        pos += 4 + outBlockCount * 10;
+        int outNodeCount = BinaryPrimitives.ReadInt32BigEndian(unityFs.AsSpan(pos, 4));
+        pos += 4;
+        var decodedNodePaths = new List<string>(outNodeCount);
+        for (int i = 0; i < outNodeCount; i++)
+        {
+            pos += 20;
+            int term = Array.IndexOf(unityFs, (byte)0, pos);
+            Assert.True(term > pos);
+            decodedNodePaths.Add(Encoding.UTF8.GetString(unityFs, pos, term - pos));
+            pos = term + 1;
+        }
+        Assert.Equal(["CAB-11223344", "CAB-11223344.resS"], decodedNodePaths);
+
         int dataStart = metaStart + 20 + (int)uncompInfoSize;
         Assert.Equal(cab, unityFs.AsSpan(dataStart, cab.Length).ToArray());
         Assert.Equal(resS, unityFs.AsSpan(dataStart + cab.Length, resS.Length).ToArray());
