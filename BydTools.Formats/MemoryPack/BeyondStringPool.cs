@@ -25,9 +25,6 @@ public sealed class BeyondStringPool
             throw new InvalidDataException("StringPool0 has no strings; it is the global-id stride.");
     }
 
-    public int BlockCount => _blocks.Length;
-    public int Stride => _stride;
-
     /// <summary>
     /// Builds a pool from <c>StringPoolN.byte</c> entries. Returns null when none match.
     /// </summary>
@@ -158,13 +155,6 @@ public sealed class BeyondStringPool
 
         value = _blocks[block][local];
         return true;
-    }
-
-    public string Format(int id)
-    {
-        if (TryResolve(id, out string? value))
-            return value ?? "";
-        return "#" + id.ToString(CultureInfo.InvariantCulture);
     }
 
     private static bool IsUspc(ReadOnlySpan<byte> span) =>

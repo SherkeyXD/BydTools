@@ -1,4 +1,3 @@
-using System.Text.Json;
 using MessagePack;
 
 namespace BydTools.Formats.MemoryPack;
@@ -41,11 +40,6 @@ internal static class MemoryPackSchemaLoader
         var markers = new HashSet<string>(StringComparer.Ordinal);
         SchemaFile.Parse<object?>(
             indexData,
-            root =>
-            {
-                ReadTypeIndexJson(root, kinds, byBasename, markers);
-                return null;
-            },
             (ref MessagePackReader reader) =>
             {
                 ReadTypeIndexMsgPack(ref reader, kinds, byBasename, markers);
@@ -56,11 +50,6 @@ internal static class MemoryPackSchemaLoader
         var byWrapper = new Dictionary<string, MpType>(StringComparer.Ordinal);
         SchemaFile.Parse<object?>(
             schemasData,
-            root =>
-            {
-                ReadSchemasJson(root, kinds, markers, byTarget, byWrapper);
-                return null;
-            },
             (ref MessagePackReader reader) =>
             {
                 ReadSchemasMsgPack(ref reader, kinds, markers, byTarget, byWrapper);
@@ -73,11 +62,6 @@ internal static class MemoryPackSchemaLoader
         {
             SchemaFile.Parse<object?>(
                 enumsData,
-                root =>
-                {
-                    ApplyEnumsJson(enumWidths, root);
-                    return null;
-                },
                 (ref MessagePackReader reader) =>
                 {
                     ApplyEnumsMsgPack(ref reader, enumWidths);
@@ -89,11 +73,6 @@ internal static class MemoryPackSchemaLoader
         {
             SchemaFile.Parse<object?>(
                 unmanagedData,
-                root =>
-                {
-                    ApplyUnmanagedJson(unmanaged, root);
-                    return null;
-                },
                 (ref MessagePackReader reader) =>
                 {
                     ApplyUnmanagedMsgPack(ref reader, unmanaged);
@@ -102,126 +81,6 @@ internal static class MemoryPackSchemaLoader
         }
 
         return new MemoryPackSchema(byTarget, byWrapper, byBasename, kinds, markers, enumWidths, unmanaged);
-    }
-
-    public static MemoryPackSchema Load(
-        JsonDocument schemaDoc,
-        JsonDocument indexDoc,
-        JsonDocument? enumsDoc = null,
-        JsonDocument? unmanagedDoc = null)
-    {
-        var kinds = new Dictionary<string, string>(StringComparer.Ordinal);
-        var byBasename = new Dictionary<string, List<string>>(StringComparer.Ordinal);
-        var markers = new HashSet<string>(StringComparer.Ordinal);
-        ReadTypeIndexJson(indexDoc.RootElement, kinds, byBasename, markers);
-
-        var byTarget = new Dictionary<string, List<MpType>>(StringComparer.Ordinal);
-        var byWrapper = new Dictionary<string, MpType>(StringComparer.Ordinal);
-        ReadSchemasJson(schemaDoc.RootElement, kinds, markers, byTarget, byWrapper);
-
-        var enumWidths = new Dictionary<string, byte>(StringComparer.Ordinal);
-        var unmanaged = new Dictionary<string, MpUnmanagedLayout>(StringComparer.Ordinal);
-        if (enumsDoc != null)
-            ApplyEnumsJson(enumWidths, enumsDoc.RootElement);
-        if (unmanagedDoc != null)
-            ApplyUnmanagedJson(unmanaged, unmanagedDoc.RootElement);
-
-        return new MemoryPackSchema(byTarget, byWrapper, byBasename, kinds, markers, enumWidths, unmanaged);
-    }
-
-    private static void ReadTypeIndexJson(
-        JsonElement root,
-        Dictionary<string, string> kinds,
-        Dictionary<string, List<string>> byBasename,
-        HashSet<string> markers)
-    {
-        if (root.TryGetProperty("by_type", out var byType))
-        {
-            foreach (var typeProp in byType.EnumerateObject())
-            {
-                if (typeProp.Value.TryGetProperty("serialize_marker", out var marker) && marker.ValueKind == JsonValueKind.True)
-                    markers.Add(typeProp.Name);
-                if (!typeProp.Value.TryGetProperty("entries", out var entries))
-                    continue;
-                foreach (var entry in entries.EnumerateArray())
-                {
-                    if (!entry.TryGetProperty("wire", out var wire))
-                        continue;
-                    foreach (var member in wire.EnumerateArray())
-                    {
-                        if (!member.TryGetProperty("type", out var typeEl) || !member.TryGetProperty("kind", out var kindEl))
-                            continue;
-                        string? type = typeEl.GetString();
-                        string? kind = kindEl.GetString();
-                        if (type != null && kind != null)
-                            kinds.TryAdd(type, kind);
-                    }
-                }
-            }
-        }
-
-        if (root.TryGetProperty("by_basename", out var basenames))
-        {
-            foreach (var prop in basenames.EnumerateObject())
-            {
-                var names = new List<string>();
-                foreach (var item in prop.Value.EnumerateArray())
-                {
-                    string? name = item.GetString();
-                    if (name != null)
-                        names.Add(name);
-                }
-
-                if (names.Count > 0)
-                    byBasename[prop.Name] = names;
-            }
-        }
-    }
-
-    private static void ReadSchemasJson(
-        JsonElement root,
-        Dictionary<string, string> kinds,
-        HashSet<string> markers,
-        Dictionary<string, List<MpType>> byTarget,
-        Dictionary<string, MpType> byWrapper)
-    {
-        if (!root.TryGetProperty("wrappers", out var wrappers))
-            throw new InvalidDataException("schemas export has no wrappers array.");
-
-        foreach (var wrapper in wrappers.EnumerateArray())
-        {
-            string target = Required(wrapper, "target_type");
-            string wrapperType = Required(wrapper, "wrapper_type");
-            bool hasDeserialize = wrapper.TryGetProperty("has_deserialize", out var deser) && deser.ValueKind == JsonValueKind.True;
-            var wire = ReadMembersJson(wrapper, "wire_order", kinds);
-            int? minOffset = null;
-            if (wrapper.TryGetProperty("members_from_target_fields", out var fields))
-            {
-                foreach (var field in fields.EnumerateArray())
-                {
-                    if (field.TryGetProperty("offset", out var offsetEl) && offsetEl.TryGetInt32(out int offset))
-                        minOffset = minOffset is int current ? Math.Min(current, offset) : offset;
-                }
-            }
-
-            string? parentType = wrapper.TryGetProperty("parent_type", out var parentEl)
-                ? parentEl.GetString()
-                : null;
-            var typeObj = new MpType
-            {
-                TargetType = target,
-                WrapperType = wrapperType,
-                HasDeserialize = hasDeserialize,
-                Wire = wire,
-                MinFieldOffset = minOffset,
-                SerializeMarker = markers.Contains(target),
-                ParentType = parentType,
-                MemorypackWire = ReadMembersJson(wrapper, "memorypack_wire", kinds) is { Length: > 0 } mp
-                    ? mp
-                    : null,
-            };
-            AddWrapper(byTarget, byWrapper, typeObj);
-        }
     }
 
     private static void AddWrapper(
@@ -428,7 +287,6 @@ internal static class MemoryPackSchemaLoader
                 string? wrapperType = null;
                 bool hasDeserialize = false;
                 MpMember[] wire = [];
-                int? minOffset = null;
                 string? parentType = null;
                 MpMember[]? memorypackWire = null;
 
@@ -449,8 +307,6 @@ internal static class MemoryPackSchemaLoader
                         hasDeserialize = SchemaFile.ReadBoolOrSkip(ref reader);
                     else if (prop.SequenceEqual("wire_order"u8))
                         wire = ReadMembersMsgPack(ref reader, kinds);
-                    else if (prop.SequenceEqual("members_from_target_fields"u8))
-                        minOffset = ReadMinOffsetMsgPack(ref reader);
                     else if (prop.SequenceEqual("parent_type"u8))
                         parentType = SchemaFile.ReadNullableString(ref reader);
                     else if (prop.SequenceEqual("memorypack_wire"u8))
@@ -474,7 +330,6 @@ internal static class MemoryPackSchemaLoader
                     WrapperType = wrapperType,
                     HasDeserialize = hasDeserialize,
                     Wire = wire,
-                    MinFieldOffset = minOffset,
                     SerializeMarker = markers.Contains(target),
                     ParentType = parentType,
                     MemorypackWire = memorypackWire,
@@ -484,43 +339,6 @@ internal static class MemoryPackSchemaLoader
 
         if (!foundWrappers)
             throw new InvalidDataException("schemas export has no wrappers array.");
-    }
-
-    private static int? ReadMinOffsetMsgPack(ref MessagePackReader reader)
-    {
-        if (reader.NextMessagePackType != MessagePackType.Array)
-        {
-            reader.Skip();
-            return null;
-        }
-
-        int? minOffset = null;
-        int count = reader.ReadArrayHeader();
-        for (int i = 0; i < count; i++)
-        {
-            if (reader.NextMessagePackType != MessagePackType.Map)
-            {
-                reader.Skip();
-                continue;
-            }
-
-            int propCount = reader.ReadMapHeader();
-            for (int p = 0; p < propCount; p++)
-            {
-                if (!SchemaFile.TryReadKeySpan(ref reader, out var prop))
-                {
-                    reader.Skip();
-                    continue;
-                }
-
-                if (prop.SequenceEqual("offset"u8) && SchemaFile.TryReadInt32(ref reader, out int offset))
-                    minOffset = minOffset is int current ? Math.Min(current, offset) : offset;
-                else if (!prop.SequenceEqual("offset"u8))
-                    reader.Skip();
-            }
-        }
-
-        return minOffset;
     }
 
     private static MpMember[] ReadMembersMsgPack(ref MessagePackReader reader, Dictionary<string, string> kinds)
@@ -571,37 +389,11 @@ internal static class MemoryPackSchemaLoader
                 Name = name,
                 Type = type,
                 Kind = MemoryPackSchema.Classify(type, kinds),
-                CollectionEncoding = encoding,
+                CollectionEncoding = MpCollectionEncodingParser.Parse(encoding),
             });
         }
 
         return [.. members];
-    }
-
-    private static MpMember[] ReadMembersJson(JsonElement wrapper, string property, Dictionary<string, string> kinds)
-    {
-        if (!wrapper.TryGetProperty(property, out var array))
-            return [];
-        var members = new List<MpMember>();
-        foreach (var item in array.EnumerateArray())
-        {
-            string? name = item.TryGetProperty("name", out var nameEl) ? nameEl.GetString() : null;
-            string? type = item.TryGetProperty("type", out var typeEl) ? typeEl.GetString() : null;
-            if (name == null || type == null)
-                continue;
-            string? encoding = item.TryGetProperty("collection_encoding", out var encEl)
-                ? encEl.GetString()
-                : null;
-            members.Add(new MpMember
-            {
-                Name = name,
-                Type = type,
-                Kind = MemoryPackSchema.Classify(type, kinds),
-                CollectionEncoding = encoding,
-            });
-        }
-
-        return members.ToArray();
     }
 
     private static void ApplyEnumsMsgPack(ref MessagePackReader reader, Dictionary<string, byte> enumWidths)
@@ -640,18 +432,6 @@ internal static class MemoryPackSchemaLoader
                     reader.Skip();
             }
 
-            AddEnumWidth(enumWidths, name, width);
-        }
-    }
-
-    private static void ApplyEnumsJson(Dictionary<string, byte> enumWidths, JsonElement root)
-    {
-        if (root.ValueKind != JsonValueKind.Array)
-            return;
-        foreach (var item in root.EnumerateArray())
-        {
-            string? name = item.TryGetProperty("type_name", out var nameEl) ? nameEl.GetString() : null;
-            int? width = item.TryGetProperty("width", out var widthEl) && widthEl.TryGetInt32(out int w) ? w : null;
             AddEnumWidth(enumWidths, name, width);
         }
     }
@@ -771,46 +551,6 @@ internal static class MemoryPackSchemaLoader
         return fields;
     }
 
-    private static void ApplyUnmanagedJson(Dictionary<string, MpUnmanagedLayout> unmanaged, JsonElement root)
-    {
-        if (root.ValueKind != JsonValueKind.Array)
-            return;
-        foreach (var item in root.EnumerateArray())
-        {
-            string? name = item.TryGetProperty("type_name", out var nameEl) ? nameEl.GetString() : null;
-            if (name == null || !item.TryGetProperty("payload_size", out var sizeEl) || !sizeEl.TryGetInt32(out int payload) || payload <= 0)
-                continue;
-            var fields = new List<MpUnmanagedField>();
-            if (item.TryGetProperty("fields", out var fieldsEl) && fieldsEl.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var field in fieldsEl.EnumerateArray())
-                {
-                    string? fname = field.TryGetProperty("name", out var fn) ? fn.GetString() : null;
-                    string? fty = field.TryGetProperty("type", out var ft) ? ft.GetString() : null;
-                    if (fname == null || fty == null || !field.TryGetProperty("offset", out var offEl) || !offEl.TryGetInt32(out int offset))
-                        continue;
-                    int? size = field.TryGetProperty("size", out var szEl)
-                        && szEl.ValueKind == JsonValueKind.Number
-                        && szEl.TryGetInt32(out int sz)
-                            ? sz
-                            : null;
-                    fields.Add(new MpUnmanagedField
-                    {
-                        Name = fname,
-                        Type = fty,
-                        Offset = offset,
-                        Size = size,
-                    });
-                }
-            }
-
-            string? encoding = item.TryGetProperty("collection_encoding", out var encEl)
-                ? encEl.GetString()
-                : null;
-            AddUnmanagedLayout(unmanaged, name, payload, fields, encoding);
-        }
-    }
-
     private static void AddUnmanagedLayout(
         Dictionary<string, MpUnmanagedLayout> unmanaged,
         string? name,
@@ -825,18 +565,11 @@ internal static class MemoryPackSchemaLoader
         {
             TypeName = name,
             PayloadSize = payload,
-            Fields = fields?.ToArray() ?? [],
-            CollectionEncoding = encoding,
+            Fields = fields?.OrderBy(static f => f.Offset).ToArray() ?? [],
+            CollectionEncoding = MpCollectionEncodingParser.Parse(encoding),
         };
         unmanaged[name] = layout;
         if (MemoryPackSchema.UnmanagedShortName(name) is string shortName)
             unmanaged.TryAdd(shortName, layout);
-    }
-
-    private static string Required(JsonElement element, string name)
-    {
-        if (!element.TryGetProperty(name, out var value) || value.GetString() is not { } text)
-            throw new InvalidDataException($"schemas.json wrapper is missing {name}.");
-        return text;
     }
 }

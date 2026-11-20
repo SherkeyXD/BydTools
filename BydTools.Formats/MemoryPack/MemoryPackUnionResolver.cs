@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+
 namespace BydTools.Formats.MemoryPack;
 
 /// <summary>
@@ -8,9 +10,13 @@ public sealed class MemoryPackUnionResolver
 {
     private readonly MemoryPackSchema _schema;
     private readonly Dictionary<string, Dictionary<int, string>> _unionMaps = [];
-    private readonly object _gate = new();
+    private readonly ConcurrentDictionary<string, Dictionary<int, string>?> _unionMapCache = new(StringComparer.Ordinal);
+    private readonly Lock _gate = new();
     private readonly Dictionary<string, MpType[]> _candidates = new(StringComparer.Ordinal);
     private MpType[]? _dataConcretes;
+    private MpType[]? _dataFinder;
+    private MpType[]? _dataValidator;
+    private MpType[]? _dataProcessor;
 
     public MemoryPackUnionResolver(
         MemoryPackSchema schema,
@@ -23,10 +29,10 @@ public sealed class MemoryPackUnionResolver
             _unionMaps[key] = new Dictionary<int, string>(tags);
     }
 
-    public bool IsTaggedUnion(string type) =>
-        LookupUnionMap(type) != null || IsHardcodedTaggedUnion(type);
+    public Dictionary<int, string>? LookupUnionMap(string staticType) =>
+        _unionMapCache.GetOrAdd(staticType, ComputeUnionMap);
 
-    public Dictionary<int, string>? LookupUnionMap(string staticType)
+    private Dictionary<int, string>? ComputeUnionMap(string staticType)
     {
         if (_unionMaps.TryGetValue(staticType, out var map))
             return map;
@@ -44,8 +50,7 @@ public sealed class MemoryPackUnionResolver
             return map;
 
         string nested = dot >= 0 ? staticType[(dot + 1)..] : staticType;
-        int plus = nested.IndexOf('+');
-        if (plus >= 0)
+        if (nested.Contains('+', StringComparison.Ordinal))
         {
             if (_unionMaps.TryGetValue(nested, out map))
                 return map;
@@ -153,28 +158,58 @@ public sealed class MemoryPackUnionResolver
 
     private MpType[] DataCandidates(string? hint)
     {
-        lock (_gate)
+        MpType[] concretes = EnsureDataRoles(out MpType[] finder, out MpType[] validator, out MpType[] processor);
+        if (string.IsNullOrEmpty(hint))
+            return concretes;
+
+        if (hint.Contains("finder", StringComparison.OrdinalIgnoreCase))
+            return finder;
+        if (hint.Contains("validator", StringComparison.OrdinalIgnoreCase))
+            return validator;
+        if (hint.Contains("postprocessor", StringComparison.OrdinalIgnoreCase)
+            || hint.Contains("processor", StringComparison.OrdinalIgnoreCase))
+            return processor;
+
+        return concretes;
+    }
+
+    private MpType[] EnsureDataRoles(out MpType[] finder, out MpType[] validator, out MpType[] processor)
+    {
+        MpType[]? concretes = Volatile.Read(ref _dataConcretes);
+        if (concretes != null)
         {
-            _dataConcretes ??= _schema.ByTarget.TryGetValue("Data", out var list)
-                ? list.Where(t => t.HasDeserialize).ToArray()
-                : [];
+            finder = _dataFinder!;
+            validator = _dataValidator!;
+            processor = _dataProcessor!;
+            return concretes;
         }
 
-        if (string.IsNullOrEmpty(hint))
-            return _dataConcretes;
+        lock (_gate)
+        {
+            if (_dataConcretes == null)
+            {
+                MpType[] all = _schema.ByTarget.TryGetValue("Data", out var list)
+                    ? list.Where(static t => t.HasDeserialize).ToArray()
+                    : [];
 
-        string? role = null;
-        if (hint.Contains("finder", StringComparison.OrdinalIgnoreCase))
-            role = "finder";
-        else if (hint.Contains("validator", StringComparison.OrdinalIgnoreCase))
-            role = "validator";
-        else if (hint.Contains("postprocessor", StringComparison.OrdinalIgnoreCase)
-            || hint.Contains("processor", StringComparison.OrdinalIgnoreCase))
-            role = "processor";
-        if (role == null)
-            return _dataConcretes;
+                MpType[] f = FilterDataRole(all, "finder");
+                MpType[] v = FilterDataRole(all, "validator");
+                MpType[] p = FilterDataRole(all, "processor");
+                _dataFinder = f.Length > 0 ? f : all;
+                _dataValidator = v.Length > 0 ? v : all;
+                _dataProcessor = p.Length > 0 ? p : all;
+                Volatile.Write(ref _dataConcretes, all);
+            }
 
-        MpType[] filtered = _dataConcretes
+            finder = _dataFinder!;
+            validator = _dataValidator!;
+            processor = _dataProcessor!;
+            return _dataConcretes;
+        }
+    }
+
+    private static MpType[] FilterDataRole(MpType[] concretes, string role) =>
+        concretes
             .Where(t =>
             {
                 string w = t.WrapperType;
@@ -193,8 +228,6 @@ public sealed class MemoryPackUnionResolver
                 };
             })
             .ToArray();
-        return filtered.Length > 0 ? filtered : _dataConcretes;
-    }
 
     private MpType[] BuildNamespaceUnion(string staticType)
     {

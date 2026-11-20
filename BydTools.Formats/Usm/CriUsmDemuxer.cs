@@ -1,8 +1,7 @@
+using System.Buffers;
 using System.Buffers.Binary;
 
 namespace BydTools.Formats.Usm;
-
-public readonly record struct UsmStream(string Extension, byte[] Data);
 
 /// <summary>
 /// Demultiplexes a CRI USM container into elementary video and audio streams.
@@ -43,13 +42,6 @@ public static class CriUsmDemuxer
 
     public delegate void UsmStreamHandler(string extension, ReadOnlySpan<byte> payload);
 
-    public static UsmStream[] Demux(ReadOnlySpan<byte> usm)
-    {
-        var output = new List<UsmStream>();
-        Demux(usm, (ext, payload) => output.Add(new UsmStream(ext, payload.ToArray())));
-        return output.ToArray();
-    }
-
     public static int Demux(ReadOnlySpan<byte> usm, UsmStreamHandler onStream)
     {
         int start = usm.IndexOf(Crid);
@@ -57,82 +49,107 @@ public static class CriUsmDemuxer
             return 0;
 
         var order = new List<uint>();
-        var streams = new Dictionary<uint, MemoryStream>();
+        var sizes = new Dictionary<uint, long>();
         int pos = start;
-        try
+        while (pos + 8 <= usm.Length)
         {
-            while (pos + 8 <= usm.Length)
+            var sig = usm.Slice(pos, 4);
+            if (!IsKnown(sig))
+                break;
+
+            uint blockSize = BinaryPrimitives.ReadUInt32BigEndian(usm.Slice(pos + 4, 4));
+            if (blockSize > int.MaxValue - 8 || pos > usm.Length - 8 - (int)blockSize)
+                break;
+
+            bool isAudio = sig.SequenceEqual(Sfa);
+            bool isVideo = sig.SequenceEqual(Sfv);
+            if (isAudio || isVideo)
             {
-                var sig = usm.Slice(pos, 4);
-                if (!IsKnown(sig))
-                    break;
+                byte streamId = isAudio && pos + 0xC < usm.Length ? usm[pos + 0xC] : (byte)0;
+                uint blockId = BinaryPrimitives.ReadUInt32LittleEndian(sig);
+                uint key = streamId | blockId;
+                if (!sizes.TryGetValue(key, out long total))
+                    order.Add(key);
 
-                uint blockSize = BinaryPrimitives.ReadUInt32BigEndian(usm.Slice(pos + 4, 4));
-                if (blockSize > int.MaxValue - 8 || pos > usm.Length - 8 - (int)blockSize)
-                    break;
+                int headerSkip = BinaryPrimitives.ReadUInt16BigEndian(usm.Slice(pos + 8, 2));
+                int footerSkip = BinaryPrimitives.ReadUInt16BigEndian(usm.Slice(pos + 0xA, 2));
+                int cut = (int)blockSize - headerSkip - footerSkip;
+                int dataStart = pos + 8 + headerSkip;
+                if (cut > 0 && dataStart >= 0 && dataStart <= usm.Length - cut)
+                    total += cut;
 
-                bool isAudio = sig.SequenceEqual(Sfa);
-                bool isVideo = sig.SequenceEqual(Sfv);
-                if (isAudio || isVideo)
-                {
-                    byte streamId = isAudio && pos + 0xC < usm.Length ? usm[pos + 0xC] : (byte)0;
-                    uint blockId = BinaryPrimitives.ReadUInt32LittleEndian(sig);
-                    uint key = streamId | blockId;
-                    if (!streams.TryGetValue(key, out var ms))
-                    {
-                        ms = new MemoryStream();
-                        streams[key] = ms;
-                        order.Add(key);
-                    }
-
-                    int headerSkip = BinaryPrimitives.ReadUInt16BigEndian(usm.Slice(pos + 8, 2));
-                    int footerSkip = BinaryPrimitives.ReadUInt16BigEndian(usm.Slice(pos + 0xA, 2));
-                    int cut = (int)blockSize - headerSkip - footerSkip;
-                    int dataStart = pos + 8 + headerSkip;
-                    if (cut > 0 && dataStart >= 0 && dataStart <= usm.Length - cut)
-                        ms.Write(usm.Slice(dataStart, cut));
-                }
-
-                pos += 8 + (int)blockSize;
+                sizes[key] = total;
             }
 
-            int emitted = 0;
-            foreach (uint key in order)
+            pos += 8 + (int)blockSize;
+        }
+
+        int endPos = pos;
+        int emitted = 0;
+        foreach (uint key in order)
+        {
+            long totalSize = sizes[key];
+            if (totalSize <= 0 || totalSize > int.MaxValue)
+                continue;
+
+            byte[] buffer = ArrayPool<byte>.Shared.Rent((int)totalSize);
+            try
             {
-                MemoryStream ms = streams[key];
-                ReadOnlySpan<byte> span = ms.TryGetBuffer(out ArraySegment<byte> seg)
-                    ? seg.AsSpan()
-                    : ms.ToArray();
+                int written = 0;
+                pos = start;
+                while (pos < endPos)
+                {
+                    var sig = usm.Slice(pos, 4);
+                    uint blockSize = BinaryPrimitives.ReadUInt32BigEndian(usm.Slice(pos + 4, 4));
+                    bool isAudio = sig.SequenceEqual(Sfa);
+                    bool isVideo = sig.SequenceEqual(Sfv);
+                    if (isAudio || isVideo)
+                    {
+                        byte streamId = isAudio && pos + 0xC < usm.Length ? usm[pos + 0xC] : (byte)0;
+                        uint blockId = BinaryPrimitives.ReadUInt32LittleEndian(sig);
+                        if ((streamId | blockId) == key)
+                        {
+                            int headerSkip = BinaryPrimitives.ReadUInt16BigEndian(usm.Slice(pos + 8, 2));
+                            int footerSkip = BinaryPrimitives.ReadUInt16BigEndian(usm.Slice(pos + 0xA, 2));
+                            int cut = (int)blockSize - headerSkip - footerSkip;
+                            int dataStart = pos + 8 + headerSkip;
+                            if (cut > 0 && dataStart >= 0 && dataStart <= usm.Length - cut)
+                            {
+                                usm.Slice(dataStart, cut).CopyTo(buffer.AsSpan(written));
+                                written += cut;
+                            }
+                        }
+                    }
+
+                    pos += 8 + (int)blockSize;
+                }
+
+                ReadOnlySpan<byte> span = buffer.AsSpan(0, written);
                 int headerEnd = span.IndexOf(HeaderEnd);
                 int metadataEnd = span.IndexOf(MetadataEnd);
-                int dataStart;
-                if (headerEnd >= 0 || metadataEnd >= 0)
-                    dataStart = Math.Max(headerEnd, metadataEnd) + MetadataEnd.Length;
-                else
-                    dataStart = 0;
+                int streamDataStart = headerEnd >= 0 || metadataEnd >= 0
+                    ? Math.Max(headerEnd, metadataEnd) + MetadataEnd.Length
+                    : 0;
 
-                if ((uint)dataStart > (uint)span.Length)
+                if ((uint)streamDataStart > (uint)span.Length)
                     continue;
 
-                int contentEnd = span[dataStart..].IndexOf(ContentsEnd);
-                int dataLength = contentEnd >= 0 ? contentEnd : span.Length - dataStart;
+                int contentEnd = span[streamDataStart..].IndexOf(ContentsEnd);
+                int dataLength = contentEnd >= 0 ? contentEnd : span.Length - streamDataStart;
                 if (dataLength <= 0)
                     continue;
 
-                ReadOnlySpan<byte> payload = span.Slice(dataStart, dataLength);
+                ReadOnlySpan<byte> payload = span.Slice(streamDataStart, dataLength);
                 onStream(DetectExtension(key, payload), payload);
                 emitted++;
-                ms.Dispose();
-                streams.Remove(key);
             }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
+            }
+        }
 
-            return emitted;
-        }
-        finally
-        {
-            foreach (var ms in streams.Values)
-                ms.Dispose();
-        }
+        return emitted;
     }
 
     private static bool IsKnown(ReadOnlySpan<byte> sig) =>

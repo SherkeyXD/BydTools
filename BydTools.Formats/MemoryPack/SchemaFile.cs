@@ -1,5 +1,5 @@
+using System.Buffers;
 using System.Buffers.Binary;
-using System.Runtime.InteropServices;
 using System.Text.Json;
 using MessagePack;
 
@@ -38,41 +38,83 @@ public static class SchemaFile
         return i < data.Length && data[i] is (byte)'{' or (byte)'[';
     }
 
-    public static T Parse<T>(
-        string path,
-        Func<JsonElement, T> fromJson,
-        MsgPackReaderFunc<T> fromMsgPack) =>
-        Parse(File.ReadAllBytes(path), fromJson, fromMsgPack);
+    public static T Parse<T>(string path, MsgPackReaderFunc<T> fromMsgPack) =>
+        Parse(File.ReadAllBytes(path), fromMsgPack);
 
-    public static T Parse<T>(
-        ReadOnlyMemory<byte> data,
-        Func<JsonElement, T> fromJson,
-        MsgPackReaderFunc<T> fromMsgPack)
+    public static T Parse<T>(ReadOnlyMemory<byte> data, MsgPackReaderFunc<T> fromMsgPack)
     {
-        if (IsJsonPayload(data.Span))
-        {
-            using var doc = JsonDocument.Parse(data);
-            return fromJson(doc.RootElement);
-        }
+        ReadOnlyMemory<byte> payload = IsJsonPayload(data.Span)
+            ? ConvertJsonToMessagePack(data)
+            : UnwrapLz4Block(data);
 
-        ReadOnlyMemory<byte> payload = UnwrapLz4Block(data);
         var reader = new MessagePackReader(payload);
         return fromMsgPack(ref reader);
+    }
+
+    private static ReadOnlyMemory<byte> ConvertJsonToMessagePack(ReadOnlyMemory<byte> jsonData)
+    {
+        using var doc = JsonDocument.Parse(jsonData);
+        var buffer = new ArrayBufferWriter<byte>();
+        var writer = new MessagePackWriter(buffer);
+        WriteJsonElement(ref writer, doc.RootElement);
+        writer.Flush();
+        return buffer.WrittenMemory;
+    }
+
+    private static void WriteJsonElement(ref MessagePackWriter writer, JsonElement element)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+            {
+                int count = 0;
+                foreach (var _ in element.EnumerateObject())
+                    count++;
+                writer.WriteMapHeader(count);
+                foreach (var prop in element.EnumerateObject())
+                {
+                    writer.Write(prop.Name);
+                    WriteJsonElement(ref writer, prop.Value);
+                }
+                break;
+            }
+            case JsonValueKind.Array:
+            {
+                int count = element.GetArrayLength();
+                writer.WriteArrayHeader(count);
+                foreach (var item in element.EnumerateArray())
+                    WriteJsonElement(ref writer, item);
+                break;
+            }
+            case JsonValueKind.String:
+                writer.Write(element.GetString());
+                break;
+            case JsonValueKind.Number:
+                if (element.TryGetInt64(out long i64))
+                    writer.Write(i64);
+                else if (element.TryGetUInt64(out ulong u64))
+                    writer.Write(u64);
+                else
+                    writer.Write(element.GetDouble());
+                break;
+            case JsonValueKind.True:
+                writer.Write(true);
+                break;
+            case JsonValueKind.False:
+                writer.Write(false);
+                break;
+            case JsonValueKind.Null:
+            case JsonValueKind.Undefined:
+            default:
+                writer.WriteNil();
+                break;
+        }
     }
 
     /// <summary>
     /// MessagePack-CSharp <c>Lz4Block</c>: ext type 99, payload is MessagePack int32 uncompressed
     /// length then an LZ4 block. Plain MessagePack is returned unchanged.
     /// </summary>
-    public static byte[] UnwrapLz4Block(byte[] data)
-    {
-        ReadOnlyMemory<byte> unwrapped = UnwrapLz4Block(data.AsMemory());
-        return MemoryMarshal.TryGetArray(unwrapped, out ArraySegment<byte> segment)
-            && ReferenceEquals(segment.Array, data)
-            ? data
-            : unwrapped.ToArray();
-    }
-
     public static ReadOnlyMemory<byte> UnwrapLz4Block(ReadOnlyMemory<byte> data)
     {
         ReadOnlySpan<byte> span = data.Span;

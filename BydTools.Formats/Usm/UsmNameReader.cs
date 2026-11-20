@@ -10,21 +10,31 @@ public static class UsmNameReader
     private const int CridSignature = 0x44495243;
     private static readonly byte[] DirStreamTag = "CRIUSF_DIR_STREAM"u8.ToArray();
 
+    public static bool TryGetHeaderLength(ReadOnlySpan<byte> header12, out int totalBytes)
+    {
+        totalBytes = 0;
+        if (header12.Length < 12)
+            return false;
+        if (BinaryPrimitives.ReadInt32LittleEndian(header12) != CridSignature)
+            return false;
+
+        int blockSize = BinaryPrimitives.ReadInt32BigEndian(header12[4..]);
+        short payloadOffset = BinaryPrimitives.ReadInt16BigEndian(header12[8..]);
+        short paddingSize = BinaryPrimitives.ReadInt16BigEndian(header12[10..]);
+        int dataLength = blockSize - paddingSize - payloadOffset;
+        if (dataLength <= 0)
+            return false;
+
+        totalBytes = 12 + dataLength;
+        return true;
+    }
+
     public static string? TryGetName(ReadOnlySpan<byte> usm)
     {
-        if (usm.Length < 12)
-            return null;
-        if (BinaryPrimitives.ReadInt32LittleEndian(usm) != CridSignature)
+        if (!TryGetHeaderLength(usm, out int totalBytes) || totalBytes > usm.Length)
             return null;
 
-        int blockSize = BinaryPrimitives.ReadInt32BigEndian(usm[4..]);
-        short payloadOffset = BinaryPrimitives.ReadInt16BigEndian(usm[8..]);
-        short paddingSize = BinaryPrimitives.ReadInt16BigEndian(usm[10..]);
-        int dataLength = blockSize - paddingSize - payloadOffset;
-        if (dataLength <= 0 || 12 + dataLength > usm.Length)
-            return null;
-
-        var buff = usm.Slice(12, dataLength);
+        var buff = usm.Slice(12, totalBytes - 12);
         int dirStreamIndex = buff.IndexOf(DirStreamTag);
         if (dirStreamIndex < 0)
             return null;

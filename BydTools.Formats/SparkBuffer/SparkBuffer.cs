@@ -1,6 +1,6 @@
+using System.Globalization;
 using System.Text.Encodings.Web;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using BydTools.Core.IO;
 
 namespace BydTools.Formats.SparkBuffer;
@@ -26,12 +26,6 @@ public enum SparkType : byte
 /// </summary>
 public static class SparkBuffer
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        WriteIndented = true,
-        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-    };
-
     private static readonly JsonWriterOptions WriterOptions = new()
     {
         Indented = true,
@@ -47,8 +41,6 @@ public static class SparkBuffer
         reader.ReadByte();
         return reader.ReadNullTerminatedUtf8();
     }
-
-    public static string ToJson(ReadOnlySpan<byte> data) => ReadObject(data).ToJsonString(JsonOptions);
 
     public static void WriteJson(ReadOnlySpan<byte> data, Stream output)
     {
@@ -80,41 +72,6 @@ public static class SparkBuffer
         writer.Flush();
     }
 
-    public static JsonObject ReadObject(ReadOnlySpan<byte> data)
-    {
-        var node = ReadNode(data);
-        return node as JsonObject
-            ?? throw new InvalidDataException("SparkBuffer root is not an object.");
-    }
-
-    private static JsonNode? ReadNode(ReadOnlySpan<byte> data)
-    {
-        var reader = new SpanReader(data);
-        var schema = new SparkSchema();
-        int typeDefOffset = reader.ReadInt32();
-        int rootDefOffset = reader.ReadInt32();
-        int dataOffset = reader.ReadInt32();
-
-        reader.Seek(typeDefOffset);
-        schema.Read(ref reader);
-
-        reader.Seek(rootDefOffset);
-        var root = ReadFieldHeader(ref reader);
-
-        reader.Seek(dataOffset);
-        return root.Type switch
-        {
-            SparkType.Bean => ReadBean(
-                ref reader,
-                schema,
-                schema.Bean(root.TypeHash),
-                pointer: false
-            ),
-            SparkType.Map => ReadMap(ref reader, schema, root),
-            _ => throw new NotSupportedException($"Unsupported root type {root.Type}"),
-        };
-    }
-
     private static Field ReadFieldHeader(ref SpanReader reader)
     {
         var field = new Field { Type = (SparkType)reader.ReadByte(), Name = reader.ReadNullTerminatedUtf8() };
@@ -144,163 +101,6 @@ public static class SparkBuffer
         return field;
     }
 
-    private static JsonObject ReadMap(ref SpanReader reader, SparkSchema schema, Field typeDef)
-    {
-        var map = new JsonObject();
-        int kvCount = reader.ReadInt32();
-        if (kvCount < 0)
-            throw new InvalidDataException("Negative SparkBuffer map size.");
-        reader.Skip(checked(kvCount * 8));
-
-        for (int i = 0; i < kvCount; i++)
-        {
-            string key = typeDef.Type2 switch
-            {
-                SparkType.String => ReadStringOffset(ref reader),
-                SparkType.Byte => reader.ReadByte().ToString(),
-                SparkType.Int => reader.ReadInt32().ToString(),
-                SparkType.Long => ReadLong(ref reader).ToString(),
-                _ => throw new NotSupportedException($"Unsupported map key type {typeDef.Type2}"),
-            };
-
-            map[key] = typeDef.Type3 switch
-            {
-                SparkType.Bean => ReadBean(ref reader, schema, schema.Bean(typeDef.TypeHash2), pointer: true),
-                SparkType.String => ReadStringOffset(ref reader),
-                SparkType.Byte => ReadByteAligned(ref reader),
-                SparkType.Int => reader.ReadInt32(),
-                SparkType.Float => reader.ReadSingle(),
-                SparkType.Enum => ReadEnumName(ref reader, schema.Enum(typeDef.TypeHash2)),
-                SparkType.Bool => ReadBool(ref reader),
-                _ => throw new NotSupportedException($"Unsupported map value type {typeDef.Type3}"),
-            };
-        }
-
-        return map;
-    }
-
-    private static JsonObject? ReadBean(ref SpanReader reader, SparkSchema schema, BeanType bean, bool pointer)
-    {
-        int? pointerOrigin = null;
-        if (pointer)
-        {
-            int beanOffset = reader.ReadInt32();
-            if (beanOffset == -1)
-                return null;
-            pointerOrigin = reader.Position;
-            reader.Seek(beanOffset);
-        }
-
-        var obj = new JsonObject();
-        for (int fieldIndex = 0; fieldIndex < bean.Fields.Length; fieldIndex++)
-        {
-            Field beanField = bean.Fields[fieldIndex];
-            int? origin = null;
-            if (beanField.Type == SparkType.Array)
-            {
-                int fieldOffset = reader.ReadInt32();
-                if (fieldOffset == -1)
-                {
-                    obj[beanField.Name] = null;
-                    continue;
-                }
-
-                origin = reader.Position;
-                reader.Seek(fieldOffset);
-            }
-
-            switch (beanField.Type)
-            {
-                case SparkType.Array:
-                    var array = new JsonArray();
-                    int itemCount = reader.ReadInt32();
-                    if (itemCount < 0)
-                        throw new InvalidDataException("Negative SparkBuffer array size.");
-                    for (int n = 0; n < itemCount; n++)
-                    {
-                        array.Add(
-                            beanField.Type2 switch
-                            {
-                                SparkType.String => JsonValue.Create(ReadStringOffset(ref reader)),
-                                SparkType.Bean => ReadBean(
-                                    ref reader,
-                                    schema,
-                                    schema.Bean(beanField.TypeHash),
-                                    pointer: true
-                                ),
-                                SparkType.Float => JsonValue.Create(reader.ReadSingle()),
-                                SparkType.Long => JsonValue.Create(ReadLong(ref reader)),
-                                SparkType.Int or SparkType.Enum => JsonValue.Create(reader.ReadInt32()),
-                                SparkType.Byte => JsonValue.Create(reader.ReadByte()),
-                                SparkType.Bool => JsonValue.Create(reader.ReadBoolean()),
-                                SparkType.Double => JsonValue.Create(ReadDouble(ref reader)),
-                                _ => throw new NotSupportedException(
-                                    $"Unsupported array type {beanField.Type2} at offset {reader.Position}"
-                                ),
-                            }
-                        );
-                    }
-
-                    obj[beanField.Name] = array;
-                    break;
-                case SparkType.Int:
-                case SparkType.Enum:
-                    obj[beanField.Name] = reader.ReadInt32();
-                    break;
-                case SparkType.Long:
-                    obj[beanField.Name] = ReadLong(ref reader);
-                    break;
-                case SparkType.Float:
-                    obj[beanField.Name] = reader.ReadSingle();
-                    break;
-                case SparkType.Double:
-                    obj[beanField.Name] = ReadDouble(ref reader);
-                    break;
-                case SparkType.String:
-                    obj[beanField.Name] = ReadStringOffset(ref reader);
-                    break;
-                case SparkType.Bean:
-                    obj[beanField.Name] = ReadBean(
-                        ref reader,
-                        schema,
-                        schema.Bean(beanField.TypeHash),
-                        pointer: true
-                    );
-                    break;
-                case SparkType.Byte:
-                    obj[beanField.Name] = reader.ReadByte();
-                    if (fieldIndex + 1 < bean.Fields.Length
-                        && bean.Fields[fieldIndex + 1].Type is not (SparkType.Bool or SparkType.Byte))
-                        reader.Align(4);
-                    break;
-                case SparkType.Bool:
-                    obj[beanField.Name] = reader.ReadBoolean();
-                    if (fieldIndex + 1 < bean.Fields.Length
-                        && bean.Fields[fieldIndex + 1].Type is not (SparkType.Bool or SparkType.Byte))
-                        reader.Align(4);
-                    break;
-                case SparkType.Map:
-                    int mapOffset = reader.ReadInt32();
-                    int mapOrigin = reader.Position;
-                    reader.Seek(mapOffset);
-                    obj[beanField.Name] = ReadMap(ref reader, schema, beanField);
-                    reader.Seek(mapOrigin);
-                    break;
-                default:
-                    throw new NotSupportedException(
-                        $"Dumping bean field type {beanField.Type} isn't supported at offset {reader.Position}"
-                    );
-            }
-
-            if (origin is not null)
-                reader.Seek(origin.Value);
-        }
-
-        if (pointerOrigin is not null)
-            reader.Seek(pointerOrigin.Value);
-        return obj;
-    }
-
     private static string ReadStringOffset(ref SpanReader reader)
     {
         int offset = reader.ReadInt32();
@@ -322,7 +122,7 @@ public static class SparkBuffer
                 return item.Name;
         }
 
-        return value.ToString();
+        return value.ToString(CultureInfo.InvariantCulture);
     }
 
     private static bool ReadBool(ref SpanReader reader)
@@ -364,9 +164,9 @@ public static class SparkBuffer
             string key = typeDef.Type2 switch
             {
                 SparkType.String => ReadStringOffset(ref reader),
-                SparkType.Byte => reader.ReadByte().ToString(),
-                SparkType.Int => reader.ReadInt32().ToString(),
-                SparkType.Long => ReadLong(ref reader).ToString(),
+                SparkType.Byte => reader.ReadByte().ToString(CultureInfo.InvariantCulture),
+                SparkType.Int => reader.ReadInt32().ToString(CultureInfo.InvariantCulture),
+                SparkType.Long => ReadLong(ref reader).ToString(CultureInfo.InvariantCulture),
                 _ => throw new NotSupportedException($"Unsupported map key type {typeDef.Type2}"),
             };
 
@@ -551,14 +351,12 @@ public static class SparkBuffer
     private sealed class BeanType
     {
         public int TypeHash;
-        public string Name = "";
         public Field[] Fields = [];
     }
 
     private sealed class EnumType
     {
         public int TypeHash;
-        public string Name = "";
         public EnumItem[] Items = [];
     }
 
@@ -614,12 +412,13 @@ public static class SparkBuffer
 
         private static EnumType ReadEnum(ref SpanReader reader)
         {
-            var enumType = new EnumType { TypeHash = reader.ReadInt32(), Name = reader.ReadNullTerminatedUtf8() };
+            int typeHash = reader.ReadInt32();
+            _ = reader.ReadNullTerminatedUtf8();
             reader.Align(4);
             int count = reader.ReadInt32();
             if (count < 0)
                 throw new InvalidDataException("Negative SparkBuffer enum size.");
-            enumType.Items = new EnumItem[count];
+            var enumType = new EnumType { TypeHash = typeHash, Items = new EnumItem[count] };
             for (int i = 0; i < count; i++)
             {
                 string name = reader.ReadNullTerminatedUtf8();
@@ -632,12 +431,13 @@ public static class SparkBuffer
 
         private static BeanType ReadBeanType(ref SpanReader reader)
         {
-            var bean = new BeanType { TypeHash = reader.ReadInt32(), Name = reader.ReadNullTerminatedUtf8() };
+            int typeHash = reader.ReadInt32();
+            _ = reader.ReadNullTerminatedUtf8();
             reader.Align(4);
             int fieldCount = reader.ReadInt32();
             if (fieldCount < 0)
                 throw new InvalidDataException("Negative SparkBuffer field count.");
-            bean.Fields = new Field[fieldCount];
+            var bean = new BeanType { TypeHash = typeHash, Fields = new Field[fieldCount] };
             for (int i = 0; i < fieldCount; i++)
             {
                 var field = new Field

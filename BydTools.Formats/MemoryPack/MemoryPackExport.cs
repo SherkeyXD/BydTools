@@ -25,7 +25,7 @@ public static class MemoryPackExport
     public static Paths Resolve(string schemaDir)
     {
         if (string.IsNullOrWhiteSpace(schemaDir))
-            throw new ArgumentException("--schema-dir cannot be empty.", nameof(schemaDir));
+            throw new ArgumentException("Schema directory cannot be empty.", nameof(schemaDir));
 
         string fullDir = Path.GetFullPath(schemaDir);
         string schema = SchemaFile.Find(fullDir, SchemasStem)

@@ -1,16 +1,14 @@
-using System.Buffers.Binary;
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.Globalization;
-using System.IO;
-using System.Linq;
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Nodes;
+using BydTools.Core.IO;
 
 namespace BydTools.Formats.MemoryPack;
 
 /// <summary>
-/// Decodes a Beyond.MemoryPack payload using <c>schemas.json</c> wire_order.
+/// Decodes a Beyond.MemoryPack payload using <c>schemas.json</c> wire_order directly to UTF-8 JSON.
 /// Object header: byte count, 255 null, 250 then int32 for wide counts.
 /// memberCount 0 with a non-empty wire yields defaults; count below wire length
 /// reads a prefix (MemoryPack versioning). Strings are StringPool int32 ids.
@@ -24,6 +22,9 @@ public sealed class MemoryPackDecoder
     private readonly BeyondStringPool? _pool;
     private readonly MemoryPackUnionResolver _unions;
     private readonly ConcurrentDictionary<string, TypePlan> _plans = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<MpType, TypePlan[]> _memberPlans = new(ReferenceEqualityComparer.Instance);
+    private readonly ConcurrentDictionary<MpType, TypePlan[]> _memorypackMemberPlans = new(ReferenceEqualityComparer.Instance);
+    private readonly ConcurrentDictionary<MpUnmanagedLayout, TypePlan[]> _unmanagedFieldPlans = new(ReferenceEqualityComparer.Instance);
 
     public MemoryPackDecoder(
         MemoryPackSchema schema,
@@ -35,99 +36,128 @@ public sealed class MemoryPackDecoder
         _unions = new MemoryPackUnionResolver(schema, unionMaps);
     }
 
+    public void WriteJson(ReadOnlySpan<byte> data, string rootType, ArrayBufferWriter<byte> output)
+    {
+        var reader = new SpanReader(data);
+        using (var writer = new Utf8JsonWriter(output, JsonDataMemoryPack.WriterOptions))
+        {
+            WriteValue(ref reader, rootType, GetPlan(rootType), hint: null, depth: 0, sandbox: false, MpCollectionEncoding.None, writer);
+            writer.Flush();
+        }
+
+        if (reader.Remaining != 0)
+        {
+            throw new InvalidDataException(
+                $"Decoded {rootType} and left {reader.Remaining} trailing byte(s) at offset {reader.Position}."
+            );
+        }
+
+        output.Write("\n"u8);
+    }
+
     private TypePlan GetPlan(string type) => _plans.GetOrAdd(type, BuildPlan);
+
+    private TypePlan[] GetMemberPlans(MpType type) =>
+        _memberPlans.GetOrAdd(type, t => BuildMemberPlans(t.Wire));
+
+    private TypePlan[] GetMemoryPackMemberPlans(MpType type) =>
+        _memorypackMemberPlans.GetOrAdd(type, t => BuildMemberPlans(t.MemorypackWire!));
+
+    private TypePlan[] GetUnmanagedFieldPlans(MpUnmanagedLayout layout) =>
+        _unmanagedFieldPlans.GetOrAdd(layout, l =>
+        {
+            var plans = new TypePlan[l.Fields.Length];
+            for (int i = 0; i < l.Fields.Length; i++)
+                plans[i] = GetPlan(l.Fields[i].Type);
+            return plans;
+        });
+
+    private TypePlan[] BuildMemberPlans(MpMember[] members)
+    {
+        var plans = new TypePlan[members.Length];
+        for (int i = 0; i < members.Length; i++)
+            plans[i] = GetPlan(members[i].Type);
+        return plans;
+    }
+
+    private static UnmanagedWrapperKind GetWrapperKind(string type)
+    {
+        if (type.StartsWith("System.Nullable`1<", StringComparison.Ordinal)
+            || type.StartsWith("System.Nullable<", StringComparison.Ordinal))
+            return UnmanagedWrapperKind.Nullable;
+        if (type.StartsWith("Beyond.Optional`1<", StringComparison.Ordinal)
+            || type.StartsWith("Beyond.Optional<", StringComparison.Ordinal))
+            return UnmanagedWrapperKind.Optional;
+        return UnmanagedWrapperKind.None;
+    }
+
+    private static (int FlagIndex, int ValueIndex) FindWrapperFieldIndices(
+        MpUnmanagedLayout? layout,
+        UnmanagedWrapperKind kind)
+    {
+        if (layout == null || kind == UnmanagedWrapperKind.None)
+            return (-1, -1);
+
+        string flagName = kind == UnmanagedWrapperKind.Nullable ? "hasValue" : "enabled";
+        int flagIndex = -1;
+        int valueIndex = -1;
+        for (int i = 0; i < layout.Fields.Length; i++)
+        {
+            string name = layout.Fields[i].Name;
+            if (name == flagName)
+                flagIndex = i;
+            else if (kind == UnmanagedWrapperKind.Nullable && name == "value")
+                valueIndex = i;
+        }
+
+        return (flagIndex, valueIndex);
+    }
 
     private TypePlan BuildPlan(string type)
     {
-        bool isOptional = type.StartsWith("Beyond.Optional`1<", StringComparison.Ordinal)
-            || type.StartsWith("Beyond.Optional<", StringComparison.Ordinal);
+        UnmanagedWrapperKind wrapperKind = GetWrapperKind(type);
+        bool isOptional = wrapperKind == UnmanagedWrapperKind.Optional;
 
         _schema.TryUnmanaged(type, out MpUnmanagedLayout? unmanaged);
-        MpType? formatterType = null;
-        if (unmanaged != null && _schema.HasWrapper(type))
-        {
-            try
-            {
-                formatterType = _schema.ResolveNamed(type);
-            }
-            catch (MemoryPackTypeException)
-            {
-            }
-        }
-
         if (isOptional)
         {
-            MpType? optionalResolved = null;
-            if (_schema.TryResolve(type, hint: null, out MpType? opt, out _))
-                optionalResolved = opt;
-            return new TypePlan
-            {
-                IsOptional = true,
-                Unmanaged = unmanaged,
-                UnmanagedFormatterType = formatterType,
-                ResolvedObject = optionalResolved,
-            };
+            _schema.TryResolve(type, hint: null, out MpType? opt, out _);
+            (int flagIdx, int valIdx) = FindWrapperFieldIndices(unmanaged, wrapperKind);
+            return new OptionalPlan(unmanaged, opt, wrapperKind, flagIdx, valIdx);
         }
 
         if (unmanaged != null)
         {
-            return new TypePlan
-            {
-                Unmanaged = unmanaged,
-                UnmanagedFormatterType = formatterType,
-            };
+            MpType? formatterType = null;
+            if (_schema.HasWrapper(type))
+                _schema.TryResolveNamed(type, out formatterType);
+            (int flagIdx, int valIdx) = FindWrapperFieldIndices(unmanaged, wrapperKind);
+            return new UnmanagedPlan(unmanaged, formatterType, wrapperKind, flagIdx, valIdx);
         }
 
         Dictionary<int, string>? unionMap = _unions.LookupUnionMap(type);
-        bool isTaggedUnion = unionMap != null || MemoryPackUnionResolver.IsHardcodedTaggedUnion(type);
-        if (isTaggedUnion)
-        {
-            return new TypePlan
-            {
-                IsTaggedUnion = true,
-                DirectUnionMap = unionMap,
-            };
-        }
+        if (unionMap != null || MemoryPackUnionResolver.IsHardcodedTaggedUnion(type))
+            return new TaggedUnionPlan(unionMap);
 
         if (_schema.TryPolymorphicBase(type, out MpType? polyBase, out MpType[] polyDerived)
             && polyBase != null)
-        {
-            return new TypePlan
-            {
-                PolyBase = polyBase,
-                PolyDerived = polyDerived,
-            };
-        }
+            return new PolymorphicPlan(polyDerived);
 
-        MpKind? kind = null;
-        string? kindError = null;
+        MpKind kind;
         try
         {
             kind = _schema.KindOf(type);
         }
         catch (MemoryPackTypeException ex)
         {
-            kindError = ex.Message;
+            return new ErrorPlan(ex.Message);
         }
 
-        if (kind == null)
-        {
-            return new TypePlan
-            {
-                KindError = kindError,
-            };
-        }
-
-        switch (kind.Value)
+        switch (kind)
         {
             case MpKind.Enum:
                 _schema.TryEnumWidth(type, out byte width);
-                return new TypePlan
-                {
-                    Kind = MpKind.Enum,
-                    EnumWidth = width,
-                    EnumLeafWidth = InferEnumLeafWidth(type),
-                };
+                return new EnumPlan(width, InferEnumLeafWidth(type));
 
             case MpKind.List:
             {
@@ -135,23 +165,9 @@ public sealed class MemoryPackDecoder
                 _schema.TryUnmanaged(elem, out MpUnmanagedLayout? elemLayout);
                 MpType? elemFormatter = null;
                 if (elemLayout != null && _schema.HasWrapper(elem))
-                {
-                    try
-                    {
-                        elemFormatter = _schema.ResolveNamed(elem);
-                    }
-                    catch (MemoryPackTypeException)
-                    {
-                    }
-                }
+                    _schema.TryResolveNamed(elem, out elemFormatter);
 
-                return new TypePlan
-                {
-                    Kind = MpKind.List,
-                    ElementType = elem,
-                    ElementUnmanaged = elemLayout,
-                    ElementFormatterType = elemFormatter,
-                };
+                return new ListPlan(elem, elemLayout, elemFormatter);
             }
 
             case MpKind.Dictionary:
@@ -170,7 +186,7 @@ public sealed class MemoryPackDecoder
                 {
                     valKind = _schema.KindOf(valueType);
                     if (valKind == MpKind.Object)
-                        valObj = _schema.ResolveNamed(valueType);
+                        _schema.TryResolveNamed(valueType, out valObj);
                 }
                 catch (MemoryPackTypeException)
                 {
@@ -179,342 +195,514 @@ public sealed class MemoryPackDecoder
                 _schema.TryUnmanaged(valueType, out MpUnmanagedLayout? valUnmanaged);
                 MpType? valFormatter = null;
                 if (valUnmanaged != null && _schema.HasWrapper(valueType))
-                {
-                    try
-                    {
-                        valFormatter = _schema.ResolveNamed(valueType);
-                    }
-                    catch (MemoryPackTypeException)
-                    {
-                    }
-                }
+                    _schema.TryResolveNamed(valueType, out valFormatter);
 
-                return new TypePlan
-                {
-                    Kind = kind.Value,
-                    DictKeyType = keyType,
-                    DictValueType = valueType,
-                    DictObjectKeys = objectKeys,
-                    DictPadPairs = padPairs,
-                    DictMidPad = midPad,
-                    DictEndPad = endPad,
-                    DictValueIsObject = valKind == MpKind.Object,
-                    DictValueObject = valObj,
-                    DictValueUnmanaged = valUnmanaged,
-                    DictValueFormatterType = valFormatter,
-                };
+                return new DictionaryPlan(
+                    IsV2: kind == MpKind.DictionaryV2,
+                    keyType,
+                    valueType,
+                    objectKeys,
+                    padPairs,
+                    midPad,
+                    endPad,
+                    valKind == MpKind.Object,
+                    valObj,
+                    valUnmanaged,
+                    valFormatter
+                );
             }
 
             case MpKind.Nullable:
-                return new TypePlan
-                {
-                    Kind = MpKind.Nullable,
-                    ElementType = InnerType(type),
-                };
+                return new NullablePlan(InnerType(type));
 
             case MpKind.Object:
-            {
-                MpType? resolved = null;
-                string? resolveError = null;
-                try
-                {
-                    resolved = _schema.ResolveNamed(type);
-                }
-                catch (MemoryPackTypeException ex)
-                {
-                    resolveError = ex.Message;
-                }
-
-                return new TypePlan
-                {
-                    Kind = MpKind.Object,
-                    ResolvedObject = resolved,
-                    KindError = resolveError,
-                };
-            }
+                return _schema.TryResolveNamed(type, out MpType? resolved)
+                    ? new ObjectPlan(resolved, null)
+                    : new ObjectPlan(null, GetResolveError(type));
 
             default:
-                return new TypePlan { Kind = kind.Value };
+                return new PrimitivePlan(kind);
         }
     }
 
-    private bool TryMappedConcrete(string staticType, TypePlan plan, int tag, string? hint, out MpType concrete) =>
-        _unions.TryMappedConcrete(staticType, plan.DirectUnionMap, tag, hint, out concrete);
-
-    public JsonNode? Decode(ReadOnlySpan<byte> data, string rootType)
+    private string? GetResolveError(string type)
     {
-        var cursor = new Cursor(data);
-        JsonNode? node = ReadValue(ref cursor, rootType, hint: null, depth: 0, sandbox: false);
-        if (cursor.Remaining != 0)
-        {
-            throw new InvalidDataException(
-                $"Decoded {rootType} and left {cursor.Remaining} trailing byte(s) at offset {cursor.Position}."
-            );
-        }
-
-        return node;
+        _schema.TryResolve(type, hint: null, out _, out string? error);
+        return error;
     }
 
-    public string ToJson(ReadOnlySpan<byte> data, string rootType)
-    {
-        JsonNode? node = Decode(data, rootType);
-        return (node?.ToJsonString(JsonDataMemoryPack.JsonOptions) ?? "null") + "\n";
-    }
-
-    public void WriteJson(ReadOnlySpan<byte> data, string rootType, Stream output)
-    {
-        JsonNode? node = Decode(data, rootType);
-        if (node == null)
-        {
-            output.Write("null\n"u8);
-            return;
-        }
-
-        using var writer = new Utf8JsonWriter(output, JsonDataMemoryPack.WriterOptions);
-        node.WriteTo(writer, JsonDataMemoryPack.JsonOptions);
-        writer.Flush();
-        output.Write("\n"u8);
-    }
-
-    private JsonNode? ReadValue(
-        ref Cursor cursor,
+    private void WriteValue(
+        ref SpanReader reader,
         string type,
+        TypePlan plan,
         string? hint,
         int depth,
         bool sandbox,
-        string? collectionEncoding = null)
+        MpCollectionEncoding collectionEncoding,
+        Utf8JsonWriter? writer)
     {
         if (depth > 64)
-            throw new InvalidDataException($"MemoryPack nesting is deeper than 64 at offset {cursor.Position}.");
+            throw new InvalidDataException($"MemoryPack nesting is deeper than 64 at offset {reader.Position}.");
 
-        TypePlan plan = GetPlan(type);
-        if (plan.IsOptional)
+        if (plan is OptionalPlan optionalPlan)
         {
-            if (collectionEncoding == "memcpy" && plan.Unmanaged != null)
+            if (collectionEncoding == MpCollectionEncoding.Memcpy && optionalPlan.Unmanaged != null)
             {
-                return UnwrapUnmanagedNullable(
-                    type, ReadUnmanaged(ref cursor, plan.Unmanaged, depth, sandbox));
+                WriteUnmanaged(
+                    ref reader,
+                    optionalPlan.Unmanaged,
+                    optionalPlan.WrapperKind,
+                    optionalPlan.FlagFieldIndex,
+                    optionalPlan.ValueFieldIndex,
+                    depth,
+                    sandbox,
+                    writer);
+                return;
             }
 
-            return ReadBeyondOptional(ref cursor, type, plan, depth, sandbox);
+            WriteBeyondOptional(ref reader, type, optionalPlan, depth, sandbox, writer);
+            return;
         }
 
-        if (plan.Unmanaged != null)
+        if (plan is UnmanagedPlan unmanagedPlan)
         {
-            bool wantFormatter = collectionEncoding == "formatter";
-            if (wantFormatter
-                && TryReadUnmanagedFormatter(ref cursor, plan.UnmanagedFormatterType, depth, sandbox, out JsonNode? formatted)
-                && formatted != null)
-            {
-                return UnwrapUnmanagedNullable(type, formatted);
-            }
+            if (collectionEncoding == MpCollectionEncoding.Formatter
+                && TryWriteUnmanagedFormatter(ref reader, unmanagedPlan.FormatterType, unmanagedPlan.WrapperKind, depth, sandbox, writer))
+                return;
 
-            JsonNode blob = ReadUnmanaged(ref cursor, plan.Unmanaged, depth, sandbox);
-            return UnwrapUnmanagedNullable(type, blob);
+            WriteUnmanaged(
+                ref reader,
+                unmanagedPlan.Layout,
+                unmanagedPlan.WrapperKind,
+                unmanagedPlan.FlagFieldIndex,
+                unmanagedPlan.ValueFieldIndex,
+                depth,
+                sandbox,
+                writer);
+            return;
         }
 
-        if (collectionEncoding == "memorypack")
-            return ReadMemoryPackValue(ref cursor, type, depth, sandbox);
-        if (plan.IsTaggedUnion)
-            return ReadTaggedUnion(ref cursor, type, plan, hint, depth, sandbox);
-        if (plan.PolyBase != null
-            && TryReadPolymorphic(ref cursor, plan.PolyBase, plan.PolyDerived!, depth, sandbox, out JsonNode? poly))
-            return poly;
+        if (collectionEncoding == MpCollectionEncoding.Memorypack)
+        {
+            WriteMemoryPackValue(ref reader, type, depth, sandbox, writer);
+            return;
+        }
 
-        if (plan.Kind is not MpKind kind)
-            throw new MemoryPackTypeException(plan.KindError ?? $"No MemoryPack rule for \"{type}\".");
+        if (plan is TaggedUnionPlan unionPlan)
+        {
+            WriteTaggedUnion(ref reader, type, unionPlan, hint, depth, sandbox, writer);
+            return;
+        }
 
+        if (plan is PolymorphicPlan polyPlan
+            && TryWritePolymorphic(ref reader, polyPlan, depth, sandbox, writer))
+            return;
+
+        switch (plan)
+        {
+            case ErrorPlan errorPlan:
+                throw new MemoryPackTypeException(errorPlan.Message ?? $"No MemoryPack rule for \"{type}\".");
+            case EnumPlan enumPlan:
+            {
+                int val = ReadEnum(ref reader, enumPlan);
+                writer?.WriteNumberValue(val);
+                break;
+            }
+            case ListPlan listPlan:
+                WriteList(ref reader, listPlan, hint, depth, sandbox, collectionEncoding, writer);
+                break;
+            case DictionaryPlan dictPlan:
+                WriteDictionary(ref reader, dictPlan, depth, sandbox, writer);
+                break;
+            case NullablePlan nullablePlan:
+                WriteNullable(ref reader, nullablePlan, depth, sandbox, writer);
+                break;
+            case ObjectPlan objectPlan:
+            {
+                MpType resolved = objectPlan.ResolvedObject
+                    ?? throw new MemoryPackTypeException(objectPlan.Error ?? $"No MemoryPack schema for {type}.");
+                WriteObject(ref reader, resolved, extraType: null, extraTag: null, depth, sandbox, writer);
+                break;
+            }
+            case PrimitivePlan primitivePlan:
+                WritePrimitive(ref reader, primitivePlan.Kind, collectionEncoding, writer);
+                break;
+            default:
+                throw new MemoryPackTypeException($"No MemoryPack rule for \"{type}\".");
+        }
+    }
+
+    private void WritePrimitive(
+        ref SpanReader reader,
+        MpKind kind,
+        MpCollectionEncoding collectionEncoding,
+        Utf8JsonWriter? writer)
+    {
         switch (kind)
         {
             case MpKind.Bool:
-                byte flag = cursor.U8();
-                if (flag > 1)
-                    throw new InvalidDataException($"Boolean {flag} at offset {cursor.Position - 1}.");
-                return JsonValue.Create(flag != 0);
-            case MpKind.Int8:
-                return JsonValue.Create((sbyte)cursor.U8());
-            case MpKind.UInt8:
-                return JsonValue.Create((int)cursor.U8());
-            case MpKind.Int16:
-                return JsonValue.Create((short)cursor.U16());
-            case MpKind.UInt16:
-                return JsonValue.Create((int)cursor.U16());
-            case MpKind.Int32:
-                return JsonValue.Create(cursor.I32());
-            case MpKind.UInt32:
-                return JsonValue.Create(cursor.U32());
-            case MpKind.Enum:
-                return JsonValue.Create(ReadEnum(ref cursor, plan));
-            case MpKind.Int64:
-                return JsonValue.Create(cursor.I64());
-            case MpKind.UInt64:
-                return JsonValue.Create(cursor.U64());
-            case MpKind.Float32:
-                return JsonValue.Create(cursor.F32());
-            case MpKind.Float64:
-                return JsonValue.Create(cursor.F64());
-            case MpKind.String:
-                return collectionEncoding == "utf8" ? ReadMemoryPackString(ref cursor) : ReadString(ref cursor);
-            case MpKind.Vector2:
-                return Vec(cursor.F32(), cursor.F32());
-            case MpKind.Vector3:
-                return Vec(cursor.F32(), cursor.F32(), cursor.F32());
-            case MpKind.Vector4:
-                return Vec(cursor.F32(), cursor.F32(), cursor.F32(), cursor.F32());
-            case MpKind.Vector2Int:
-                return Vec(cursor.I32(), cursor.I32());
-            case MpKind.Vector3Int:
-                return Vec(cursor.I32(), cursor.I32(), cursor.I32());
-            case MpKind.List:
-                return ReadList(ref cursor, plan, hint, depth, sandbox, collectionEncoding);
-            case MpKind.Dictionary:
-                return ReadDictionary(ref cursor, plan, depth, sandbox, v2: false);
-            case MpKind.DictionaryV2:
-                return ReadDictionary(ref cursor, plan, depth, sandbox, v2: true);
-            case MpKind.Nullable:
-                return ReadNullable(ref cursor, plan.ElementType!, depth, sandbox);
-            case MpKind.AnimationCurve:
-                return ReadUnityAnimationCurve(ref cursor);
-            default:
             {
-                MpType resolved = plan.ResolvedObject
-                    ?? throw new MemoryPackTypeException(plan.KindError ?? $"No MemoryPack schema for {type}.");
-                return ReadObject(ref cursor, resolved, depth, sandbox);
+                byte flag = reader.ReadByte();
+                if (flag > 1)
+                    throw new InvalidDataException($"Boolean {flag} at offset {reader.Position - 1}.");
+                writer?.WriteBooleanValue(flag != 0);
+                break;
             }
+            case MpKind.Int8:
+            {
+                sbyte v = (sbyte)reader.ReadByte();
+                writer?.WriteNumberValue(v);
+                break;
+            }
+            case MpKind.UInt8:
+            {
+                int v = reader.ReadByte();
+                writer?.WriteNumberValue(v);
+                break;
+            }
+            case MpKind.Int16:
+            {
+                short v = reader.ReadInt16();
+                writer?.WriteNumberValue(v);
+                break;
+            }
+            case MpKind.UInt16:
+            {
+                int v = reader.ReadUInt16();
+                writer?.WriteNumberValue(v);
+                break;
+            }
+            case MpKind.Int32:
+            {
+                int v = reader.ReadInt32();
+                writer?.WriteNumberValue(v);
+                break;
+            }
+            case MpKind.UInt32:
+            {
+                uint v = reader.ReadUInt32();
+                writer?.WriteNumberValue(v);
+                break;
+            }
+            case MpKind.Int64:
+            {
+                long v = reader.ReadInt64();
+                writer?.WriteNumberValue(v);
+                break;
+            }
+            case MpKind.UInt64:
+            {
+                ulong v = reader.ReadUInt64();
+                writer?.WriteNumberValue(v);
+                break;
+            }
+            case MpKind.Float32:
+            {
+                float v = reader.ReadSingle();
+                if (writer != null)
+                    WriteSingle(writer, v);
+                break;
+            }
+            case MpKind.Float64:
+            {
+                double v = reader.ReadDouble();
+                if (writer != null)
+                    WriteDouble(writer, v);
+                break;
+            }
+            case MpKind.String:
+            {
+                string? s = collectionEncoding == MpCollectionEncoding.Utf8
+                    ? ReadMemoryPackString(ref reader)
+                    : ReadString(ref reader);
+                if (writer != null)
+                {
+                    if (s == null)
+                        writer.WriteNullValue();
+                    else
+                        writer.WriteStringValue(s);
+                }
+                break;
+            }
+            case MpKind.Vector2:
+                WriteVec(writer, reader.ReadSingle(), reader.ReadSingle());
+                break;
+            case MpKind.Vector3:
+                WriteVec(writer, reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
+                break;
+            case MpKind.Vector4:
+                WriteVec(writer, reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
+                break;
+            case MpKind.Vector2Int:
+                WriteVecInt(writer, reader.ReadInt32(), reader.ReadInt32());
+                break;
+            case MpKind.Vector3Int:
+                WriteVecInt(writer, reader.ReadInt32(), reader.ReadInt32(), reader.ReadInt32());
+                break;
+            case MpKind.AnimationCurve:
+                WriteUnityAnimationCurve(ref reader, writer);
+                break;
+            default:
+                throw new MemoryPackTypeException($"Unexpected primitive kind {kind}.");
         }
     }
 
-    /// <summary>
-    /// Valuetype memcpy payload from schema <c>unmanaged.json</c>. No object header.
-    /// Field offsets include padding; the cursor always consumes <see cref="MpUnmanagedLayout.PayloadSize"/>.
-    /// </summary>
-    private JsonNode ReadUnmanaged(ref Cursor cursor, MpUnmanagedLayout layout, int depth, bool sandbox)
+    private void WriteUnmanaged(
+        ref SpanReader reader,
+        MpUnmanagedLayout layout,
+        UnmanagedWrapperKind wrapperKind,
+        int flagFieldIndex,
+        int valueFieldIndex,
+        int depth,
+        bool sandbox,
+        Utf8JsonWriter? writer)
     {
-        if (cursor.Remaining < layout.PayloadSize)
+        if (reader.Remaining < layout.PayloadSize)
         {
             throw new InvalidDataException(
-                $"{layout.TypeName} needs {layout.PayloadSize} bytes at offset {cursor.Position}, have {cursor.Remaining}."
+                $"{layout.TypeName} needs {layout.PayloadSize} bytes at offset {reader.Position}, have {reader.Remaining}."
             );
         }
 
-        int origin = cursor.Position;
-        var obj = new JsonObject();
-        foreach (MpUnmanagedField field in layout.Fields.OrderBy(f => f.Offset))
+        int origin = reader.Position;
+        MpUnmanagedField[] fields = layout.Fields;
+        TypePlan[] fieldPlans = GetUnmanagedFieldPlans(layout);
+
+        if (wrapperKind != UnmanagedWrapperKind.None && flagFieldIndex >= 0)
         {
-            cursor.Position = origin + field.Offset;
-            obj[field.Name] = ReadUnmanagedField(ref cursor, field, depth, sandbox);
-        }
-
-        cursor.Position = origin + layout.PayloadSize;
-        return obj;
-    }
-
-    private static JsonNode? UnwrapUnmanagedNullable(string type, JsonNode blob)
-    {
-        bool nullable = type.StartsWith("System.Nullable`1<", StringComparison.Ordinal)
-            || type.StartsWith("System.Nullable<", StringComparison.Ordinal);
-        bool optional = type.StartsWith("Beyond.Optional`1<", StringComparison.Ordinal)
-            || type.StartsWith("Beyond.Optional<", StringComparison.Ordinal);
-        if (!nullable && !optional)
-            return blob;
-        if (blob is not JsonObject obj)
-            return blob;
-        string flagName = nullable ? "hasValue" : "enabled";
-        if (obj[flagName] is JsonValue flag && flag.TryGetValue(out bool has) && !has)
-            return null;
-        if (nullable)
-        {
-            JsonNode? value = obj["value"];
-            if (value != null)
-                obj.Remove("value");
-            return value ?? blob;
-        }
-        return blob;
-    }
-
-    private JsonNode? ReadUnmanagedField(ref Cursor cursor, MpUnmanagedField field, int depth, bool sandbox)
-    {
-        TypePlan fieldPlan = GetPlan(field.Type);
-        if (fieldPlan.Unmanaged != null)
-            return ReadUnmanaged(ref cursor, fieldPlan.Unmanaged, depth + 1, sandbox);
-
-        int size = field.Size ?? 0;
-        if (fieldPlan.Kind is MpKind kind)
-        {
-            switch (kind)
+            MpUnmanagedField flagField = fields[flagFieldIndex];
+            reader.Position = origin + flagField.Offset;
+            bool hasFlag = ReadUnmanagedBool(ref reader);
+            if (!hasFlag)
             {
-                case MpKind.Bool:
-                    return JsonValue.Create(cursor.U8() != 0);
-                case MpKind.Float32:
-                    return JsonValue.Create(cursor.F32());
-                case MpKind.Float64:
-                    return JsonValue.Create(cursor.F64());
-                case MpKind.Int64:
-                    return JsonValue.Create(cursor.I64());
-                case MpKind.UInt64:
-                    return JsonValue.Create(cursor.U64());
-                case MpKind.UInt32:
-                    return JsonValue.Create(cursor.U32());
-                case MpKind.Int32:
-                    return JsonValue.Create(cursor.I32());
-                case MpKind.Vector2:
-                    return Vec(cursor.F32(), cursor.F32());
-                case MpKind.Vector3:
-                    return Vec(cursor.F32(), cursor.F32(), cursor.F32());
-                case MpKind.Vector4:
-                    return Vec(cursor.F32(), cursor.F32(), cursor.F32(), cursor.F32());
-                case MpKind.Vector2Int:
-                    return Vec(cursor.I32(), cursor.I32());
-                case MpKind.Vector3Int:
-                    return Vec(cursor.I32(), cursor.I32(), cursor.I32());
-                case MpKind.Enum:
-                    return JsonValue.Create(ReadEnumWidth(ref cursor, fieldPlan, size));
+                reader.Position = origin + layout.PayloadSize;
+                writer?.WriteNullValue();
+                return;
+            }
+
+            if (wrapperKind == UnmanagedWrapperKind.Nullable && valueFieldIndex >= 0)
+            {
+                MpUnmanagedField valueField = fields[valueFieldIndex];
+                reader.Position = origin + valueField.Offset;
+                WriteUnmanagedField(ref reader, valueField, fieldPlans[valueFieldIndex], depth, sandbox, writer);
+                reader.Position = origin + layout.PayloadSize;
+                return;
             }
         }
 
-        return field.Type switch
+        writer?.WriteStartObject();
+        for (int i = 0; i < fields.Length; i++)
         {
-            "bool" or "System.Boolean" => JsonValue.Create(cursor.U8() != 0),
-            "float" or "System.Single" => JsonValue.Create(cursor.F32()),
-            "double" or "System.Double" => JsonValue.Create(cursor.F64()),
-            "long" or "System.Int64" => JsonValue.Create(cursor.I64()),
-            "ulong" or "System.UInt64" => JsonValue.Create(cursor.U64()),
-            "uint" or "System.UInt32" => JsonValue.Create(cursor.U32()),
-            "int" or "System.Int32" => JsonValue.Create(cursor.I32()),
-            _ => size switch
-            {
-                1 => JsonValue.Create((int)cursor.U8()),
-                2 => JsonValue.Create((short)cursor.U16()),
-                8 => JsonValue.Create(cursor.I64()),
-                _ => JsonValue.Create(cursor.I32()),
-            },
-        };
+            MpUnmanagedField field = fields[i];
+            reader.Position = origin + field.Offset;
+            writer?.WritePropertyName(field.Name);
+            WriteUnmanagedField(ref reader, field, fieldPlans[i], depth, sandbox, writer);
+        }
+
+        writer?.WriteEndObject();
+        reader.Position = origin + layout.PayloadSize;
     }
 
-    private static int ReadEnumWidth(ref Cursor cursor, TypePlan plan, int size)
+    private static bool ReadUnmanagedBool(ref SpanReader reader) =>
+        reader.ReadByte() != 0;
+
+    private void WriteUnmanagedField(
+        ref SpanReader reader,
+        MpUnmanagedField field,
+        TypePlan fieldPlan,
+        int depth,
+        bool sandbox,
+        Utf8JsonWriter? writer)
+    {
+        if (fieldPlan is UnmanagedPlan unmanagedFieldPlan)
+        {
+            WriteUnmanaged(
+                ref reader,
+                unmanagedFieldPlan.Layout,
+                unmanagedFieldPlan.WrapperKind,
+                unmanagedFieldPlan.FlagFieldIndex,
+                unmanagedFieldPlan.ValueFieldIndex,
+                depth + 1,
+                sandbox,
+                writer);
+            return;
+        }
+
+        int size = field.Size ?? 0;
+        if (fieldPlan is EnumPlan enumPlan)
+        {
+            int val = ReadEnumWidth(ref reader, enumPlan, size);
+            writer?.WriteNumberValue(val);
+            return;
+        }
+
+        if (fieldPlan is PrimitivePlan primitivePlan)
+        {
+            switch (primitivePlan.Kind)
+            {
+                case MpKind.Bool:
+                {
+                    bool v = reader.ReadByte() != 0;
+                    writer?.WriteBooleanValue(v);
+                    return;
+                }
+                case MpKind.Float32:
+                {
+                    float v = reader.ReadSingle();
+                    if (writer != null)
+                        WriteSingle(writer, v);
+                    return;
+                }
+                case MpKind.Float64:
+                {
+                    double v = reader.ReadDouble();
+                    if (writer != null)
+                        WriteDouble(writer, v);
+                    return;
+                }
+                case MpKind.Int64:
+                {
+                    long v = reader.ReadInt64();
+                    writer?.WriteNumberValue(v);
+                    return;
+                }
+                case MpKind.UInt64:
+                {
+                    ulong v = reader.ReadUInt64();
+                    writer?.WriteNumberValue(v);
+                    return;
+                }
+                case MpKind.UInt32:
+                {
+                    uint v = reader.ReadUInt32();
+                    writer?.WriteNumberValue(v);
+                    return;
+                }
+                case MpKind.Int32:
+                {
+                    int v = reader.ReadInt32();
+                    writer?.WriteNumberValue(v);
+                    return;
+                }
+                case MpKind.Vector2:
+                    WriteVec(writer, reader.ReadSingle(), reader.ReadSingle());
+                    return;
+                case MpKind.Vector3:
+                    WriteVec(writer, reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
+                    return;
+                case MpKind.Vector4:
+                    WriteVec(writer, reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
+                    return;
+                case MpKind.Vector2Int:
+                    WriteVecInt(writer, reader.ReadInt32(), reader.ReadInt32());
+                    return;
+                case MpKind.Vector3Int:
+                    WriteVecInt(writer, reader.ReadInt32(), reader.ReadInt32(), reader.ReadInt32());
+                    return;
+            }
+        }
+
+        switch (field.Type)
+        {
+            case "bool" or "System.Boolean":
+            {
+                bool v = reader.ReadByte() != 0;
+                writer?.WriteBooleanValue(v);
+                return;
+            }
+            case "float" or "System.Single":
+            {
+                float v = reader.ReadSingle();
+                if (writer != null)
+                    WriteSingle(writer, v);
+                return;
+            }
+            case "double" or "System.Double":
+            {
+                double v = reader.ReadDouble();
+                if (writer != null)
+                    WriteDouble(writer, v);
+                return;
+            }
+            case "long" or "System.Int64":
+            {
+                long v = reader.ReadInt64();
+                writer?.WriteNumberValue(v);
+                return;
+            }
+            case "ulong" or "System.UInt64":
+            {
+                ulong v = reader.ReadUInt64();
+                writer?.WriteNumberValue(v);
+                return;
+            }
+            case "uint" or "System.UInt32":
+            {
+                uint v = reader.ReadUInt32();
+                writer?.WriteNumberValue(v);
+                return;
+            }
+            case "int" or "System.Int32":
+            {
+                int v = reader.ReadInt32();
+                writer?.WriteNumberValue(v);
+                return;
+            }
+            default:
+                switch (size)
+                {
+                    case 1:
+                    {
+                        int v = reader.ReadByte();
+                        writer?.WriteNumberValue(v);
+                        return;
+                    }
+                    case 2:
+                    {
+                        short v = reader.ReadInt16();
+                        writer?.WriteNumberValue(v);
+                        return;
+                    }
+                    case 8:
+                    {
+                        long v = reader.ReadInt64();
+                        writer?.WriteNumberValue(v);
+                        return;
+                    }
+                    default:
+                    {
+                        int v = reader.ReadInt32();
+                        writer?.WriteNumberValue(v);
+                        return;
+                    }
+                }
+        }
+    }
+
+    private static int ReadEnumWidth(ref SpanReader reader, EnumPlan plan, int size)
     {
         if (size is 1 or 2 or 8)
         {
             return size switch
             {
-                1 => cursor.U8(),
-                2 => (short)cursor.U16(),
-                _ => (int)cursor.I64(),
+                1 => reader.ReadByte(),
+                2 => reader.ReadInt16(),
+                _ => (int)reader.ReadInt64(),
             };
         }
 
-        return ReadEnum(ref cursor, plan);
+        return ReadEnum(ref reader, plan);
     }
 
-    private static int ReadEnum(ref Cursor cursor, TypePlan plan)
+    private static int ReadEnum(ref SpanReader reader, EnumPlan plan)
     {
-        byte width = plan.EnumWidth != 0 ? plan.EnumWidth : plan.EnumLeafWidth;
+        byte width = plan.Width != 0 ? plan.Width : plan.LeafWidth;
         return width switch
         {
-            1 => cursor.U8(),
-            2 => (short)cursor.U16(),
-            8 => (int)cursor.I64(),
-            _ => cursor.I32(),
+            1 => reader.ReadByte(),
+            2 => reader.ReadInt16(),
+            8 => (int)reader.ReadInt64(),
+            _ => reader.ReadInt32(),
         };
     }
 
@@ -529,20 +717,29 @@ public sealed class MemoryPackDecoder
         return 4;
     }
 
-    private static JsonNode? ReadUnityAnimationCurve(ref Cursor cursor)
+    private static void WriteUnityAnimationCurve(ref SpanReader reader, Utf8JsonWriter? writer)
     {
-        int origin = cursor.Position;
-        int? count = ReadHeader(ref cursor);
+        int origin = reader.Position;
+        int? count = ReadHeader(ref reader);
         if (count == null)
-            return null;
+        {
+            writer?.WriteNullValue();
+            return;
+        }
+
         if (count == 0)
         {
-            return new JsonObject
+            if (writer != null)
             {
-                ["_type"] = "AnimationCurve",
-                ["_skipped"] = true,
-            };
+                writer.WriteStartObject();
+                writer.WriteString("_type", "AnimationCurve");
+                writer.WriteBoolean("_skipped", true);
+                writer.WriteEndObject();
+            }
+
+            return;
         }
+
         if (count != 3)
         {
             throw new InvalidDataException(
@@ -550,57 +747,85 @@ public sealed class MemoryPackDecoder
             );
         }
 
-        int preWrapMode = cursor.I32();
-        int postWrapMode = cursor.I32();
-        int keyCount = cursor.I32();
-        JsonNode? keys;
+        int preWrapMode = reader.ReadInt32();
+        int postWrapMode = reader.ReadInt32();
+        int keyCount = reader.ReadInt32();
+
+        if (writer != null)
+        {
+            writer.WriteStartObject();
+            writer.WriteNumber("preWrapMode", preWrapMode);
+            writer.WriteNumber("postWrapMode", postWrapMode);
+            writer.WritePropertyName("keys");
+        }
+
         if (keyCount == -1)
-            keys = null;
+        {
+            writer?.WriteNullValue();
+        }
         else
         {
             if (keyCount < 0 || keyCount > 1_000_000)
-                throw new InvalidDataException($"AnimationCurve key count {keyCount} at offset {cursor.Position - 4}.");
-            var array = new JsonArray();
+                throw new InvalidDataException($"AnimationCurve key count {keyCount} at offset {reader.Position - 4}.");
+            writer?.WriteStartArray();
             for (int i = 0; i < keyCount; i++)
             {
-                if (cursor.Remaining < 28)
+                if (reader.Remaining < 28)
                 {
                     throw new InvalidDataException(
-                        $"AnimationCurve keyframe needs 28 bytes at offset {cursor.Position}."
+                        $"AnimationCurve keyframe needs 28 bytes at offset {reader.Position}."
                     );
                 }
 
-                array.Add((JsonNode)new JsonObject
+                float time = reader.ReadSingle();
+                float value = reader.ReadSingle();
+                float inTangent = reader.ReadSingle();
+                float outTangent = reader.ReadSingle();
+                int weightedMode = reader.ReadInt32();
+                float inWeight = reader.ReadSingle();
+                float outWeight = reader.ReadSingle();
+                if (writer != null)
                 {
-                    ["time"] = JsonValue.Create(cursor.F32()),
-                    ["value"] = JsonValue.Create(cursor.F32()),
-                    ["inTangent"] = JsonValue.Create(cursor.F32()),
-                    ["outTangent"] = JsonValue.Create(cursor.F32()),
-                    ["weightedMode"] = JsonValue.Create(cursor.I32()),
-                    ["inWeight"] = JsonValue.Create(cursor.F32()),
-                    ["outWeight"] = JsonValue.Create(cursor.F32()),
-                });
+                    writer.WriteStartObject();
+                    writer.WritePropertyName("time");
+                    WriteSingle(writer, time);
+                    writer.WritePropertyName("value");
+                    WriteSingle(writer, value);
+                    writer.WritePropertyName("inTangent");
+                    WriteSingle(writer, inTangent);
+                    writer.WritePropertyName("outTangent");
+                    WriteSingle(writer, outTangent);
+                    writer.WriteNumber("weightedMode", weightedMode);
+                    writer.WritePropertyName("inWeight");
+                    WriteSingle(writer, inWeight);
+                    writer.WritePropertyName("outWeight");
+                    WriteSingle(writer, outWeight);
+                    writer.WriteEndObject();
+                }
             }
 
-            keys = array;
+            writer?.WriteEndArray();
         }
 
-        return new JsonObject
-        {
-            ["preWrapMode"] = JsonValue.Create(preWrapMode),
-            ["postWrapMode"] = JsonValue.Create(postWrapMode),
-            ["keys"] = keys,
-        };
+        writer?.WriteEndObject();
     }
 
-    private JsonNode? ReadBeyondOptional(ref Cursor cursor, string type, TypePlan plan, int depth, bool sandbox)
+    private void WriteBeyondOptional(
+        ref SpanReader reader,
+        string type,
+        OptionalPlan plan,
+        int depth,
+        bool sandbox,
+        Utf8JsonWriter? writer)
     {
-        int origin = cursor.Position;
-        int? count = ReadHeader(ref cursor);
-        if (count == null)
-            return null;
-        if (count == 0)
-            return null;
+        int origin = reader.Position;
+        int? count = ReadHeader(ref reader);
+        if (count == null || count == 0)
+        {
+            writer?.WriteNullValue();
+            return;
+        }
+
         if (count != 2)
         {
             throw new InvalidDataException(
@@ -608,30 +833,30 @@ public sealed class MemoryPackDecoder
             );
         }
 
-        cursor.Position = origin;
+        reader.Position = origin;
         MpType resolved = plan.ResolvedObject ?? _schema.Require(type, hint: null);
-        return ReadObject(ref cursor, resolved, depth, sandbox);
+        WriteObject(ref reader, resolved, extraType: null, extraTag: null, depth, sandbox, writer);
     }
 
-    private bool TryReadPolymorphic(
-        ref Cursor cursor,
-        MpType baseType,
-        MpType[] derived,
+    private bool TryWritePolymorphic(
+        ref SpanReader reader,
+        PolymorphicPlan plan,
         int depth,
         bool sandbox,
-        out JsonNode? node)
+        Utf8JsonWriter? writer)
     {
-        node = null;
-        if (cursor.Remaining == 0)
+        if (reader.Remaining == 0)
             return false;
-        byte header = cursor.Buffer[cursor.Position];
+        byte header = reader.Buffer[reader.Position];
         if (header == 255)
         {
-            cursor.U8();
+            reader.ReadByte();
+            writer?.WriteNullValue();
             return true;
         }
 
-        byte? afterTag = cursor.Remaining >= 2 ? cursor.Buffer[cursor.Position + 1] : null;
+        MpType[] derived = plan.Derived;
+        byte? afterTag = reader.Remaining >= 2 ? reader.Buffer[reader.Position + 1] : null;
         MpType? taggedChosen = null;
         int taggedCount = 0;
         if (afterTag is byte next)
@@ -648,11 +873,11 @@ public sealed class MemoryPackDecoder
             }
         }
 
-        MpType? chosen = null;
+        MpType? chosen;
         int? tag = null;
         if (taggedCount == 1)
         {
-            tag = ReadUnionTag(ref cursor);
+            tag = ReadUnionTag(ref reader);
             chosen = taggedChosen;
         }
         else
@@ -675,42 +900,37 @@ public sealed class MemoryPackDecoder
             chosen = untaggedChosen;
         }
 
-        node = ReadObject(ref cursor, chosen!, depth, sandbox);
-        if (node is JsonObject obj)
-        {
-            if (!obj.ContainsKey("$type"))
-                obj["$type"] = chosen!.TargetType;
-            if (tag != null)
-                obj["$tag"] = tag.Value;
-        }
-
+        WriteObject(ref reader, chosen!, extraType: chosen!.TargetType, extraTag: tag, depth, sandbox, writer);
         return true;
     }
 
-    private JsonNode? ReadTaggedUnion(ref Cursor cursor, string staticType, TypePlan plan, string? hint, int depth, bool sandbox)
+    private void WriteTaggedUnion(
+        ref SpanReader reader,
+        string staticType,
+        TaggedUnionPlan plan,
+        string? hint,
+        int depth,
+        bool sandbox,
+        Utf8JsonWriter? writer)
     {
-        int origin = cursor.Position;
-        int? tag = ReadUnionTag(ref cursor);
+        int origin = reader.Position;
+        int? tag = ReadUnionTag(ref reader);
         if (tag == null)
-            return null;
-
-        if (TryMappedConcrete(staticType, plan, tag.Value, hint, out MpType mappedType))
         {
-            JsonNode? mapped = ReadConcrete(ref cursor, mappedType, depth, sandbox);
-            if (mapped is JsonObject mappedObj)
-            {
-                if (!mappedObj.ContainsKey("$type"))
-                    mappedObj["$type"] = ShortName(mappedType);
-                mappedObj["$tag"] = tag.Value;
-            }
-
-            return mapped;
+            writer?.WriteNullValue();
+            return;
         }
 
-        int afterTag = cursor.Position;
-        byte? headerByte = afterTag < cursor.Length ? cursor.Buffer[afterTag] : null;
+        if (_unions.TryMappedConcrete(staticType, plan.DirectUnionMap, tag.Value, hint, out MpType mappedType))
+        {
+            WriteObject(ref reader, mappedType, extraType: ShortName(mappedType), extraTag: tag.Value, depth, sandbox, writer);
+            return;
+        }
+
+        int afterTag = reader.Position;
+        byte? headerByte = afterTag < reader.Length ? reader.Buffer[afterTag] : null;
         IReadOnlyList<MpType> candidates = _unions.GetCandidates(staticType, hint);
-        var matches = new List<(MpType Type, int End, JsonObject Value)>();
+        var matches = new List<(MpType Type, int End)>();
         foreach (MpType candidate in candidates)
         {
             if (headerByte is byte hb)
@@ -728,13 +948,12 @@ public sealed class MemoryPackDecoder
                 }
             }
 
-            var fork = cursor.Fork(afterTag);
+            var fork = reader.Fork(afterTag);
             try
             {
-                JsonNode? node = ReadObject(ref fork, candidate, depth + 1, sandbox: true);
-                if (node is not JsonObject obj)
+                if (!TryValidateObject(ref fork, candidate, depth + 1))
                     continue;
-                matches.Add((candidate, fork.Position, obj));
+                matches.Add((candidate, fork.Position));
             }
             catch (Exception ex) when (ex is InvalidDataException or MemoryPackTypeException)
             {
@@ -742,22 +961,28 @@ public sealed class MemoryPackDecoder
             }
         }
 
-        var ends = new Dictionary<int, (MpType Type, JsonObject Value)>();
+        var ends = new Dictionary<int, MpType>();
         var ambiguousEnds = new HashSet<int>();
         foreach (var match in matches)
         {
-            if (!ends.TryAdd(match.End, (match.Type, match.Value)))
+            if (!ends.TryAdd(match.End, match.Type))
                 ambiguousEnds.Add(match.End);
         }
 
         if (ends.Count == 1 && ambiguousEnds.Count == 0)
         {
-            var chosen = ends.Values.First();
-            cursor.Position = ends.Keys.First();
-            if (!chosen.Value.ContainsKey("$type"))
-                chosen.Value["$type"] = ShortName(chosen.Type);
-            chosen.Value["$tag"] = tag.Value;
-            return chosen.Value;
+            MpType chosen = ends.Values.First();
+            if (writer != null)
+            {
+                reader.Position = afterTag;
+                WriteObject(ref reader, chosen, extraType: ShortName(chosen), extraTag: tag.Value, depth + 1, sandbox: true, writer);
+            }
+            else
+            {
+                reader.Position = ends.Keys.First();
+            }
+
+            return;
         }
 
         string[] names = matches
@@ -778,33 +1003,82 @@ public sealed class MemoryPackDecoder
         );
     }
 
-    private JsonNode? ReadConcrete(ref Cursor cursor, MpType type, int depth, bool sandbox)
+    private bool TryValidateObject(ref SpanReader reader, MpType type, int depth)
     {
-        JsonNode? node = ReadObject(ref cursor, type, depth, sandbox);
-        if (node is JsonObject obj && !obj.ContainsKey("$type"))
-            obj["$type"] = ShortName(type);
-        return node;
+        int origin = reader.Position;
+        int? count = ReadHeader(ref reader);
+        if (count == null)
+            return false;
+        if (count < 0)
+            throw new InvalidDataException($"Negative member count {count} at offset {origin}.");
+
+        if (count == 0 && type.Wire.Length > 0 && AllowsEmptyMemberCount(type, sandbox: true))
+            return true;
+
+        if (count != type.Wire.Length)
+        {
+            throw new InvalidDataException(
+                $"memberCount {count} at offset {origin} does not match {ShortName(type)} "
+                + $"(wire {type.Wire.Length})."
+            );
+        }
+
+        MpMember[] members = type.Wire;
+        TypePlan[] memberPlans = GetMemberPlans(type);
+        for (int i = 0; i < members.Length; i++)
+        {
+            MpMember member = members[i];
+            WriteValue(ref reader, member.Type, memberPlans[i], member.Name, depth + 1, sandbox: true, member.CollectionEncoding, writer: null);
+        }
+
+        return true;
     }
 
-    private JsonNode? ReadObject(ref Cursor cursor, MpType type, int depth, bool sandbox)
+    private void WriteObject(
+        ref SpanReader reader,
+        MpType type,
+        string? extraType,
+        int? extraTag,
+        int depth,
+        bool sandbox,
+        Utf8JsonWriter? writer)
     {
-        int origin = cursor.Position;
-        int? count = ReadHeader(ref cursor);
+        int origin = reader.Position;
+        int? count = ReadHeader(ref reader);
         if (count == null)
-            return null;
+        {
+            writer?.WriteNullValue();
+            return;
+        }
+
         if (count < 0)
             throw new InvalidDataException($"Negative member count {count} at offset {origin}.");
 
         MpMember[] members;
+        int memberCount;
         if (count == type.Wire.Length)
+        {
             members = type.Wire;
+            memberCount = members.Length;
+        }
         else if (count == 0 && type.Wire.Length > 0 && AllowsEmptyMemberCount(type, sandbox))
         {
-            return new JsonObject();
+            if (writer != null)
+            {
+                writer.WriteStartObject();
+                if (extraType != null)
+                    writer.WriteString("$type", extraType);
+                if (extraTag != null)
+                    writer.WriteNumber("$tag", extraTag.Value);
+                writer.WriteEndObject();
+            }
+
+            return;
         }
         else if (count > 0 && count < type.Wire.Length && !sandbox)
         {
-            members = type.Wire[..count.Value];
+            members = type.Wire;
+            memberCount = count.Value;
         }
         else
         {
@@ -814,13 +1088,27 @@ public sealed class MemoryPackDecoder
             );
         }
 
-        var obj = new JsonObject();
-        foreach (MpMember member in members)
+        TypePlan[] memberPlans = GetMemberPlans(type);
+        writer?.WriteStartObject();
+        bool sawType = false;
+        for (int i = 0; i < memberCount; i++)
         {
-            obj[member.Name] = ReadValue(
-                ref cursor, member.Type, member.Name, depth + 1, sandbox, member.CollectionEncoding);
+            MpMember member = members[i];
+            if (member.Name == "$type")
+                sawType = true;
+            writer?.WritePropertyName(member.Name);
+            WriteValue(
+                ref reader, member.Type, memberPlans[i], member.Name, depth + 1, sandbox, member.CollectionEncoding, writer);
         }
-        return obj;
+
+        if (writer != null)
+        {
+            if (extraType != null && !sawType)
+                writer.WriteString("$type", extraType);
+            if (extraTag != null)
+                writer.WriteNumber("$tag", extraTag.Value);
+            writer.WriteEndObject();
+        }
     }
 
     private static bool AllowsEmptyMemberCount(MpType type, bool sandbox)
@@ -831,71 +1119,178 @@ public sealed class MemoryPackDecoder
             || type.TargetType.StartsWith("Beyond.Gameplay.Actions.Param`1<", StringComparison.Ordinal);
     }
 
-    private JsonNode? ReadList(
-        ref Cursor cursor,
-        TypePlan plan,
+    private void WriteList(
+        ref SpanReader reader,
+        ListPlan plan,
         string? hint,
         int depth,
         bool sandbox,
-        string? collectionEncoding = null)
+        MpCollectionEncoding collectionEncoding,
+        Utf8JsonWriter? writer)
     {
-        int count = cursor.I32();
+        int count = reader.ReadInt32();
         if (count == -1)
-            return null;
-        if (count < 0 || count > 1_000_000)
-            throw new InvalidDataException($"List count {count} at offset {cursor.Position - 4}.");
-        var array = new JsonArray();
-        MpUnmanagedLayout? elemLayout = plan.ElementUnmanaged;
-        string? encoding = collectionEncoding ?? elemLayout?.CollectionEncoding;
-        bool memcpyArray = elemLayout != null
-            && string.Equals(encoding, "memcpy", StringComparison.Ordinal);
-        string element = plan.ElementType!;
+        {
+            writer?.WriteNullValue();
+            return;
+        }
 
+        if (count < 0 || count > 1_000_000)
+            throw new InvalidDataException($"List count {count} at offset {reader.Position - 4}.");
+
+        MpUnmanagedLayout? elemLayout = plan.ElementUnmanaged;
+        MpCollectionEncoding encoding = collectionEncoding != MpCollectionEncoding.None
+            ? collectionEncoding
+            : elemLayout?.CollectionEncoding ?? MpCollectionEncoding.None;
+        bool memcpyArray = elemLayout != null && encoding == MpCollectionEncoding.Memcpy;
+        string element = plan.ElementType;
+        TypePlan? elemPlan = elemLayout == null ? plan.GetElementPlan(this) : null;
+
+        writer?.WriteStartArray();
         for (int i = 0; i < count; i++)
         {
             if (elemLayout != null && !memcpyArray
-                && TryReadUnmanagedFormatter(ref cursor, plan.ElementFormatterType, depth + 1, sandbox, out JsonNode? formatted))
+                && TryWriteUnmanagedFormatter(ref reader, plan.ElementFormatterType, UnmanagedWrapperKind.None, depth + 1, sandbox, writer))
             {
-                array.Add(formatted);
+                continue;
             }
-            else if (elemLayout != null)
-                array.Add(ReadUnmanaged(ref cursor, elemLayout, depth + 1, sandbox));
+
+            if (elemLayout != null)
+            {
+                WriteUnmanaged(ref reader, elemLayout, UnmanagedWrapperKind.None, -1, -1, depth + 1, sandbox, writer);
+            }
             else
-                array.Add(ReadValue(ref cursor, element, hint, depth + 1, sandbox));
+            {
+                WriteValue(ref reader, element, elemPlan!, hint, depth + 1, sandbox, MpCollectionEncoding.None, writer);
+            }
         }
 
-        return array;
+        writer?.WriteEndArray();
     }
 
-    private bool TryReadUnmanagedFormatter(
-        ref Cursor cursor,
+    private bool TryWriteUnmanagedFormatter(
+        ref SpanReader reader,
         MpType? formatterType,
+        UnmanagedWrapperKind wrapperKind,
         int depth,
         bool sandbox,
-        out JsonNode? node)
+        Utf8JsonWriter? writer)
     {
-        node = null;
-        if (cursor.Remaining == 0 || formatterType == null)
+        if (reader.Remaining == 0 || formatterType == null)
             return false;
 
         int formatterCount = formatterType.Wire.Length;
-        if (formatterCount <= 0 || cursor.Buffer[cursor.Position] != formatterCount)
+        if (formatterCount <= 0 || reader.Buffer[reader.Position] != formatterCount)
             return false;
-        node = ReadObject(ref cursor, formatterType, depth, sandbox);
+
+        if (wrapperKind == UnmanagedWrapperKind.None)
+        {
+            WriteObject(ref reader, formatterType, extraType: null, extraTag: null, depth, sandbox, writer);
+            return true;
+        }
+
+        // Unwrap Nullable / Optional formatter wrapper when needed.
+        int origin = reader.Position;
+        int? count = ReadHeader(ref reader);
+        if (count == null)
+        {
+            writer?.WriteNullValue();
+            return true;
+        }
+
+        if (count != formatterType.Wire.Length)
+        {
+            reader.Position = origin;
+            return false;
+        }
+
+        MpMember[] members = formatterType.Wire;
+        TypePlan[] memberPlans = GetMemberPlans(formatterType);
+        string flagName = wrapperKind == UnmanagedWrapperKind.Nullable ? "hasValue" : "enabled";
+
+        if (wrapperKind == UnmanagedWrapperKind.Nullable && members.Length == 2 && members[0].Name == flagName && members[1].Name == "value")
+        {
+            bool hasValue = ReadMemberBool(ref reader, members[0], memberPlans[0], depth + 1, sandbox);
+            if (!hasValue)
+            {
+                WriteValue(ref reader, members[1].Type, memberPlans[1], members[1].Name, depth + 1, sandbox, members[1].CollectionEncoding, writer: null);
+                writer?.WriteNullValue();
+            }
+            else
+            {
+                WriteValue(ref reader, members[1].Type, memberPlans[1], members[1].Name, depth + 1, sandbox, members[1].CollectionEncoding, writer);
+            }
+
+            return true;
+        }
+
+        if (wrapperKind == UnmanagedWrapperKind.Optional && members.Length >= 1 && members[0].Name == flagName)
+        {
+            bool enabled = ReadMemberBool(ref reader, members[0], memberPlans[0], depth + 1, sandbox);
+            if (!enabled)
+            {
+                for (int i = 1; i < members.Length; i++)
+                {
+                    MpMember m = members[i];
+                    WriteValue(ref reader, m.Type, memberPlans[i], m.Name, depth + 1, sandbox, m.CollectionEncoding, writer: null);
+                }
+
+                writer?.WriteNullValue();
+                return true;
+            }
+
+            if (writer != null)
+            {
+                writer.WriteStartObject();
+                writer.WriteBoolean(members[0].Name, true);
+                for (int i = 1; i < members.Length; i++)
+                {
+                    MpMember m = members[i];
+                    writer.WritePropertyName(m.Name);
+                    WriteValue(ref reader, m.Type, memberPlans[i], m.Name, depth + 1, sandbox, m.CollectionEncoding, writer);
+                }
+
+                writer.WriteEndObject();
+                return true;
+            }
+        }
+
+        reader.Position = origin;
+        WriteObject(ref reader, formatterType, extraType: null, extraTag: null, depth, sandbox, writer);
         return true;
     }
 
-    private static void MaybeConsumeDictionaryValuePresence(ref Cursor cursor, TypePlan plan)
+    private bool ReadMemberBool(ref SpanReader reader, MpMember member, TypePlan plan, int depth, bool sandbox)
     {
-        if (!plan.DictValueIsObject || plan.DictValueObject == null || cursor.Remaining < 2)
+        if (plan is PrimitivePlan { Kind: MpKind.Bool })
+        {
+            byte flag = reader.ReadByte();
+            if (flag > 1)
+                throw new InvalidDataException($"Boolean {flag} at offset {reader.Position - 1}.");
+            return flag != 0;
+        }
+
+        var tmp = new ArrayBufferWriter<byte>(8);
+        using (var w = new Utf8JsonWriter(tmp))
+        {
+            WriteValue(ref reader, member.Type, plan, member.Name, depth, sandbox, member.CollectionEncoding, w);
+            w.Flush();
+        }
+
+        return tmp.WrittenSpan.SequenceEqual("true"u8);
+    }
+
+    private static void MaybeConsumeDictionaryValuePresence(ref SpanReader reader, DictionaryPlan plan)
+    {
+        if (!plan.ValueIsObject || plan.ValueObject == null || reader.Remaining < 2)
             return;
-        if (cursor.Buffer[cursor.Position] != 1)
+        if (reader.Buffer[reader.Position] != 1)
             return;
 
-        byte next = cursor.Buffer[cursor.Position + 1];
-        int wireLength = plan.DictValueObject.Wire.Length;
+        byte next = reader.Buffer[reader.Position + 1];
+        int wireLength = plan.ValueObject.Wire.Length;
         if (next == 255 || next == 250 || (wireLength > 1 && next == wireLength))
-            cursor.U8();
+            reader.ReadByte();
     }
 
     private bool TryUnmanagedPairLayout(string keyType, string valueType, out int midPad, out int endPad)
@@ -995,175 +1390,331 @@ public sealed class MemoryPackDecoder
     private static int Align(int value, int align) =>
         align <= 1 ? value : (value + align - 1) / align * align;
 
-    private static void SkipPad(ref Cursor cursor, int pad)
+    private static void SkipPad(ref SpanReader reader, int pad)
     {
         if (pad <= 0)
             return;
-        if (cursor.Remaining < pad)
-            throw new InvalidDataException($"Dictionary pair padding {pad} at offset {cursor.Position}.");
-        cursor.Position += pad;
+        if (reader.Remaining < pad)
+            throw new InvalidDataException($"Dictionary pair padding {pad} at offset {reader.Position}.");
+        reader.Skip(pad);
     }
 
-    private JsonNode? ReadDictionary(ref Cursor cursor, TypePlan plan, int depth, bool sandbox, bool v2)
+    private void WriteDictionary(
+        ref SpanReader reader,
+        DictionaryPlan plan,
+        int depth,
+        bool sandbox,
+        Utf8JsonWriter? writer)
     {
-        if (v2)
+        if (plan.IsV2)
         {
-            byte header = cursor.U8();
+            byte header = reader.ReadByte();
             if (header == 255)
-                return null;
+            {
+                writer?.WriteNullValue();
+                return;
+            }
         }
 
-        int count = cursor.I32();
+        int count = reader.ReadInt32();
         if (count == -1)
-            return null;
+        {
+            writer?.WriteNullValue();
+            return;
+        }
+
         if (count < 0 || count > 1_000_000)
-            throw new InvalidDataException($"Dictionary count {count} at offset {cursor.Position - 4}.");
-        string key = plan.DictKeyType!;
-        string value = plan.DictValueType!;
-        bool objectKeys = plan.DictObjectKeys;
-        bool padPairs = plan.DictPadPairs;
-        int midPad = plan.DictMidPad;
-        int endPad = plan.DictEndPad;
-        var obj = objectKeys ? new JsonObject() : null;
-        var pairs = objectKeys ? null : new JsonArray();
+            throw new InvalidDataException($"Dictionary count {count} at offset {reader.Position - 4}.");
+
+        string key = plan.KeyType;
+        string value = plan.ValueType;
+        TypePlan keyPlan = plan.GetKeyPlan(this);
+        TypePlan valuePlan = plan.GetValuePlan(this);
+        bool objectKeys = plan.ObjectKeys;
+        bool padPairs = plan.PadPairs;
+        int midPad = plan.MidPad;
+        int endPad = plan.EndPad;
+
+        if (objectKeys)
+            writer?.WriteStartObject();
+        else
+            writer?.WriteStartArray();
+
         for (int i = 0; i < count; i++)
         {
-            JsonNode? keyNode = ReadValue(ref cursor, key, null, depth + 1, sandbox);
-            if (padPairs)
-                SkipPad(ref cursor, midPad);
-            if (!v2)
-                MaybeConsumeDictionaryValuePresence(ref cursor, plan);
-            JsonNode? valueNode = plan.DictValueUnmanaged != null
-                && TryReadUnmanagedFormatter(ref cursor, plan.DictValueFormatterType, depth + 1, sandbox, out JsonNode? formatted)
-                ? formatted
-                : ReadValue(ref cursor, value, null, depth + 1, sandbox);
-            if (padPairs)
-                SkipPad(ref cursor, endPad);
-            if (!objectKeys)
+            if (objectKeys)
             {
-                var pair = new JsonArray();
-                pair.Add(keyNode);
-                pair.Add(valueNode);
-                pairs!.Add((JsonNode)pair);
-                continue;
-            }
+                string keyText = ReadKeyText(ref reader, key, keyPlan, depth + 1, sandbox);
+                writer?.WritePropertyName(keyText);
+                if (padPairs)
+                    SkipPad(ref reader, midPad);
+                if (!plan.IsV2)
+                    MaybeConsumeDictionaryValuePresence(ref reader, plan);
+                if (plan.ValueUnmanaged != null
+                    && TryWriteUnmanagedFormatter(ref reader, plan.ValueFormatterType, UnmanagedWrapperKind.None, depth + 1, sandbox, writer))
+                {
+                    // Written by formatter
+                }
+                else
+                {
+                    WriteValue(ref reader, value, valuePlan, null, depth + 1, sandbox, MpCollectionEncoding.None, writer);
+                }
 
-            string text = keyNode switch
+                if (padPairs)
+                    SkipPad(ref reader, endPad);
+            }
+            else
             {
-                JsonValue v when v.TryGetValue(out string? s) => s ?? "",
-                JsonValue v when v.TryGetValue(out uint n) => n.ToString(CultureInfo.InvariantCulture),
-                JsonValue v when v.TryGetValue(out int n) => n.ToString(CultureInfo.InvariantCulture),
-                JsonValue v when v.TryGetValue(out long n) => n.ToString(CultureInfo.InvariantCulture),
-                JsonValue v when v.TryGetValue(out ulong n) => n.ToString(CultureInfo.InvariantCulture),
-                _ => keyNode?.ToJsonString() ?? "",
-            };
-            obj![text] = valueNode;
+                writer?.WriteStartArray();
+                WriteValue(ref reader, key, keyPlan, null, depth + 1, sandbox, MpCollectionEncoding.None, writer);
+                if (padPairs)
+                    SkipPad(ref reader, midPad);
+                if (!plan.IsV2)
+                    MaybeConsumeDictionaryValuePresence(ref reader, plan);
+                if (plan.ValueUnmanaged != null
+                    && TryWriteUnmanagedFormatter(ref reader, plan.ValueFormatterType, UnmanagedWrapperKind.None, depth + 1, sandbox, writer))
+                {
+                    // Written by formatter
+                }
+                else
+                {
+                    WriteValue(ref reader, value, valuePlan, null, depth + 1, sandbox, MpCollectionEncoding.None, writer);
+                }
+
+                if (padPairs)
+                    SkipPad(ref reader, endPad);
+                writer?.WriteEndArray();
+            }
         }
 
-        return objectKeys ? obj : pairs;
+        if (objectKeys)
+            writer?.WriteEndObject();
+        else
+            writer?.WriteEndArray();
     }
 
-    private JsonNode? ReadNullable(ref Cursor cursor, string inner, int depth, bool sandbox)
+    private string ReadKeyText(ref SpanReader reader, string keyType, TypePlan keyPlan, int depth, bool sandbox)
     {
-        int origin = cursor.Position;
-        int? count = ReadHeader(ref cursor);
-        if (count == null)
-            return null;
-        if (count == 0)
-            return null;
+        switch (keyPlan)
+        {
+            case EnumPlan enumPlan:
+                return ReadEnum(ref reader, enumPlan).ToString(CultureInfo.InvariantCulture);
+            case PrimitivePlan primitivePlan:
+                switch (primitivePlan.Kind)
+                {
+                    case MpKind.String:
+                        return ReadString(ref reader) ?? "";
+                    case MpKind.Int8:
+                        return ((sbyte)reader.ReadByte()).ToString(CultureInfo.InvariantCulture);
+                    case MpKind.UInt8:
+                        return reader.ReadByte().ToString(CultureInfo.InvariantCulture);
+                    case MpKind.Int16:
+                        return reader.ReadInt16().ToString(CultureInfo.InvariantCulture);
+                    case MpKind.UInt16:
+                        return reader.ReadUInt16().ToString(CultureInfo.InvariantCulture);
+                    case MpKind.Int32:
+                        return reader.ReadInt32().ToString(CultureInfo.InvariantCulture);
+                    case MpKind.UInt32:
+                        return reader.ReadUInt32().ToString(CultureInfo.InvariantCulture);
+                    case MpKind.Int64:
+                        return reader.ReadInt64().ToString(CultureInfo.InvariantCulture);
+                    case MpKind.UInt64:
+                        return reader.ReadUInt64().ToString(CultureInfo.InvariantCulture);
+                }
+                break;
+        }
+
+        var tmp = new ArrayBufferWriter<byte>(32);
+        using (var w = new Utf8JsonWriter(tmp))
+        {
+            WriteValue(ref reader, keyType, keyPlan, null, depth, sandbox, MpCollectionEncoding.None, w);
+            w.Flush();
+        }
+
+        return Encoding.UTF8.GetString(tmp.WrittenSpan);
+    }
+
+    private void WriteNullable(
+        ref SpanReader reader,
+        NullablePlan plan,
+        int depth,
+        bool sandbox,
+        Utf8JsonWriter? writer)
+    {
+        int origin = reader.Position;
+        int? count = ReadHeader(ref reader);
+        if (count == null || count == 0)
+        {
+            writer?.WriteNullValue();
+            return;
+        }
+
         if (count != 1)
-            throw new InvalidDataException($"Nullable<{inner}> memberCount {count} at offset {origin}.");
-        return ReadValue(ref cursor, inner, null, depth + 1, sandbox);
+            throw new InvalidDataException($"Nullable<{plan.ElementType}> memberCount {count} at offset {origin}.");
+
+        WriteValue(ref reader, plan.ElementType, plan.GetElementPlan(this), null, depth + 1, sandbox, MpCollectionEncoding.None, writer);
     }
 
-    private JsonNode? ReadString(ref Cursor cursor)
+    private string? ReadString(ref SpanReader reader)
     {
-        int id = cursor.I32();
+        int id = reader.ReadInt32();
         if (id < -2)
-            throw new InvalidDataException($"String pool id {id} at offset {cursor.Position - 4}.");
+            throw new InvalidDataException($"String pool id {id} at offset {reader.Position - 4}.");
         if (id == -2)
             return null;
         if (id == -1)
-            return JsonValue.Create("");
+            return "";
         if (_pool != null && _pool.TryResolve(id, out string? text))
-            return JsonValue.Create(text);
-        return JsonValue.Create("#" + id.ToString(CultureInfo.InvariantCulture));
+            return text;
+        return "#" + id.ToString(CultureInfo.InvariantCulture);
     }
 
-    private static JsonNode? ReadMemoryPackString(ref Cursor cursor)
+    private static string? ReadMemoryPackString(ref SpanReader reader)
     {
-        int origin = cursor.Position;
-        int length = cursor.I32();
+        int origin = reader.Position;
+        int length = reader.ReadInt32();
         if (length == -1)
             return null;
         if (length < 0)
             throw new InvalidDataException($"MemoryPack string length {length} at offset {origin}.");
-        return JsonValue.Create(Encoding.UTF8.GetString(cursor.Take(length)));
+        return Encoding.UTF8.GetString(reader.ReadBytes(length));
     }
 
-    private JsonNode? ReadMemoryPackValue(ref Cursor cursor, string type, int depth, bool sandbox)
+    private void WriteMemoryPackValue(
+        ref SpanReader reader,
+        string type,
+        int depth,
+        bool sandbox,
+        Utf8JsonWriter? writer)
     {
         MpType resolved = _schema.ResolveNamed(type);
         MpMember[] members = resolved.MemorypackWire
             ?? throw new MemoryPackTypeException(
                 $"Missing memorypack_wire for {type} (nested ReadValue / TFormatter).");
-        int origin = cursor.Position;
-        int? count = ReadHeader(ref cursor);
-        if (count == null)
-            return null;
-        if (count == 0)
-            return null;
+        int origin = reader.Position;
+        int? count = ReadHeader(ref reader);
+        if (count == null || count == 0)
+        {
+            writer?.WriteNullValue();
+            return;
+        }
+
         if (count != members.Length && (count <= 0 || count > members.Length || sandbox))
         {
             throw new InvalidDataException(
                 $"memberCount {count} at offset {origin} does not match memorypack_wire {members.Length} of {ShortName(resolved)}.");
         }
 
-        MpMember[] used = count == members.Length ? members : members[..count.Value];
-        var obj = new JsonObject();
-        foreach (MpMember member in used)
+        int usedCount = count.Value;
+        TypePlan[] memberPlans = GetMemoryPackMemberPlans(resolved);
+        writer?.WriteStartObject();
+        for (int i = 0; i < usedCount; i++)
         {
-            obj[member.Name] = ReadValue(
-                ref cursor, member.Type, member.Name, depth + 1, sandbox, member.CollectionEncoding);
+            MpMember member = members[i];
+            writer?.WritePropertyName(member.Name);
+            WriteValue(
+                ref reader, member.Type, memberPlans[i], member.Name, depth + 1, sandbox, member.CollectionEncoding, writer);
         }
 
-        return obj;
+        writer?.WriteEndObject();
     }
 
-    private static int? ReadHeader(ref Cursor cursor)
+    private static int? ReadHeader(ref SpanReader reader)
     {
-        byte b = cursor.U8();
+        byte b = reader.ReadByte();
         if (b == 255)
             return null;
         if (b == 250)
-            return cursor.I32();
+            return reader.ReadInt32();
         return b;
     }
 
-    private static int? ReadUnionTag(ref Cursor cursor)
+    private static int? ReadUnionTag(ref SpanReader reader)
     {
-        byte b = cursor.U8();
+        byte b = reader.ReadByte();
         if (b == 255)
             return null;
         if (b == 250)
-            return cursor.U16();
+            return reader.ReadUInt16();
         return b;
     }
 
-    private static JsonArray Vec(params float[] values)
+    private static void WriteSingle(Utf8JsonWriter writer, float value)
     {
-        var array = new JsonArray();
-        foreach (float value in values)
-            array.Add((JsonNode?)JsonValue.Create(value));
-        return array;
+        if (float.IsNaN(value))
+            writer.WriteStringValue("NaN");
+        else if (float.IsPositiveInfinity(value))
+            writer.WriteStringValue("Infinity");
+        else if (float.IsNegativeInfinity(value))
+            writer.WriteStringValue("-Infinity");
+        else
+            writer.WriteNumberValue(value);
     }
 
-    private static JsonArray Vec(params int[] values)
+    private static void WriteDouble(Utf8JsonWriter writer, double value)
     {
-        var array = new JsonArray();
-        foreach (int value in values)
-            array.Add((JsonNode?)JsonValue.Create(value));
-        return array;
+        if (double.IsNaN(value))
+            writer.WriteStringValue("NaN");
+        else if (double.IsPositiveInfinity(value))
+            writer.WriteStringValue("Infinity");
+        else if (double.IsNegativeInfinity(value))
+            writer.WriteStringValue("-Infinity");
+        else
+            writer.WriteNumberValue(value);
+    }
+
+    private static void WriteVec(Utf8JsonWriter? writer, float x, float y)
+    {
+        if (writer == null)
+            return;
+        writer.WriteStartArray();
+        WriteSingle(writer, x);
+        WriteSingle(writer, y);
+        writer.WriteEndArray();
+    }
+
+    private static void WriteVec(Utf8JsonWriter? writer, float x, float y, float z)
+    {
+        if (writer == null)
+            return;
+        writer.WriteStartArray();
+        WriteSingle(writer, x);
+        WriteSingle(writer, y);
+        WriteSingle(writer, z);
+        writer.WriteEndArray();
+    }
+
+    private static void WriteVec(Utf8JsonWriter? writer, float x, float y, float z, float w)
+    {
+        if (writer == null)
+            return;
+        writer.WriteStartArray();
+        WriteSingle(writer, x);
+        WriteSingle(writer, y);
+        WriteSingle(writer, z);
+        WriteSingle(writer, w);
+        writer.WriteEndArray();
+    }
+
+    private static void WriteVecInt(Utf8JsonWriter? writer, int x, int y)
+    {
+        if (writer == null)
+            return;
+        writer.WriteStartArray();
+        writer.WriteNumberValue(x);
+        writer.WriteNumberValue(y);
+        writer.WriteEndArray();
+    }
+
+    private static void WriteVecInt(Utf8JsonWriter? writer, int x, int y, int z)
+    {
+        if (writer == null)
+            return;
+        writer.WriteStartArray();
+        writer.WriteNumberValue(x);
+        writer.WriteNumberValue(y);
+        writer.WriteNumberValue(z);
+        writer.WriteEndArray();
     }
 
     private static string ElementType(string type)
@@ -1211,80 +1762,157 @@ public sealed class MemoryPackDecoder
         return leaf.EndsWith(suffix, StringComparison.Ordinal) ? leaf[..^suffix.Length] : leaf;
     }
 
-    private sealed class TypePlan
+    private enum UnmanagedWrapperKind : byte
     {
-        public bool IsOptional { get; init; }
-        public MpUnmanagedLayout? Unmanaged { get; init; }
-        public MpType? UnmanagedFormatterType { get; init; }
-        public bool IsTaggedUnion { get; init; }
-        public Dictionary<int, string>? DirectUnionMap { get; init; }
-        public MpType? PolyBase { get; init; }
-        public MpType[]? PolyDerived { get; init; }
-        public MpKind? Kind { get; init; }
-        public string? KindError { get; init; }
-        public byte EnumWidth { get; init; }
-        public byte EnumLeafWidth { get; init; }
-        public MpType? ResolvedObject { get; init; }
-        public string? ElementType { get; init; }
-        public MpUnmanagedLayout? ElementUnmanaged { get; init; }
-        public MpType? ElementFormatterType { get; init; }
-        public string? DictKeyType { get; init; }
-        public string? DictValueType { get; init; }
-        public bool DictObjectKeys { get; init; }
-        public bool DictPadPairs { get; init; }
-        public int DictMidPad { get; init; }
-        public int DictEndPad { get; init; }
-        public bool DictValueIsObject { get; init; }
-        public MpType? DictValueObject { get; init; }
-        public MpUnmanagedLayout? DictValueUnmanaged { get; init; }
-        public MpType? DictValueFormatterType { get; init; }
+        None,
+        Nullable,
+        Optional,
     }
 
-    private ref struct Cursor
+    private abstract class TypePlan;
+
+    private sealed class OptionalPlan(
+        MpUnmanagedLayout? unmanaged,
+        MpType? resolvedObject,
+        UnmanagedWrapperKind wrapperKind,
+        int flagFieldIndex,
+        int valueFieldIndex) : TypePlan
     {
-        private readonly ReadOnlySpan<byte> _data;
-        public int Position;
+        public MpUnmanagedLayout? Unmanaged { get; } = unmanaged;
+        public MpType? ResolvedObject { get; } = resolvedObject;
+        public UnmanagedWrapperKind WrapperKind { get; } = wrapperKind;
+        public int FlagFieldIndex { get; } = flagFieldIndex;
+        public int ValueFieldIndex { get; } = valueFieldIndex;
+    }
 
-        public Cursor(ReadOnlySpan<byte> data, int position = 0)
+    private sealed class UnmanagedPlan(
+        MpUnmanagedLayout layout,
+        MpType? formatterType,
+        UnmanagedWrapperKind wrapperKind,
+        int flagFieldIndex,
+        int valueFieldIndex) : TypePlan
+    {
+        public MpUnmanagedLayout Layout { get; } = layout;
+        public MpType? FormatterType { get; } = formatterType;
+        public UnmanagedWrapperKind WrapperKind { get; } = wrapperKind;
+        public int FlagFieldIndex { get; } = flagFieldIndex;
+        public int ValueFieldIndex { get; } = valueFieldIndex;
+    }
+
+    private sealed class TaggedUnionPlan(Dictionary<int, string>? directUnionMap) : TypePlan
+    {
+        public Dictionary<int, string>? DirectUnionMap { get; } = directUnionMap;
+    }
+
+    private sealed class PolymorphicPlan(MpType[] derived) : TypePlan
+    {
+        public MpType[] Derived { get; } = derived;
+    }
+
+    private sealed class EnumPlan(byte width, byte leafWidth) : TypePlan
+    {
+        public byte Width { get; } = width;
+        public byte LeafWidth { get; } = leafWidth;
+    }
+
+    private sealed class ListPlan(
+        string elementType,
+        MpUnmanagedLayout? elementUnmanaged,
+        MpType? elementFormatterType) : TypePlan
+    {
+        private TypePlan? _elementPlan;
+        public string ElementType { get; } = elementType;
+        public MpUnmanagedLayout? ElementUnmanaged { get; } = elementUnmanaged;
+        public MpType? ElementFormatterType { get; } = elementFormatterType;
+
+        public TypePlan GetElementPlan(MemoryPackDecoder decoder)
         {
-            _data = data;
-            Position = position;
+            TypePlan? plan = Volatile.Read(ref _elementPlan);
+            if (plan != null)
+                return plan;
+            plan = decoder.GetPlan(ElementType);
+            Volatile.Write(ref _elementPlan, plan);
+            return plan;
+        }
+    }
+
+    private sealed class DictionaryPlan(
+        bool IsV2,
+        string KeyType,
+        string ValueType,
+        bool ObjectKeys,
+        bool PadPairs,
+        int MidPad,
+        int EndPad,
+        bool ValueIsObject,
+        MpType? ValueObject,
+        MpUnmanagedLayout? ValueUnmanaged,
+        MpType? ValueFormatterType) : TypePlan
+    {
+        private TypePlan? _keyPlan;
+        private TypePlan? _valuePlan;
+        public bool IsV2 { get; } = IsV2;
+        public string KeyType { get; } = KeyType;
+        public string ValueType { get; } = ValueType;
+        public bool ObjectKeys { get; } = ObjectKeys;
+        public bool PadPairs { get; } = PadPairs;
+        public int MidPad { get; } = MidPad;
+        public int EndPad { get; } = EndPad;
+        public bool ValueIsObject { get; } = ValueIsObject;
+        public MpType? ValueObject { get; } = ValueObject;
+        public MpUnmanagedLayout? ValueUnmanaged { get; } = ValueUnmanaged;
+        public MpType? ValueFormatterType { get; } = ValueFormatterType;
+
+        public TypePlan GetKeyPlan(MemoryPackDecoder decoder)
+        {
+            TypePlan? plan = Volatile.Read(ref _keyPlan);
+            if (plan != null)
+                return plan;
+            plan = decoder.GetPlan(KeyType);
+            Volatile.Write(ref _keyPlan, plan);
+            return plan;
         }
 
-        public readonly int Length => _data.Length;
-        public readonly int Remaining => _data.Length - Position;
-        public readonly ReadOnlySpan<byte> Buffer => _data;
-
-        public readonly Cursor Fork(int position) => new(_data, position);
-
-        public byte U8() => Take(1)[0];
-
-        public int I32() => BinaryPrimitives.ReadInt32LittleEndian(Take(4));
-
-        public uint U32() => BinaryPrimitives.ReadUInt32LittleEndian(Take(4));
-
-        public ushort U16() => BinaryPrimitives.ReadUInt16LittleEndian(Take(2));
-
-        public long I64() => BinaryPrimitives.ReadInt64LittleEndian(Take(8));
-
-        public ulong U64() => BinaryPrimitives.ReadUInt64LittleEndian(Take(8));
-
-        public float F32() => BinaryPrimitives.ReadSingleLittleEndian(Take(4));
-
-        public double F64() => BinaryPrimitives.ReadDoubleLittleEndian(Take(8));
-
-        public ReadOnlySpan<byte> Take(int count)
+        public TypePlan GetValuePlan(MemoryPackDecoder decoder)
         {
-            if (count < 0 || Position > _data.Length - count)
-            {
-                throw new InvalidDataException(
-                    $"Need {count} bytes at offset {Position}, buffer length is {_data.Length}."
-                );
-            }
-
-            var slice = _data.Slice(Position, count);
-            Position += count;
-            return slice;
+            TypePlan? plan = Volatile.Read(ref _valuePlan);
+            if (plan != null)
+                return plan;
+            plan = decoder.GetPlan(ValueType);
+            Volatile.Write(ref _valuePlan, plan);
+            return plan;
         }
+    }
+
+    private sealed class NullablePlan(string elementType) : TypePlan
+    {
+        private TypePlan? _elementPlan;
+        public string ElementType { get; } = elementType;
+
+        public TypePlan GetElementPlan(MemoryPackDecoder decoder)
+        {
+            TypePlan? plan = Volatile.Read(ref _elementPlan);
+            if (plan != null)
+                return plan;
+            plan = decoder.GetPlan(ElementType);
+            Volatile.Write(ref _elementPlan, plan);
+            return plan;
+        }
+    }
+
+    private sealed class ObjectPlan(MpType? resolvedObject, string? error) : TypePlan
+    {
+        public MpType? ResolvedObject { get; } = resolvedObject;
+        public string? Error { get; } = error;
+    }
+
+    private sealed class PrimitivePlan(MpKind kind) : TypePlan
+    {
+        public MpKind Kind { get; } = kind;
+    }
+
+    private sealed class ErrorPlan(string? message) : TypePlan
+    {
+        public string? Message { get; } = message;
     }
 }

@@ -1,24 +1,14 @@
 using System.Text.Encodings.Web;
 using System.Text.Json;
-using System.Text.Json.Nodes;
-using System.Text.Json.Serialization;
 using MessagePack;
 
 namespace BydTools.Formats.MemoryPack;
 
-public enum JsonDataFileKind
+public enum JsonDataClassification
 {
-    Decoded,
-    PlainJson,
-    Skipped,
-    Failed,
-}
-
-public sealed class JsonDataFileResult
-{
-    public required string RelativePath { get; init; }
-    public required JsonDataFileKind Kind { get; init; }
-    public string? Error { get; init; }
+    MemoryPack,
+    PlainText,
+    Skip,
 }
 
 /// <summary>
@@ -27,13 +17,6 @@ public sealed class JsonDataFileResult
 /// </summary>
 public static class JsonDataMemoryPack
 {
-    public static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        WriteIndented = true,
-        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-        NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals,
-    };
-
     public static readonly JsonWriterOptions WriterOptions = new()
     {
         Indented = true,
@@ -45,10 +28,10 @@ public static class JsonDataMemoryPack
     /// A flat <c>{ "296": "..." }</c> object is treated as AbilityActionData only (legacy).
     /// </summary>
     public static IReadOnlyDictionary<string, IReadOnlyDictionary<int, string>> LoadUnionMap(string path) =>
-        SchemaFile.Parse(path, LoadUnionMap, LoadUnionMapMsgPack);
+        SchemaFile.Parse(path, LoadUnionMapMsgPack);
 
     public static IReadOnlyDictionary<string, IReadOnlyDictionary<int, string>> LoadUnionMap(byte[] data) =>
-        SchemaFile.Parse(data, LoadUnionMap, LoadUnionMapMsgPack);
+        SchemaFile.Parse(data, LoadUnionMapMsgPack);
 
     private static IReadOnlyDictionary<string, IReadOnlyDictionary<int, string>> LoadUnionMapMsgPack(
         ref MessagePackReader reader)
@@ -107,58 +90,6 @@ public static class JsonDataMemoryPack
             map[tag] = name;
         }
 
-        return map;
-    }
-
-    public static IReadOnlyDictionary<string, IReadOnlyDictionary<int, string>> LoadUnionMap(JsonElement root)
-    {
-        if (root.ValueKind != JsonValueKind.Object)
-            throw new InvalidDataException("Union map must be a JSON object.");
-
-        var maps = new Dictionary<string, IReadOnlyDictionary<int, string>>(StringComparer.Ordinal);
-        bool looksNested = false;
-        foreach (var prop in root.EnumerateObject())
-        {
-            if (prop.Value.ValueKind == JsonValueKind.Object
-                && prop.Value.EnumerateObject().Any(p => int.TryParse(p.Name, out _)))
-            {
-                // Nested union name → tags, or flat tags (names are integers).
-                if (!int.TryParse(prop.Name, out _))
-                    looksNested = true;
-            }
-        }
-
-        if (looksNested)
-        {
-            foreach (var prop in root.EnumerateObject())
-            {
-                if (prop.Value.ValueKind != JsonValueKind.Object)
-                    continue;
-                maps[prop.Name] = ReadTagObject(prop.Value);
-            }
-        }
-        else
-        {
-            maps["AbilityActionData"] = ReadTagObject(root);
-        }
-
-        return maps;
-    }
-
-    private static Dictionary<int, string> ReadTagObject(JsonElement tags)
-    {
-        var map = new Dictionary<int, string>();
-        if (tags.ValueKind != JsonValueKind.Object)
-            throw new InvalidDataException("Union map tags must be an object of tag to type name.");
-        foreach (var prop in tags.EnumerateObject())
-        {
-            if (!int.TryParse(prop.Name, out int tag))
-                throw new InvalidDataException($"Union tag \"{prop.Name}\" is not an integer.");
-            string? name = prop.Value.GetString();
-            if (string.IsNullOrWhiteSpace(name))
-                throw new InvalidDataException($"Union tag {tag} has an empty type name.");
-            map[tag] = name;
-        }
         return map;
     }
 
@@ -229,76 +160,14 @@ public static class JsonDataMemoryPack
         return i;
     }
 
-    public static JsonDataFileResult DecodeToStream(
-        MemoryPackDecoder decoder,
-        MemoryPackSchema schema,
-        ReadOnlyMemory<byte> data,
-        string relative,
-        Action<Action<Stream>> writeStream)
+    public static JsonDataClassification Classify(ReadOnlySpan<byte> data)
     {
-        try
-        {
-            ReadOnlySpan<byte> span = data.Span;
-            if (span.Length == 0)
-            {
-                return new JsonDataFileResult
-                {
-                    RelativePath = relative,
-                    Kind = JsonDataFileKind.Skipped,
-                    Error = "Empty file.",
-                };
-            }
+        if (data.Length == 0 || data.StartsWith("USPC"u8) || data.StartsWith("SHPI"u8))
+            return JsonDataClassification.Skip;
 
-            if (span.StartsWith("USPC"u8) || span.StartsWith("SHPI"u8))
-            {
-                return new JsonDataFileResult
-                {
-                    RelativePath = relative,
-                    Kind = JsonDataFileKind.Skipped,
-                    Error = "USPC/SHPI container.",
-                };
-            }
+        if (IsPlainJson(data) || IsPlainText(data))
+            return JsonDataClassification.PlainText;
 
-            if (IsPlainJson(span) || IsPlainText(span))
-            {
-                writeStream(stream => stream.Write(data.Span));
-                return new JsonDataFileResult { RelativePath = relative, Kind = JsonDataFileKind.PlainJson };
-            }
-
-            if (!schema.TryIdentifyRoot(relative, span, out string? root, out string? error))
-            {
-                return new JsonDataFileResult
-                {
-                    RelativePath = relative,
-                    Kind = JsonDataFileKind.Failed,
-                    Error = error,
-                };
-            }
-
-            JsonNode? node = decoder.Decode(span, root!);
-            writeStream(stream =>
-            {
-                if (node == null)
-                {
-                    stream.Write("null\n"u8);
-                    return;
-                }
-
-                using var writer = new Utf8JsonWriter(stream, WriterOptions);
-                node.WriteTo(writer, JsonOptions);
-                writer.Flush();
-                stream.Write("\n"u8);
-            });
-            return new JsonDataFileResult { RelativePath = relative, Kind = JsonDataFileKind.Decoded };
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            return new JsonDataFileResult
-            {
-                RelativePath = relative,
-                Kind = JsonDataFileKind.Failed,
-                Error = ex.Message,
-            };
-        }
+        return JsonDataClassification.MemoryPack;
     }
 }

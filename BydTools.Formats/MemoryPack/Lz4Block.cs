@@ -52,8 +52,21 @@ static class Lz4Block
             if ((uint)match > (uint)(dst.Length - d))
                 throw new InvalidDataException("LZ4 match run exceeds the output.");
             int from = d - offset;
-            for (int i = 0; i < match; i++)
-                dst[d++] = dst[from++];
+            if (offset >= match)
+            {
+                dst.Slice(from, match).CopyTo(dst.Slice(d));
+                d += match;
+            }
+            else if (offset == 1)
+            {
+                dst.Slice(d, match).Fill(dst[from]);
+                d += match;
+            }
+            else
+            {
+                for (int i = 0; i < match; i++)
+                    dst[d++] = dst[from++];
+            }
         }
 
         return d;

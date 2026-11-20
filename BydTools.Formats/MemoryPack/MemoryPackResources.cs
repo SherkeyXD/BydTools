@@ -17,9 +17,6 @@ public static class MemoryPackResources
     public static IReadOnlyDictionary<string, IReadOnlyDictionary<int, string>> UnionMaps =>
         Loaded.Value.UnionMaps;
 
-    public static MemoryPackDecoder CreateDecoder(BeyondStringPool? pool = null) =>
-        new(Schema, pool, UnionMaps);
-
     public static byte[] Read(string fileName)
     {
         string name = Prefix + fileName;

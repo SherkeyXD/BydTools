@@ -32,6 +32,28 @@ public enum MpKind
     Unmanaged,
 }
 
+public enum MpCollectionEncoding : byte
+{
+    None,
+    Memcpy,
+    Formatter,
+    Memorypack,
+    Utf8,
+}
+
+internal static class MpCollectionEncodingParser
+{
+    public static MpCollectionEncoding Parse(string? value) =>
+        value switch
+        {
+            "memcpy" => MpCollectionEncoding.Memcpy,
+            "formatter" => MpCollectionEncoding.Formatter,
+            "memorypack" => MpCollectionEncoding.Memorypack,
+            "utf8" => MpCollectionEncoding.Utf8,
+            _ => MpCollectionEncoding.None,
+        };
+}
+
 public sealed class MpMember
 {
     public required string Name { get; init; }
@@ -41,7 +63,7 @@ public sealed class MpMember
     /// Native collection encoding for this field from schema <c>wire_order</c>.
     /// <c>memcpy</c> is i32 count then <c>count * payload_size</c> with no per-element header.
     /// </summary>
-    public string? CollectionEncoding { get; init; }
+    public MpCollectionEncoding CollectionEncoding { get; init; }
 }
 
 /// <summary>One <c>*ForMemoryPack</c> wrapper. <see cref="Wire"/> is the exporter wire_order.</summary>
@@ -51,7 +73,6 @@ public sealed class MpType
     public required string WrapperType { get; init; }
     public required bool HasDeserialize { get; init; }
     public required MpMember[] Wire { get; set; }
-    public int? MinFieldOffset { get; init; }
     public bool SerializeMarker { get; set; }
     /// <summary>Exporter <c>parent_type</c>. Union fallback collects wrappers with this parent.</summary>
     public string? ParentType { get; init; }
@@ -80,7 +101,7 @@ public sealed class MpUnmanagedLayout
     /// Native <c>T[]</c> / <c>List&lt;T&gt;</c> encoding from schema <c>unmanaged.json</c>.
     /// <c>memcpy</c> is i32 count then <c>count * PayloadSize</c> with no per-element object header.
     /// </summary>
-    public string? CollectionEncoding { get; init; }
+    public MpCollectionEncoding CollectionEncoding { get; init; }
 }
 
 public sealed class MemoryPackSchema
@@ -95,7 +116,6 @@ public sealed class MemoryPackSchema
     private readonly object _tagGate = new();
     private readonly Dictionary<string, List<MpType>> _childrenByParent = new(StringComparer.Ordinal);
     private readonly Dictionary<string, MpType[]> _descendants = new(StringComparer.Ordinal);
-    private readonly Lazy<MemoryPackUnionResolver> _defaultUnionResolver;
 
     internal MemoryPackSchema(
         Dictionary<string, List<MpType>> byTarget,
@@ -115,9 +135,6 @@ public sealed class MemoryPackSchema
         _unmanaged = unmanaged;
         IndexDerivedTypes();
         RootResolver = new MemoryPackRootResolver(this);
-        _defaultUnionResolver = new Lazy<MemoryPackUnionResolver>(
-            () => new MemoryPackUnionResolver(this),
-            LazyThreadSafetyMode.ExecutionAndPublication);
     }
 
     internal IReadOnlyDictionary<string, List<MpType>> ByTarget => _byTarget;
@@ -134,13 +151,6 @@ public sealed class MemoryPackSchema
         ReadOnlyMemory<byte> enumsData = default,
         ReadOnlyMemory<byte> unmanagedData = default) =>
         MemoryPackSchemaLoader.LoadFromBytes(schemasData, indexData, enumsData, unmanagedData);
-
-    public static MemoryPackSchema Load(
-        JsonDocument schemaDoc,
-        JsonDocument indexDoc,
-        JsonDocument? enumsDoc = null,
-        JsonDocument? unmanagedDoc = null) =>
-        MemoryPackSchemaLoader.Load(schemaDoc, indexDoc, enumsDoc, unmanagedDoc);
 
     public bool TryEnumWidth(string type, out byte width) =>
         _enumWidth.TryGetValue(type, out width);
@@ -170,17 +180,8 @@ public sealed class MemoryPackSchema
         return false;
     }
 
-    public IReadOnlyList<MpType> UnionCandidates(string staticType, string? hint) =>
-        _defaultUnionResolver.Value.GetCandidates(staticType, hint);
-
-    public bool TryBasename(string basename, string? folderHint, out string? targetType, out string? error) =>
-        RootResolver.TryBasename(basename, folderHint, out targetType, out error);
-
     public bool TryIdentifyRoot(string relativePath, ReadOnlySpan<byte> data, out string? targetType, out string? error) =>
         RootResolver.TryIdentifyRoot(relativePath, data, out targetType, out error);
-
-    public static int? PeekMemberCount(ReadOnlySpan<byte> data) =>
-        MemoryPackRootResolver.PeekMemberCount(data);
 
     public MpKind KindOf(string type)
     {
@@ -207,6 +208,13 @@ public sealed class MemoryPackSchema
         if (_byWrapper.TryGetValue(name, out MpType? wrapped))
             return wrapped;
         return Require(name, null);
+    }
+
+    public bool TryResolveNamed(string name, [NotNullWhen(true)] out MpType? type)
+    {
+        if (_byWrapper.TryGetValue(name, out type))
+            return true;
+        return TryResolve(name, hint: null, out type, out _);
     }
 
     public MpType Require(string targetType, string? hint) =>
