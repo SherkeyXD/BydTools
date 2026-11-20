@@ -57,16 +57,6 @@ Block types:
   AudioKorean, JsonLipChinese, JsonLipEnglish, JsonLipJapanese, JsonLipKorean
 ```
 
-Pass the game's `StreamingAssets` directory to `-i` and optionally its `Persistent`
-directory to `-p`. Each `.blc` declaration and `.chk` file is read from
-`Persistent/VFS` when present, otherwise from `StreamingAssets/VFS`. Empty or
-missing Persistent directories fall back to `-i`. Blocks found only in Persistent
-are also included.
-
-```powershell
-BydTools vfs -i "D:\Program Files\Endfield Game\Endfield_Data\StreamingAssets" -p "D:\Program Files\Endfield Game\Endfield_Data\Persistent" -t Table -o output
-```
-
 ### pck
 
 Extracts `.pck` audio and, in `wav` mode, converts WEM to WAV. Names come from the Table block's AudioDialog when that block is present.
@@ -93,9 +83,6 @@ Audio block types:
   InitAudio, Audio, AudioChinese, AudioEnglish, AudioJapanese, AudioKorean,
   AuditAudio, HotfixAudio
 ```
-
-`--persistent` uses the same file-by-file priority as `vfs`, including the Table
-block used for AudioDialog name mapping.
 
 ## License
 
