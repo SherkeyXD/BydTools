@@ -2,6 +2,7 @@
   <PropertyGroup>
     <IsPackable>false</IsPackable>
     <RootNamespace>WemDecoder</RootNamespace>
+    <NoWarn>$(NoWarn);CA1512;CA1822;CA1852;CA1859;CA2208</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>

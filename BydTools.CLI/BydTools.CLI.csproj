@@ -1,13 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <PublishSingleFile>true</PublishSingleFile>
-    <PublishTrimmed>true</PublishTrimmed>
-    <PublishReadyToRun>false</PublishReadyToRun>
     <PublishAot>true</PublishAot>
-    <IsAotCompatible>true</IsAotCompatible>
-    <DebugType Condition="'$(Configuration)' == 'Release'">none</DebugType>
-    <DebugSymbols Condition="'$(Configuration)' == 'Release'">false</DebugSymbols>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <CopyOutputSymbolsToPublishDirectory>false</CopyOutputSymbolsToPublishDirectory>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\BydTools.Extraction\BydTools.Extraction.csproj" />
