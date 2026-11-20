@@ -65,3 +65,6 @@ nunit-*.xml
 .env.development.local/
 .env.test.local/
 .env.production.local/
+
+# Cursor local workspace files
+.cursor/
