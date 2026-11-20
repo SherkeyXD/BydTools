@@ -18,9 +18,22 @@ public ref struct SpanReader
         _position = 0;
     }
 
-    public int Position => _position;
-    public int Length => _span.Length;
-    public int Remaining => _span.Length - _position;
+    public int Position
+    {
+        readonly get => _position;
+        set => Seek(value);
+    }
+
+    public readonly int Length => _span.Length;
+    public readonly int Remaining => _span.Length - _position;
+    public readonly ReadOnlySpan<byte> Buffer => _span;
+
+    public readonly SpanReader Fork(int position)
+    {
+        var copy = new SpanReader(_span);
+        copy.Seek(position);
+        return copy;
+    }
 
     public void Seek(int position)
     {
@@ -57,6 +70,8 @@ public ref struct SpanReader
 
     public ReadOnlySpan<byte> ReadBytes(int count) => Take(count);
 
+    public short ReadInt16() => BinaryPrimitives.ReadInt16LittleEndian(Take(2));
+
     public ushort ReadUInt16() => BinaryPrimitives.ReadUInt16LittleEndian(Take(2));
 
     public int ReadInt32() => BinaryPrimitives.ReadInt32LittleEndian(Take(4));
@@ -66,6 +81,8 @@ public ref struct SpanReader
     public uint ReadUInt32BigEndian() => BinaryPrimitives.ReadUInt32BigEndian(Take(4));
 
     public long ReadInt64() => BinaryPrimitives.ReadInt64LittleEndian(Take(8));
+
+    public ulong ReadUInt64() => BinaryPrimitives.ReadUInt64LittleEndian(Take(8));
 
     public UInt128 ReadUInt128() => BinaryPrimitives.ReadUInt128LittleEndian(Take(16));
 
