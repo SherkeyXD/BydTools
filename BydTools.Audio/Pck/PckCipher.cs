@@ -1,4 +1,6 @@
 using System.Buffers.Binary;
+using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
 
 namespace BydTools.Audio.Pck;
 
@@ -41,7 +43,39 @@ public static class PckCipher
 
         int alignedSize = (size - pos) & ~0b11;
         int blocks = alignedSize / 4;
-        for (int block = 0; block < blocks; block++)
+        int block = 0;
+
+        if (Vector128.IsHardwareAccelerated && BitConverter.IsLittleEndian && blocks >= 4)
+        {
+            Vector128<uint> constM = Vector128.Create(ConstM);
+            Vector128<uint> constX = Vector128.Create(ConstX);
+            Vector128<uint> maskFF = Vector128.Create(0xFFu);
+            Vector128<uint> step = Vector128.Create(4u);
+            Vector128<uint> counterVec = Vector128.Create(
+                baseCounter,
+                baseCounter + 1,
+                baseCounter + 2,
+                baseCounter + 3
+            );
+            ref byte dst = ref MemoryMarshal.GetReference(data);
+
+            for (; block <= blocks - 4; block += 4)
+            {
+                Vector128<uint> val = ((counterVec & maskFF) ^ constX) * constM;
+                val = (val ^ ((counterVec >>> 8) & maskFF)) * constM;
+                val = (val ^ ((counterVec >>> 16) & maskFF)) * constM;
+                val = (val ^ (counterVec >>> 24)) * constM;
+
+                nuint uoff = (nuint)pos;
+                Vector128<byte> plain = Vector128.LoadUnsafe(ref dst, uoff) ^ val.AsByte();
+                plain.StoreUnsafe(ref dst, uoff);
+
+                counterVec += step;
+                pos += 16;
+            }
+        }
+
+        for (; block < blocks; block++)
         {
             uint word = BinaryPrimitives.ReadUInt32LittleEndian(data.Slice(pos, 4));
             BinaryPrimitives.WriteUInt32LittleEndian(

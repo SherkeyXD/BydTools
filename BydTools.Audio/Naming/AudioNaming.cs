@@ -11,13 +11,18 @@ public static class AudioNaming
         PckMapper? mapper,
         string extension,
         IReadOnlyList<PckLanguage>? languages,
-        uint languageId
+        uint languageId,
+        out bool isMapped
     )
     {
         string? mapped = mapper?.GetMappedPath(fileId);
         if (mapped != null)
+        {
+            isMapped = true;
             return BuildMapped(blockFolder, blockLanguage, mapped, extension);
+        }
 
+        isMapped = false;
         return Unmapped(blockFolder, LanguageFolder(blockLanguage, languages, languageId), $"{fileId}{extension}");
     }
 
@@ -29,13 +34,18 @@ public static class AudioNaming
         PckMapper? mapper,
         string extension,
         IReadOnlyList<PckLanguage>? languages,
-        uint languageId
+        uint languageId,
+        out bool isMapped
     )
     {
         string? mapped = mapper?.GetMappedPath(wemId);
         if (mapped != null)
+        {
+            isMapped = true;
             return BuildMapped(blockFolder, blockLanguage, mapped, extension);
+        }
 
+        isMapped = false;
         string language = LanguageFolder(blockLanguage, languages, languageId);
         return Unmapped(blockFolder, language, $"{bankFileId}_{wemId}{extension}");
     }

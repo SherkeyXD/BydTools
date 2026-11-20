@@ -92,18 +92,16 @@ public sealed class PckArchive
         }
     }
 
-    public byte[] ToPlainPck(ReadOnlySpan<byte> file)
+    public void DecipherInPlace(Span<byte> file)
     {
-        byte[] copy = file.ToArray();
         if (!IsVfsEncrypted)
-            return copy;
+            return;
 
-        BinaryPrimitives.WriteUInt32LittleEndian(copy, AkpkMagic);
-        if (copy.Length < 8 + _decryptedHeader.Length)
+        BinaryPrimitives.WriteUInt32LittleEndian(file, AkpkMagic);
+        if (file.Length < 8 + _decryptedHeader.Length)
             throw new InvalidDataException("PCK buffer is too small for the decrypted header.");
-        _decryptedHeader.CopyTo(copy, 8);
-        DecipherPayloads(copy);
-        return copy;
+        _decryptedHeader.CopyTo(file[8..]);
+        DecipherPayloads(file);
     }
 
     public static bool TrySlice(Span<byte> file, PckFileEntry entry, out Span<byte> slice)
