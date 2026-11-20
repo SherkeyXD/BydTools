@@ -8,6 +8,16 @@ public interface IOutputSink
     OutputFile Create(string relativePath);
 }
 
+public static class OutputSinkExtensions
+{
+    public static void WriteRaw(this IOutputSink sink, string relativePath, ReadOnlySpan<byte> data)
+    {
+        using var output = sink.Create(relativePath);
+        output.Write(data);
+        output.Complete();
+    }
+}
+
 /// <summary>
 /// Writes to <c>path.partial</c> and moves into place only after <see cref="OutputFile.Complete"/>.
 /// Disposing without completing deletes the partial file, including on cancellation.

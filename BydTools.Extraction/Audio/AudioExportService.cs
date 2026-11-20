@@ -1,10 +1,11 @@
 using System.Collections.Concurrent;
-using System.Text.Json.Nodes;
+using System.Text.Json;
 using BydTools.Audio.Bnk;
 using BydTools.Audio.Naming;
 using BydTools.Audio.Pck;
 using BydTools.Audio.Wem;
 using BydTools.Core;
+using BydTools.Core.IO;
 using BydTools.Extraction.Sink;
 using BydTools.Formats.SparkBuffer;
 using BydTools.VFS;
@@ -17,17 +18,11 @@ public enum AudioExportMode
     Wav,
 }
 
-public sealed class AudioExportResult(int Extracted, int Converted, int Failed, IReadOnlyList<string> Failures)
-{
-    public int Extracted { get; } = Extracted;
-    public int Converted { get; } = Converted;
-    public int Failed { get; } = Failed;
-    public IReadOnlyList<string> Failures { get; } = Failures;
-}
+public sealed record AudioExportResult(int Extracted, int Converted, int Failed);
 
 /// <summary>
-/// Exports one audio block. PCK archives are decrypted and converted one at a time,
-/// and WEM jobs point into that archive's buffer instead of copying every file up front.
+/// Exports one audio block. PCK archives are decrypted and converted in a bounded pipeline,
+/// and WEM jobs point into each archive's buffer instead of copying every file up front.
 /// </summary>
 public sealed class AudioExportService
 {
@@ -47,6 +42,9 @@ public sealed class AudioExportService
         CancellationToken cancellationToken = default
     )
     {
+        if (mode == AudioExportMode.Wav && decoder == null)
+            throw new ArgumentNullException(nameof(decoder), "A WEM decoder is required when mode is Wav.");
+
         progress ??= NullProgress.Instance;
         string? language = block.Descriptor?.AudioLanguage;
         PckMapper? mapper = null;
@@ -55,30 +53,81 @@ public sealed class AudioExportService
         else if (mapNames)
             _logger.Info("Auto-mapping skipped: no language context for {0}", block.DisplayName);
 
-        var sink = new DirectoryOutputSink(outputDirectory);
-        int extracted = 0;
-        int converted = 0;
-        int failed = 0;
-        int mapped = 0;
-        int unmapped = 0;
-        var failures = new ConcurrentBag<string>();
-        int pckCount = 0;
-
+        var pckFiles = new List<(VfsChunk Chunk, VfsFile File)>();
+        long totalPckBytes = 0;
         foreach (var chunk in block.Info.Chunks)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            using var chunkReader = block.OpenChunkReader(chunk);
-            if (chunkReader == null)
-            {
-                _logger.Verbose("  Chunk not found, skipping");
-                continue;
-            }
-
             foreach (var file in chunk.Files)
             {
                 if (!file.Name.EndsWith(".pck", StringComparison.OrdinalIgnoreCase))
                     continue;
-                pckCount++;
+                pckFiles.Add((chunk, file));
+                if (file.Length > 0)
+                    totalPckBytes += file.Length;
+            }
+        }
+
+        if (pckFiles.Count == 0)
+        {
+            _logger.Info("No PCK files found in block.");
+            return new AudioExportResult(0, 0, 0);
+        }
+
+        progress.AddTotal(totalPckBytes);
+        var counters = new ExportCounters();
+        var ctx = new PckExportContext(
+            block.DisplayName,
+            language,
+            mode,
+            mapper,
+            decoder,
+            jobs,
+            new DirectoryOutputSink(outputDirectory),
+            progress,
+            counters,
+            cancellationToken
+        );
+
+        if (mode == AudioExportMode.Raw)
+            ExportRaw(block, pckFiles, ctx);
+        else
+            ExportWavPipelined(block, pckFiles, ctx);
+
+        _logger.Info("Name mapping: mapped={0}, unmapped={1}", counters.Mapped, counters.Unmapped);
+        if (_logger.IsVerboseEnabled)
+        {
+            foreach (string message in counters.Failures)
+                _logger.Verbose("  Failed: {0}", message);
+        }
+
+        return new AudioExportResult(counters.Extracted, counters.Converted, counters.Failed);
+    }
+
+    private void ExportRaw(VfsBlock block, List<(VfsChunk Chunk, VfsFile File)> pckFiles, PckExportContext ctx)
+    {
+        var seenPaths = new HashSet<string>(PathChecks.FileSystemComparer);
+        VfsChunk? currentChunk = null;
+        VfsChunkReader? chunkReader = null;
+        try
+        {
+            foreach (var (chunk, file) in pckFiles)
+            {
+                ctx.CancellationToken.ThrowIfCancellationRequested();
+                if (!ReferenceEquals(chunk, currentChunk))
+                {
+                    chunkReader?.Dispose();
+                    currentChunk = chunk;
+                    chunkReader = block.OpenChunkReader(chunk);
+                    if (chunkReader == null && _logger.IsVerboseEnabled)
+                        _logger.Verbose("  Chunk not found, skipping");
+                }
+
+                if (chunkReader == null)
+                {
+                    ctx.Progress.Advance(Math.Max(0, file.Length));
+                    continue;
+                }
+
                 byte[] data;
                 try
                 {
@@ -86,32 +135,27 @@ public sealed class AudioExportService
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    failed++;
-                    failures.Add($"{file.Name}: {ex.Message}");
+                    ctx.Counters.AddFailure($"{file.Name}: {ex.Message}");
+                    ctx.Progress.Advance(Math.Max(0, file.Length));
                     continue;
                 }
 
                 try
                 {
-                    ExportPck(
-                        data,
-                        file.Name,
-                        block.DisplayName,
-                        language,
-                        mode,
-                        mapper,
-                        decoder,
-                        jobs,
-                        sink,
-                        progress,
-                        cancellationToken,
-                        ref extracted,
-                        ref converted,
-                        ref failed,
-                        ref mapped,
-                        ref unmapped,
-                        failures
-                    );
+                    List<AudioJob> jobsToRun = CollectJobs(data, file.Name, ctx, seenPaths);
+                    long jobBytes = 0;
+                    foreach (var job in jobsToRun)
+                    {
+                        ctx.CancellationToken.ThrowIfCancellationRequested();
+                        ctx.Sink.WriteRaw(job.RelativePath, data.AsSpan(job.Offset, job.Length));
+                        ctx.Counters.AddExtracted();
+                        ctx.Progress.Advance(job.Length);
+                        jobBytes += job.Length;
+                    }
+
+                    long remainder = Math.Max(0, file.Length - jobBytes);
+                    if (remainder > 0)
+                        ctx.Progress.Advance(remainder);
                 }
                 catch (OperationCanceledException)
                 {
@@ -119,54 +163,198 @@ public sealed class AudioExportService
                 }
                 catch (Exception ex)
                 {
-                    failed++;
-                    failures.Add($"{file.Name}: {ex.Message}");
+                    ctx.Counters.AddFailure($"{file.Name}: {ex.Message}");
+                    ctx.Progress.Advance(Math.Max(0, file.Length));
                 }
             }
         }
-
-        if (pckCount == 0)
-            _logger.Info("No PCK files found in block.");
-        else
-            _logger.Info("Name mapping: mapped={0}, unmapped={1}", mapped, unmapped);
-
-        foreach (string message in failures)
-            _logger.Verbose("  Failed: {0}", message);
-
-        return new AudioExportResult(extracted, converted, failed, failures.ToArray());
+        finally
+        {
+            chunkReader?.Dispose();
+        }
     }
 
-    private void ExportPck(
+    private void ExportWavPipelined(
+        VfsBlock block,
+        List<(VfsChunk Chunk, VfsFile File)> pckFiles,
+        PckExportContext ctx)
+    {
+        int workerCount = Math.Max(1, ctx.Jobs);
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ctx.CancellationToken);
+        CancellationToken ct = linkedCts.Token;
+        using var pckBudget = new SemaphoreSlim(2, 2);
+        using var workQueue = new BlockingCollection<WavWorkItem>(Math.Max(8, workerCount * 4));
+        var seenPaths = new HashSet<string>(PathChecks.FileSystemComparer);
+
+        Task producer = Task.Run(() =>
+        {
+            VfsChunk? currentChunk = null;
+            VfsChunkReader? chunkReader = null;
+            try
+            {
+                foreach (var (chunk, file) in pckFiles)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    if (!ReferenceEquals(chunk, currentChunk))
+                    {
+                        chunkReader?.Dispose();
+                        currentChunk = chunk;
+                        chunkReader = block.OpenChunkReader(chunk);
+                        if (chunkReader == null && _logger.IsVerboseEnabled)
+                            _logger.Verbose("  Chunk not found, skipping");
+                    }
+
+                    if (chunkReader == null)
+                    {
+                        ctx.Progress.Advance(Math.Max(0, file.Length));
+                        continue;
+                    }
+
+                    pckBudget.Wait(ct);
+                    bool released = false;
+                    try
+                    {
+                        byte[] data = chunkReader.ReadFile(file);
+                        List<AudioJob> jobsToRun = CollectJobs(data, file.Name, ctx, seenPaths);
+                        long jobBytes = 0;
+                        foreach (var job in jobsToRun)
+                            jobBytes += job.Length;
+
+                        long overhead = Math.Max(0, file.Length - jobBytes);
+                        if (overhead > 0)
+                            ctx.Progress.Advance(overhead);
+
+                        if (jobsToRun.Count == 0)
+                        {
+                            pckBudget.Release();
+                            released = true;
+                            continue;
+                        }
+
+                        var lease = new PckLease(jobsToRun.Count, pckBudget);
+                        released = true; // Ownership transferred to lease.
+                        int enqueued = 0;
+                        try
+                        {
+                            foreach (var job in jobsToRun)
+                            {
+                                workQueue.Add(new WavWorkItem(lease, data, job.Offset, job.Length, job.RelativePath), ct);
+                                enqueued++;
+                            }
+                        }
+                        catch
+                        {
+                            int unqueued = jobsToRun.Count - enqueued;
+                            for (int k = 0; k < unqueued; k++)
+                                lease.Release();
+                            throw;
+                        }
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        if (!released)
+                            pckBudget.Release();
+                        ctx.Counters.AddFailure($"{file.Name}: {ex.Message}");
+                        ctx.Progress.Advance(Math.Max(0, file.Length));
+                    }
+                    catch
+                    {
+                        if (!released)
+                            pckBudget.Release();
+                        throw;
+                    }
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch
+            {
+                linkedCts.Cancel();
+                throw;
+            }
+            finally
+            {
+                chunkReader?.Dispose();
+                workQueue.CompleteAdding();
+            }
+        }, ct);
+
+        IWemDecoder decoder = ctx.Decoder!;
+        var options = new ParallelOptions
+        {
+            MaxDegreeOfParallelism = workerCount,
+            CancellationToken = ct,
+        };
+
+        try
+        {
+            Parallel.ForEach(
+                Partitioner.Create(workQueue.GetConsumingEnumerable(ct), EnumerablePartitionerOptions.NoBuffering),
+                options,
+                item =>
+                {
+                    try
+                    {
+                        using var output = ctx.Sink.Create(item.RelativePath);
+                        decoder.Decode(item.Data.AsMemory(item.Offset, item.Length), output);
+                        output.Complete();
+                        ctx.Counters.AddConverted();
+                        ctx.Counters.AddExtracted();
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        ctx.Counters.AddFailure($"{item.RelativePath}: {ex.Message}");
+                        string fallback = Path.ChangeExtension(item.RelativePath, ".wem");
+                        try
+                        {
+                            ctx.Sink.WriteRaw(fallback, item.Data.AsSpan(item.Offset, item.Length));
+                            ctx.Counters.AddExtracted();
+                        }
+                        catch (Exception writeEx) when (writeEx is not OperationCanceledException)
+                        {
+                            ctx.Counters.Failures.Add($"{fallback}: {writeEx.Message}");
+                        }
+                    }
+                    finally
+                    {
+                        ctx.Progress.Advance(item.Length);
+                        item.Lease.Release();
+                    }
+                }
+            );
+        }
+        catch
+        {
+            linkedCts.Cancel();
+            throw;
+        }
+        finally
+        {
+            producer.GetAwaiter().GetResult();
+        }
+    }
+
+    private List<AudioJob> CollectJobs(
         byte[] data,
         string pckName,
-        string blockFolder,
-        string? blockLanguage,
-        AudioExportMode mode,
-        PckMapper? mapper,
-        IWemDecoder? decoder,
-        int jobs,
-        DirectoryOutputSink sink,
-        IProgressSink progress,
-        CancellationToken cancellationToken,
-        ref int extracted,
-        ref int converted,
-        ref int failed,
-        ref int mapped,
-        ref int unmapped,
-        ConcurrentBag<string> failures
-    )
+        PckExportContext ctx,
+        HashSet<string> seenPaths)
     {
         _logger.Info("Parsing {0}...", pckName);
         var pck = PckArchive.Parse(data);
         if (pck.IsVfsEncrypted)
             pck.DecipherPayloads(data);
-        _logger.Verbose("  {0} entries, {1} languages", pck.Entries.Count, pck.Languages.Count);
+        if (_logger.IsVerboseEnabled)
+            _logger.Verbose("  {0} entries, {1} languages", pck.Entries.Count, pck.Languages.Count);
 
-        string extension = mode == AudioExportMode.Wav ? ".wav" : ".wem";
+        string extension = ctx.Mode == AudioExportMode.Wav ? ".wav" : ".wem";
         var jobsToRun = new List<AudioJob>();
+
         foreach (var entry in pck.Entries)
         {
-            cancellationToken.ThrowIfCancellationRequested();
+            ctx.CancellationToken.ThrowIfCancellationRequested();
             if (!PckArchive.TrySlice(data, entry, out var slice) || slice.Length < 4)
                 continue;
 
@@ -177,123 +365,68 @@ public sealed class AudioExportService
                     var wems = BnkParser.Parse(slice);
                     foreach (var wem in wems)
                     {
-                        bool isMapped = mapper?.GetMappedPath(wem.Id) != null;
-                        if (isMapped)
-                            mapped++;
-                        else
-                            unmapped++;
                         string relative = AudioNaming.ResolveBnkWem(
-                            blockFolder,
-                            blockLanguage,
+                            ctx.BlockFolder,
+                            ctx.BlockLanguage,
                             entry.FileId,
                             wem.Id,
-                            mapper,
+                            ctx.Mapper,
                             extension,
                             pck.Languages,
-                            entry.LanguageId
+                            entry.LanguageId,
+                            out bool isMapped
                         );
-                        jobsToRun.Add(new AudioJob((int)entry.Offset + wem.Offset, wem.Size, relative));
+                        ctx.Counters.AddMapping(isMapped);
+                        if (seenPaths.Add(relative))
+                            jobsToRun.Add(new AudioJob((int)entry.Offset + wem.Offset, wem.Size, relative));
+                        else if (_logger.IsVerboseEnabled)
+                            _logger.Verbose("  Duplicate audio path skipped: {0}", relative);
                     }
                 }
                 else if (slice[..4].SequenceEqual("RIFF"u8) || slice[..4].SequenceEqual("RIFX"u8))
                 {
-                    bool isMapped = mapper?.GetMappedPath(entry.FileId) != null;
-                    if (isMapped)
-                        mapped++;
-                    else
-                        unmapped++;
                     string relative = AudioNaming.ResolveWem(
-                        blockFolder,
-                        blockLanguage,
+                        ctx.BlockFolder,
+                        ctx.BlockLanguage,
                         entry.FileId,
-                        mapper,
+                        ctx.Mapper,
                         extension,
                         pck.Languages,
-                        entry.LanguageId
+                        entry.LanguageId,
+                        out bool isMapped
                     );
-                    jobsToRun.Add(new AudioJob((int)entry.Offset, (int)entry.Size, relative));
+                    ctx.Counters.AddMapping(isMapped);
+                    if (seenPaths.Add(relative))
+                        jobsToRun.Add(new AudioJob((int)entry.Offset, (int)entry.Size, relative));
+                    else if (_logger.IsVerboseEnabled)
+                        _logger.Verbose("  Duplicate audio path skipped: {0}", relative);
                 }
-                else if (slice[..4].SequenceEqual("PLUG"u8) && mode == AudioExportMode.Raw)
+                else if (slice[..4].SequenceEqual("PLUG"u8) && ctx.Mode == AudioExportMode.Raw)
                 {
                     string relative = AudioNaming.ResolveWem(
-                        blockFolder,
-                        blockLanguage,
+                        ctx.BlockFolder,
+                        ctx.BlockLanguage,
                         entry.FileId,
-                        mapper,
+                        ctx.Mapper,
                         ".plg",
                         pck.Languages,
-                        entry.LanguageId
+                        entry.LanguageId,
+                        out _
                     );
-                    Write(sink, relative, slice);
-                    extracted++;
+                    if (seenPaths.Add(relative))
+                    {
+                        ctx.Sink.WriteRaw(relative, slice);
+                        ctx.Counters.AddExtracted();
+                    }
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                failed++;
-                failures.Add($"{pckName}#{entry.FileId}: {ex.Message}");
+                ctx.Counters.AddFailure($"{pckName}#{entry.FileId}: {ex.Message}");
             }
         }
 
-        if (jobsToRun.Count == 0)
-            return;
-
-        progress.AddTotal(jobsToRun.Count);
-        if (mode == AudioExportMode.Raw || decoder == null)
-        {
-            foreach (var job in jobsToRun)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                Write(sink, job.RelativePath, data.AsSpan(job.Offset, job.Length));
-                extracted++;
-                progress.Advance(1);
-            }
-
-            return;
-        }
-
-        int localConverted = 0;
-        int localFailed = 0;
-        Parallel.ForEach(
-            jobsToRun,
-            new ParallelOptions
-            {
-                MaxDegreeOfParallelism = Math.Max(1, jobs),
-                CancellationToken = cancellationToken,
-            },
-            job =>
-            {
-                try
-                {
-                    using var output = sink.Create(job.RelativePath);
-                    decoder.Decode(data.AsMemory(job.Offset, job.Length), output);
-                    output.Complete();
-                    Interlocked.Increment(ref localConverted);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    try
-                    {
-                        string fallback = Path.ChangeExtension(job.RelativePath, ".wem");
-                        Write(sink, fallback, data.AsSpan(job.Offset, job.Length));
-                    }
-                    catch (Exception writeEx) when (writeEx is not OperationCanceledException)
-                    {
-                        failures.Add(writeEx.Message);
-                    }
-
-                    failures.Add(ex.Message);
-                    Interlocked.Increment(ref localFailed);
-                }
-                finally
-                {
-                    progress.Advance(1);
-                }
-            }
-        );
-        converted += localConverted;
-        failed += localFailed;
-        extracted += localConverted + localFailed;
+        return jobsToRun;
     }
 
     private PckMapper? LoadMapper(VfsArchive archive, string language, CancellationToken cancellationToken)
@@ -345,7 +478,7 @@ public sealed class AudioExportService
                     if (SparkBuffer.GetRootName(data) != "AudioDialog")
                         continue;
                     _logger.Info("  Found AudioDialog, parsing...");
-                    var mapper = new PckMapper(ExtractAudioDialogPaths(SparkBuffer.ReadObject(data)), language);
+                    var mapper = new PckMapper(ExtractAudioDialogPaths(data), language);
                     _logger.Info("  Mapped {0} entries (lang={1})", mapper.Count, language);
                     return mapper;
                 }
@@ -353,8 +486,9 @@ public sealed class AudioExportService
                 {
                     throw;
                 }
-                catch
+                catch (Exception ex)
                 {
+                    _logger.Verbose("  AudioDialog candidate {0} skipped: {1}", file.Name, ex.Message);
                     continue;
                 }
             }
@@ -363,26 +497,94 @@ public sealed class AudioExportService
         return null;
     }
 
-    private static IEnumerable<string> ExtractAudioDialogPaths(JsonObject root)
+    private static List<string> ExtractAudioDialogPaths(ReadOnlySpan<byte> sparkData)
     {
-        foreach (var entry in root)
-        {
-            if (entry.Value is not JsonObject row)
-                continue;
-            if (!row.TryGetPropertyValue("path", out var pathNode) || pathNode is null)
-                continue;
-            string? path = pathNode.GetValue<string>();
-            if (!string.IsNullOrWhiteSpace(path))
-                yield return path;
-        }
-    }
+        using var stream = new MemoryStream();
+        SparkBuffer.WriteJson(sparkData, stream);
+        stream.Position = 0;
+        using var doc = JsonDocument.Parse(stream);
+        if (doc.RootElement.ValueKind != JsonValueKind.Object)
+            throw new InvalidDataException("AudioDialog SparkBuffer root is not an object.");
 
-    private static void Write(IOutputSink sink, string relativePath, ReadOnlySpan<byte> data)
-    {
-        using var output = sink.Create(relativePath);
-        output.Write(data);
-        output.Complete();
+        var paths = new List<string>();
+        foreach (var entry in doc.RootElement.EnumerateObject())
+        {
+            if (entry.Value.ValueKind != JsonValueKind.Object)
+                continue;
+            if (!entry.Value.TryGetProperty("path", out var pathEl) || pathEl.ValueKind != JsonValueKind.String)
+                continue;
+            string? path = pathEl.GetString();
+            if (!string.IsNullOrWhiteSpace(path))
+                paths.Add(path);
+        }
+
+        return paths;
     }
 
     private readonly record struct AudioJob(int Offset, int Length, string RelativePath);
+
+    private readonly record struct WavWorkItem(
+        PckLease Lease,
+        byte[] Data,
+        int Offset,
+        int Length,
+        string RelativePath);
+
+    private sealed class PckLease(int count, SemaphoreSlim budget)
+    {
+        private int _remaining = count;
+
+        public void Release()
+        {
+            if (Interlocked.Decrement(ref _remaining) == 0)
+                budget.Release();
+        }
+    }
+
+    private sealed record PckExportContext(
+        string BlockFolder,
+        string? BlockLanguage,
+        AudioExportMode Mode,
+        PckMapper? Mapper,
+        IWemDecoder? Decoder,
+        int Jobs,
+        IOutputSink Sink,
+        IProgressSink Progress,
+        ExportCounters Counters,
+        CancellationToken CancellationToken
+    );
+
+    private sealed class ExportCounters
+    {
+        private int _extracted;
+        private int _converted;
+        private int _failed;
+        private int _mapped;
+        private int _unmapped;
+
+        public int Extracted => Volatile.Read(ref _extracted);
+        public int Converted => Volatile.Read(ref _converted);
+        public int Failed => Volatile.Read(ref _failed);
+        public int Mapped => Volatile.Read(ref _mapped);
+        public int Unmapped => Volatile.Read(ref _unmapped);
+        public ConcurrentBag<string> Failures { get; } = [];
+
+        public void AddExtracted() => Interlocked.Increment(ref _extracted);
+
+        public void AddConverted() => Interlocked.Increment(ref _converted);
+
+        public void AddMapping(bool mapped)
+        {
+            if (mapped)
+                Interlocked.Increment(ref _mapped);
+            else
+                Interlocked.Increment(ref _unmapped);
+        }
+
+        public void AddFailure(string message)
+        {
+            Failures.Add(message);
+            Interlocked.Increment(ref _failed);
+        }
+    }
 }

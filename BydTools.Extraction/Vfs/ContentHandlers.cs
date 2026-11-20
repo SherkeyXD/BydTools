@@ -1,3 +1,4 @@
+using System.Buffers;
 using BydTools.Audio.Pck;
 using BydTools.Extraction.Sink;
 using BydTools.Formats.Bundle;
@@ -9,24 +10,10 @@ using BydTools.Formats.Usm;
 
 namespace BydTools.Extraction.Vfs;
 
-public enum HandleStatus
-{
-    Handled,
-    Skipped,
-    Failed,
-}
-
-public readonly record struct HandleResult(HandleStatus Status, string? Error = null)
-{
-    public static HandleResult Handled { get; } = new(HandleStatus.Handled);
-    public static HandleResult Skipped { get; } = new(HandleStatus.Skipped);
-    public static HandleResult Fail(string? error = null) => new(HandleStatus.Failed, error);
-}
-
 public interface IContentHandler
 {
     bool CanHandle(string relativePath);
-    HandleResult Handle(string relativePath, ReadOnlyMemory<byte> data, IOutputSink sink);
+    bool Handle(string relativePath, Memory<byte> data, IOutputSink sink);
 }
 
 public sealed class SparkBufferHandler : IContentHandler
@@ -34,24 +21,20 @@ public sealed class SparkBufferHandler : IContentHandler
     public bool CanHandle(string relativePath) =>
         Path.GetExtension(relativePath).Equals(".bytes", StringComparison.OrdinalIgnoreCase);
 
-    public HandleResult Handle(string relativePath, ReadOnlyMemory<byte> data, IOutputSink sink)
+    public bool Handle(string relativePath, Memory<byte> data, IOutputSink sink)
     {
-        try
-        {
-            using var output = sink.Create(Path.ChangeExtension(relativePath, ".json"));
-            SparkBuffer.WriteJson(data.Span, output);
-            output.Complete();
-            return HandleResult.Handled;
-        }
-        catch (Exception ex)
-        {
-            return HandleResult.Fail(ex.Message);
-        }
+        using var output = sink.Create(Path.ChangeExtension(relativePath, ".json"));
+        SparkBuffer.WriteJson(data.Span, output);
+        output.Complete();
+        return true;
     }
 }
 
 public sealed class JsonDataHandler : IContentHandler
 {
+    [ThreadStatic]
+    private static ArrayBufferWriter<byte>? t_buffer;
+
     private readonly MemoryPackSchema _schema;
     private readonly MemoryPackDecoder _decoder;
 
@@ -72,32 +55,36 @@ public sealed class JsonDataHandler : IContentHandler
     public bool CanHandle(string relativePath) =>
         Path.GetExtension(relativePath).Equals(".json", StringComparison.OrdinalIgnoreCase);
 
-    public HandleResult Handle(string relativePath, ReadOnlyMemory<byte> data, IOutputSink sink)
+    public bool Handle(string relativePath, Memory<byte> data, IOutputSink sink)
     {
-        try
+        ReadOnlySpan<byte> span = data.Span;
+        switch (JsonDataMemoryPack.Classify(span))
         {
-            JsonDataFileResult result = JsonDataMemoryPack.DecodeToStream(
-                _decoder,
-                _schema,
-                data,
-                relativePath,
-                write =>
-                {
-                    using var file = sink.Create(relativePath);
-                    write(file);
-                    file.Complete();
-                }
-            );
-            if (result.Kind is JsonDataFileKind.Decoded or JsonDataFileKind.PlainJson)
-                return HandleResult.Handled;
+            case JsonDataClassification.Skip:
+                return false;
+            case JsonDataClassification.PlainText:
+                sink.WriteRaw(relativePath, span);
+                return true;
+            default:
+                if (!_schema.TryIdentifyRoot(relativePath, span, out string? root, out string? error))
+                    throw new InvalidDataException(error ?? $"Failed to identify MemoryPack root for \"{relativePath}\".");
 
-            return result.Kind == JsonDataFileKind.Failed
-                ? HandleResult.Fail(result.Error)
-                : HandleResult.Skipped;
-        }
-        catch (Exception ex)
-        {
-            return HandleResult.Fail(ex.Message);
+                var buffer = t_buffer ??= new ArrayBufferWriter<byte>(16 * 1024);
+                buffer.Clear();
+                try
+                {
+                    _decoder.WriteJson(span, root!, buffer);
+                    sink.WriteRaw(relativePath, buffer.WrittenSpan);
+                }
+                finally
+                {
+                    if (buffer.Capacity > 4 * 1024 * 1024)
+                        t_buffer = null;
+                    else
+                        buffer.Clear();
+                }
+
+                return true;
         }
     }
 }
@@ -107,22 +94,12 @@ public sealed class LuaHandler : IContentHandler
     public bool CanHandle(string relativePath) =>
         Path.GetExtension(relativePath).Equals(".lua", StringComparison.OrdinalIgnoreCase);
 
-    public HandleResult Handle(string relativePath, ReadOnlyMemory<byte> data, IOutputSink sink)
+    public bool Handle(string relativePath, Memory<byte> data, IOutputSink sink)
     {
-        try
-        {
-            byte[]? decrypted = LuaDecipher.Decrypt(data.Span);
-            if (decrypted == null)
-                return HandleResult.Fail("Lua decrypt returned no payload.");
-            using var output = sink.Create(relativePath);
-            output.Write(decrypted);
-            output.Complete();
-            return HandleResult.Handled;
-        }
-        catch (Exception ex)
-        {
-            return HandleResult.Fail(ex.Message);
-        }
+        byte[] decrypted = LuaDecipher.Decrypt(data.Span)
+            ?? throw new InvalidDataException("Lua decrypt returned no payload.");
+        sink.WriteRaw(relativePath, decrypted);
+        return true;
     }
 }
 
@@ -131,27 +108,18 @@ public sealed class UsmHandler : IContentHandler
     public bool CanHandle(string relativePath) =>
         relativePath.EndsWith(".usm", StringComparison.OrdinalIgnoreCase);
 
-    public HandleResult Handle(string relativePath, ReadOnlyMemory<byte> data, IOutputSink sink)
+    public bool Handle(string relativePath, Memory<byte> data, IOutputSink sink)
     {
-        try
+        string basePath = Path.ChangeExtension(relativePath, null) ?? relativePath;
+        var seen = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        int emitted = CriUsmDemuxer.Demux(data.Span, (ext, payload) =>
         {
-            string basePath = Path.ChangeExtension(relativePath, null) ?? relativePath;
-            var seen = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-            int emitted = CriUsmDemuxer.Demux(data.Span, (ext, payload) =>
-            {
-                seen.TryGetValue(ext, out int index);
-                string name = index == 0 ? basePath + ext : $"{basePath}_{index}{ext}";
-                seen[ext] = index + 1;
-                using var output = sink.Create(name);
-                output.Write(payload);
-                output.Complete();
-            });
-            return emitted == 0 ? HandleResult.Skipped : HandleResult.Handled;
-        }
-        catch (Exception ex)
-        {
-            return HandleResult.Fail(ex.Message);
-        }
+            seen.TryGetValue(ext, out int index);
+            string name = index == 0 ? basePath + ext : $"{basePath}_{index}{ext}";
+            seen[ext] = index + 1;
+            sink.WriteRaw(name, payload);
+        });
+        return emitted > 0;
     }
 }
 
@@ -160,21 +128,12 @@ public sealed class PckDecryptHandler : IContentHandler
     public bool CanHandle(string relativePath) =>
         relativePath.EndsWith(".pck", StringComparison.OrdinalIgnoreCase);
 
-    public HandleResult Handle(string relativePath, ReadOnlyMemory<byte> data, IOutputSink sink)
+    public bool Handle(string relativePath, Memory<byte> data, IOutputSink sink)
     {
-        try
-        {
-            var archive = PckArchive.Parse(data.Span);
-            byte[] plain = archive.ToPlainPck(data.Span);
-            using var output = sink.Create(relativePath);
-            output.Write(plain);
-            output.Complete();
-            return HandleResult.Handled;
-        }
-        catch (Exception ex)
-        {
-            return HandleResult.Fail(ex.Message);
-        }
+        var archive = PckArchive.Parse(data.Span);
+        archive.DecipherInPlace(data.Span);
+        sink.WriteRaw(relativePath, data.Span);
+        return true;
     }
 }
 
@@ -183,25 +142,18 @@ public sealed class BundleHandler : IContentHandler
     public bool CanHandle(string relativePath) =>
         Path.GetExtension(relativePath).Equals(".ab", StringComparison.OrdinalIgnoreCase);
 
-    public HandleResult Handle(string relativePath, ReadOnlyMemory<byte> data, IOutputSink sink)
+    public bool Handle(string relativePath, Memory<byte> data, IOutputSink sink)
     {
-        try
-        {
-            if (EndfieldBundle.IsStandardUnityBundle(data.Span))
-                return HandleResult.Skipped;
+        if (EndfieldBundle.IsStandardUnityBundle(data.Span))
+            return false;
 
-            if (!EndfieldBundle.IsEndfieldVfsBundle(data.Span))
-                return HandleResult.Fail("Unrecognized .ab bundle header.");
+        if (!EndfieldBundle.IsEndfieldVfsBundle(data.Span))
+            throw new InvalidDataException("Unrecognized .ab bundle header.");
 
-            using var output = sink.Create(relativePath);
-            EndfieldBundle.ConvertToStandardUnityFs(data.Span, output);
-            output.Complete();
-            return HandleResult.Handled;
-        }
-        catch (Exception ex)
-        {
-            return HandleResult.Fail(ex.Message);
-        }
+        using var output = sink.Create(relativePath);
+        EndfieldBundle.ConvertToStandardUnityFs(data.Span, output);
+        output.Complete();
+        return true;
     }
 }
 
@@ -210,18 +162,11 @@ public sealed class BundleManifestHandler : IContentHandler
     public bool CanHandle(string relativePath) =>
         Path.GetExtension(relativePath).Equals(".hgmmap", StringComparison.OrdinalIgnoreCase);
 
-    public HandleResult Handle(string relativePath, ReadOnlyMemory<byte> data, IOutputSink sink)
+    public bool Handle(string relativePath, Memory<byte> data, IOutputSink sink)
     {
-        try
-        {
-            using var output = sink.Create(relativePath + ".bin");
-            HgmmapManifest.DecompressBrotli(data.Span, output);
-            output.Complete();
-            return HandleResult.Handled;
-        }
-        catch (Exception ex)
-        {
-            return HandleResult.Fail(ex.Message);
-        }
+        using var output = sink.Create(relativePath + ".bin");
+        HgmmapManifest.DecompressBrotli(data.Span, output);
+        output.Complete();
+        return true;
     }
 }
