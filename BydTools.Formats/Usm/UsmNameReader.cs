@@ -19,13 +19,13 @@ public static class UsmNameReader
             return false;
 
         int blockSize = BinaryPrimitives.ReadInt32BigEndian(header12[4..]);
-        short payloadOffset = BinaryPrimitives.ReadInt16BigEndian(header12[8..]);
-        short paddingSize = BinaryPrimitives.ReadInt16BigEndian(header12[10..]);
-        int dataLength = blockSize - paddingSize - payloadOffset;
-        if (dataLength <= 0)
+        ushort payloadOffset = BinaryPrimitives.ReadUInt16BigEndian(header12[8..]);
+        ushort paddingSize = BinaryPrimitives.ReadUInt16BigEndian(header12[10..]);
+        long dataLength = (long)blockSize - paddingSize - payloadOffset;
+        if (dataLength <= 0 || dataLength > int.MaxValue - 12)
             return false;
 
-        totalBytes = 12 + dataLength;
+        totalBytes = 12 + (int)dataLength;
         return true;
     }
 
