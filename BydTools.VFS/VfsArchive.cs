@@ -1,119 +1,7 @@
-using System.Buffers.Binary;
 using BydTools.Core;
-using BydTools.Core.Crypto;
 using BydTools.Core.IO;
-using Microsoft.Win32.SafeHandles;
 
 namespace BydTools.VFS;
-
-public sealed class VfsChunkReader : IDisposable
-{
-    private readonly VfsBlock _block;
-    private readonly SafeFileHandle _handle;
-
-    internal VfsChunkReader(VfsBlock block, SafeFileHandle handle)
-    {
-        _block = block;
-        _handle = handle;
-    }
-
-    public byte[] ReadFile(VfsFile file) => _block.ReadFile(_handle, file);
-
-    public void Dispose() => _handle.Dispose();
-}
-
-public sealed class VfsBlock
-{
-    private readonly byte[] _key;
-    private readonly IReadOnlyList<string> _chunkDirectories;
-
-    internal VfsBlock(
-        string directoryPath,
-        VfsBlockInfo info,
-        BlockDescriptor? descriptor,
-        byte[] key,
-        IReadOnlyList<string> chunkDirectories
-    )
-    {
-        DirectoryPath = directoryPath;
-        Info = info;
-        Descriptor = descriptor;
-        _key = key;
-        _chunkDirectories = chunkDirectories;
-    }
-
-    public string DirectoryPath { get; }
-    public VfsBlockInfo Info { get; }
-    public BlockDescriptor? Descriptor { get; }
-
-    public string DisplayName =>
-        Descriptor?.Type.ToString()
-        ?? (Enum.IsDefined(Info.BlockType) ? Info.BlockType.ToString() : Info.GroupCfgName);
-
-    public string? ResolveChunkPath(VfsChunk chunk)
-    {
-        foreach (string directory in _chunkDirectories)
-        {
-            string path = Path.Combine(directory, chunk.FileName);
-            if (File.Exists(path))
-                return path;
-        }
-
-        return null;
-    }
-
-    public VfsChunkReader? OpenChunkReader(VfsChunk chunk)
-    {
-        string? path = ResolveChunkPath(chunk);
-        if (path == null)
-            return null;
-
-        var handle = File.OpenHandle(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-        return new VfsChunkReader(this, handle);
-    }
-
-    public byte[] ReadFile(string chunkPath, VfsFile file)
-    {
-        using var handle = File.OpenHandle(
-            chunkPath,
-            FileMode.Open,
-            FileAccess.Read,
-            FileShare.Read
-        );
-        return ReadFile(handle, file);
-    }
-
-    internal byte[] ReadFile(SafeFileHandle handle, VfsFile file)
-    {
-        if (file.Length < 0 || file.Length > int.MaxValue)
-            throw new InvalidDataException($"File '{file.Name}' has an invalid length ({file.Length}).");
-
-        int length = (int)file.Length;
-        byte[] data = new byte[length];
-        int got = 0;
-        while (got < length)
-        {
-            int n = RandomAccess.Read(handle, data.AsSpan(got), file.Offset + got);
-            if (n == 0)
-            {
-                throw new EndOfStreamException(
-                    $"Chunk ended before '{file.Name}' was fully read ({got}/{length})."
-                );
-            }
-
-            got += n;
-        }
-
-        if (!file.Encrypted)
-            return data;
-
-        Span<byte> nonce = stackalloc byte[VFSDefine.NonceLength];
-        BinaryPrimitives.WriteInt32LittleEndian(nonce, VFSDefine.ProtocolVersion);
-        BinaryPrimitives.WriteInt64LittleEndian(nonce[4..], file.IvSeed);
-        CSChaCha20.DecryptInPlace(_key, nonce, 1, data);
-        return data;
-    }
-}
 
 /// <summary>
 /// A game VFS directory. Blocks are discovered by decrypting every .blc,
@@ -170,61 +58,91 @@ public sealed class VfsArchive
             .Order(StringComparer.Ordinal)
             .ToArray();
 
-        var blocks = new List<VfsBlock>();
-        Exception? firstError = null;
-        foreach (string dirName in directoryNames)
-        {
-            string[] chunkDirectories = rootMaps
-                .Select(map => map.TryGetValue(dirName, out string? dir) ? dir : null)
-                .Where(static dir => dir != null)
-                .Cast<string>()
-                .ToArray();
-            string? blcPath = chunkDirectories
-                .Select(dir => FindBlcPath(dir, dirName))
-                .FirstOrDefault(static path => path != null);
-            if (blcPath == null)
+        var parsed = new (
+            string DirName,
+            string[] ChunkDirs,
+            string? BlcPath,
+            VfsBlockInfo? Info,
+            Exception? Error
+        )[directoryNames.Length];
+
+        Parallel.For(
+            0,
+            directoryNames.Length,
+            i =>
             {
-                logger.Verbose("  [{0}] No BLC file found, skipping.", dirName);
+                string dirName = directoryNames[i];
+                string[] chunkDirectories = rootMaps
+                    .Select(map => map.TryGetValue(dirName, out string? dir) ? dir : null)
+                    .Where(static dir => dir != null)
+                    .Cast<string>()
+                    .ToArray();
+                string? blcPath = chunkDirectories
+                    .Select(dir => FindBlcPath(dir, dirName))
+                    .FirstOrDefault(static path => path != null);
+                if (blcPath == null)
+                {
+                    parsed[i] = (dirName, chunkDirectories, null, null, null);
+                    return;
+                }
+
+                try
+                {
+                    VfsBlockInfo info = BlcReader.Read(blcPath, key);
+                    parsed[i] = (dirName, chunkDirectories, blcPath, info, null);
+                }
+                catch (Exception ex)
+                {
+                    parsed[i] = (dirName, chunkDirectories, blcPath, null, ex);
+                }
+            }
+        );
+
+        var blocks = new List<VfsBlock>(directoryNames.Length);
+        Exception? firstError = null;
+        foreach (var item in parsed)
+        {
+            if (item.BlcPath == null)
+            {
+                if (logger.IsVerboseEnabled)
+                    logger.Verbose("  [{0}] No BLC file found, skipping.", item.DirName);
                 continue;
             }
 
-            try
+            if (item.Error != null)
             {
-                var info = BlcReader.Read(blcPath, key);
-                if (info.NonceVersion != VFSDefine.ProtocolVersion)
-                {
-                    logger.Info(
-                        "Warning: VFS version {0} does not match expected {1}.",
-                        info.NonceVersion,
-                        VFSDefine.ProtocolVersion
-                    );
-                }
+                firstError ??= item.Error;
+                logger.Error("  [{0}] Failed to parse BLC: {1}", item.DirName, item.Error.Message);
+                continue;
+            }
 
-                BlockRegistry.TryGet(info.BlockType, out var byType);
-                var byName = BlockRegistry.All.FirstOrDefault(d =>
-                    d.Type.ToString().Equals(info.GroupCfgName, StringComparison.OrdinalIgnoreCase)
+            VfsBlockInfo info = item.Info!;
+            if (info.NonceVersion != VFSDefine.ProtocolVersion)
+            {
+                logger.Info(
+                    "Warning: VFS version {0} does not match expected {1}.",
+                    info.NonceVersion,
+                    VFSDefine.ProtocolVersion
                 );
-                var descriptor = byName ?? (byType is null ? null : byType);
-                if (
-                    descriptor != null
-                    && !descriptor.DirHash.Equals(info.GroupCfgHashName, StringComparison.OrdinalIgnoreCase)
-                )
-                {
-                    logger.Info(
-                        "Warning: {0} directory hash {1} differs from the catalog hash {2}.",
-                        info.GroupCfgName,
-                        info.GroupCfgHashName,
-                        descriptor.DirHash
-                    );
-                }
+            }
 
-                blocks.Add(new VfsBlock(Path.GetDirectoryName(blcPath)!, info, descriptor, key, chunkDirectories));
-            }
-            catch (Exception ex)
+            BlockRegistry.TryGet(info.BlockType, out var byType);
+            BlockRegistry.TryGetByName(info.GroupCfgName, out var byName);
+            var descriptor = byName ?? byType;
+            if (
+                descriptor != null
+                && !descriptor.DirHash.Equals(info.GroupCfgHashName, StringComparison.OrdinalIgnoreCase)
+            )
             {
-                firstError ??= ex;
-                logger.Error("  [{0}] Failed to parse BLC: {1}", dirName, ex.Message);
+                logger.Info(
+                    "Warning: {0} directory hash {1} differs from the catalog hash {2}.",
+                    info.GroupCfgName,
+                    info.GroupCfgHashName,
+                    descriptor.DirHash
+                );
             }
+
+            blocks.Add(new VfsBlock(Path.GetDirectoryName(item.BlcPath)!, info, descriptor, key, item.ChunkDirs));
         }
 
         if (blocks.Count == 0 && firstError != null)

@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Globalization;
 using BydTools.Core.Crypto;
 using BydTools.Core.IO;
 
@@ -36,7 +37,11 @@ public static class BlcReader
         {
             return ParseDecrypted(plain, nonceVersion, expectedHash);
         }
-        catch (InvalidDataException ex) when (!ex.Message.Contains("hash mismatch", StringComparison.Ordinal))
+        catch (BlcHashMismatchException ex)
+        {
+            throw new InvalidDataException(ex.Message, ex);
+        }
+        catch (InvalidDataException ex)
         {
             throw new InvalidDataException(
                 ex.Message + " The ChaCha20 key may be incorrect or the file is corrupt.",
@@ -44,6 +49,8 @@ public static class BlcReader
             );
         }
     }
+
+    private sealed class BlcHashMismatchException(string message) : Exception(message);
 
     private static VfsBlockInfo ParseDecrypted(ReadOnlySpan<byte> payload, int nonceVersion, string expectedHash)
     {
@@ -65,10 +72,10 @@ public static class BlcReader
 
         uint hash = reader.ReadUInt32BigEndian();
         reader.Skip(4);
-        string groupCfgHashName = hash.ToString("X8");
+        string groupCfgHashName = hash.ToString("X8", CultureInfo.InvariantCulture);
         if (!groupCfgHashName.Equals(expectedHash, StringComparison.OrdinalIgnoreCase))
         {
-            throw new InvalidDataException(
+            throw new BlcHashMismatchException(
                 $"BLC hash mismatch: parsed \"{groupCfgHashName}\", expected \"{expectedHash}\". "
                     + "The ChaCha20 key may be incorrect or outdated."
             );

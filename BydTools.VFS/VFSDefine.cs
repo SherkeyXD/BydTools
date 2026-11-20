@@ -13,35 +13,32 @@ public static class VFSDefine
     public const int NonceLength = 12;
     public const int KeyLength = 32;
 
-    public static byte[] ResolveKey(string? platform, string? keyBase64)
+    public static byte[] DecodeKey(string keyBase64)
     {
-        if (!string.IsNullOrWhiteSpace(keyBase64))
+        byte[] key;
+        try
         {
-            byte[] key;
-            try
-            {
-                key = Convert.FromBase64String(keyBase64);
-            }
-            catch (FormatException)
-            {
-                throw new ArgumentException("--key must be a valid Base64 string.");
-            }
-
-            if (key.Length != KeyLength)
-            {
-                throw new ArgumentException(
-                    $"--key must decode to {KeyLength} bytes (got {key.Length})."
-                );
-            }
-
-            return key;
+            key = Convert.FromBase64String(keyBase64);
+        }
+        catch (FormatException)
+        {
+            throw new ArgumentException("Key must be a valid Base64 string.", nameof(keyBase64));
         }
 
-        return (platform ?? "pc").ToLowerInvariant() switch
+        if (key.Length != KeyLength)
+            throw new ArgumentException($"Key must decode to {KeyLength} bytes (got {key.Length}).", nameof(keyBase64));
+
+        return key;
+    }
+
+    public static byte[] GetPlatformKey(string? platform) =>
+        (platform ?? "pc").ToLowerInvariant() switch
         {
             "pc" => PcKey,
             "android" => AndroidKey,
-            _ => throw new ArgumentException("--platform must be one of: pc, android."),
+            _ => throw new ArgumentException($"Unsupported platform \"{platform}\". Expected pc or android.", nameof(platform)),
         };
-    }
+
+    public static byte[] ResolveKey(string? platform, string? keyBase64) =>
+        !string.IsNullOrWhiteSpace(keyBase64) ? DecodeKey(keyBase64) : GetPlatformKey(platform);
 }

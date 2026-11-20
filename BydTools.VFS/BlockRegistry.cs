@@ -65,6 +65,9 @@ public static class BlockRegistry
     private static readonly FrozenDictionary<EVFSBlockType, BlockDescriptor> ByType =
         Entries.ToFrozenDictionary(static d => d.Type);
 
+    private static readonly FrozenDictionary<string, BlockDescriptor> ByName =
+        Entries.ToFrozenDictionary(static d => d.Type.ToString(), StringComparer.OrdinalIgnoreCase);
+
     public static IReadOnlyList<BlockDescriptor> All => Entries;
 
     public static IEnumerable<BlockDescriptor> Audio =>
@@ -73,6 +76,9 @@ public static class BlockRegistry
     public static bool TryGet(EVFSBlockType type, [NotNullWhen(true)] out BlockDescriptor? descriptor) =>
         ByType.TryGetValue(type, out descriptor);
 
+    public static bool TryGetByName(string name, [NotNullWhen(true)] out BlockDescriptor? descriptor) =>
+        ByName.TryGetValue(name, out descriptor);
+
     /// <summary>
     /// Accepts an enum name or a numeric value, and only when that value is catalogued.
     /// <see cref="EVFSBlockType.All"/> and <see cref="EVFSBlockType.Raw"/> are rejected,
@@ -80,11 +86,8 @@ public static class BlockRegistry
     /// </summary>
     public static bool TryParse(string text, [NotNullWhen(true)] out BlockDescriptor? descriptor)
     {
-        if (Enum.TryParse<EVFSBlockType>(text, ignoreCase: true, out var named) && ByType.ContainsKey(named))
-        {
-            descriptor = ByType[named];
+        if (ByName.TryGetValue(text, out descriptor))
             return true;
-        }
 
         if (byte.TryParse(text, out byte numeric))
         {
