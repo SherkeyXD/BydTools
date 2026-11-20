@@ -20,19 +20,25 @@ public sealed class VfsExtractor
     private readonly MemoryPackSchema? _jsonSchema;
     private readonly IReadOnlyDictionary<string, IReadOnlyDictionary<int, string>>? _unionMaps;
     private readonly bool _rawJsonData;
+    private readonly bool _rawBundles;
+    private readonly bool _rawManifests;
 
     public VfsExtractor(
         ILogger logger,
         IContentHandler? jsonDataHandler = null,
         bool rawJsonData = false,
         MemoryPackSchema? jsonSchema = null,
-        IReadOnlyDictionary<string, IReadOnlyDictionary<int, string>>? unionMaps = null)
+        IReadOnlyDictionary<string, IReadOnlyDictionary<int, string>>? unionMaps = null,
+        bool rawBundles = false,
+        bool rawManifests = false)
     {
         _logger = logger;
         _jsonDataHandler = jsonDataHandler;
         _rawJsonData = rawJsonData;
         _jsonSchema = jsonSchema;
         _unionMaps = unionMaps;
+        _rawBundles = rawBundles;
+        _rawManifests = rawManifests;
     }
 
     public VfsExtractResult Dump(
@@ -224,6 +230,8 @@ public sealed class VfsExtractor
                 : _jsonDataHandler ?? (_jsonSchema == null
                     ? new JsonDataHandler(pool)
                     : new JsonDataHandler(_jsonSchema, _unionMaps, pool)),
+            ContentKind.Bundle => _rawBundles ? null : new BundleHandler(),
+            ContentKind.BundleManifest => _rawManifests ? null : new BundleManifestHandler(),
             _ => null,
         };
 

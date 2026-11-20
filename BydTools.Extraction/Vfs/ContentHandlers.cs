@@ -1,6 +1,8 @@
 using BydTools.Audio.Pck;
 using BydTools.Extraction.Sink;
+using BydTools.Formats.Bundle;
 using BydTools.Formats.Lua;
+using BydTools.Formats.Manifest;
 using BydTools.Formats.MemoryPack;
 using BydTools.Formats.SparkBuffer;
 using BydTools.Formats.Usm;
@@ -166,6 +168,54 @@ public sealed class PckDecryptHandler : IContentHandler
             byte[] plain = archive.ToPlainPck(data.Span);
             using var output = sink.Create(relativePath);
             output.Write(plain);
+            output.Complete();
+            return HandleResult.Handled;
+        }
+        catch (Exception ex)
+        {
+            return HandleResult.Fail(ex.Message);
+        }
+    }
+}
+
+public sealed class BundleHandler : IContentHandler
+{
+    public bool CanHandle(string relativePath) =>
+        Path.GetExtension(relativePath).Equals(".ab", StringComparison.OrdinalIgnoreCase);
+
+    public HandleResult Handle(string relativePath, ReadOnlyMemory<byte> data, IOutputSink sink)
+    {
+        try
+        {
+            if (EndfieldBundle.IsStandardUnityBundle(data.Span))
+                return HandleResult.Skipped;
+
+            if (!EndfieldBundle.IsEndfieldVfsBundle(data.Span))
+                return HandleResult.Fail("Unrecognized .ab bundle header.");
+
+            using var output = sink.Create(relativePath);
+            EndfieldBundle.ConvertToStandardUnityFs(data.Span, output);
+            output.Complete();
+            return HandleResult.Handled;
+        }
+        catch (Exception ex)
+        {
+            return HandleResult.Fail(ex.Message);
+        }
+    }
+}
+
+public sealed class BundleManifestHandler : IContentHandler
+{
+    public bool CanHandle(string relativePath) =>
+        Path.GetExtension(relativePath).Equals(".hgmmap", StringComparison.OrdinalIgnoreCase);
+
+    public HandleResult Handle(string relativePath, ReadOnlyMemory<byte> data, IOutputSink sink)
+    {
+        try
+        {
+            using var output = sink.Create(relativePath + ".bin");
+            HgmmapManifest.DecompressBrotli(data.Span, output);
             output.Complete();
             return HandleResult.Handled;
         }
