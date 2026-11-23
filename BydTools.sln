@@ -17,8 +17,6 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BydTools.Extraction", "BydT
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WemDecoder", "WemDecoder\WemDecoder.csproj", "{716ECBF1-7C51-4A1D-A924-1409F8CAFB93}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BydTools.Tests", "BydTools.Tests\BydTools.Tests.csproj", "{A9241B64-7671-4729-BAE8-B008F17E83C9}"
-EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -113,18 +111,6 @@ Global
 		{716ECBF1-7C51-4A1D-A924-1409F8CAFB93}.Release|x64.Build.0 = Release|Any CPU
 		{716ECBF1-7C51-4A1D-A924-1409F8CAFB93}.Release|x86.ActiveCfg = Release|Any CPU
 		{716ECBF1-7C51-4A1D-A924-1409F8CAFB93}.Release|x86.Build.0 = Release|Any CPU
-		{A9241B64-7671-4729-BAE8-B008F17E83C9}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{A9241B64-7671-4729-BAE8-B008F17E83C9}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{A9241B64-7671-4729-BAE8-B008F17E83C9}.Debug|x64.ActiveCfg = Debug|Any CPU
-		{A9241B64-7671-4729-BAE8-B008F17E83C9}.Debug|x64.Build.0 = Debug|Any CPU
-		{A9241B64-7671-4729-BAE8-B008F17E83C9}.Debug|x86.ActiveCfg = Debug|Any CPU
-		{A9241B64-7671-4729-BAE8-B008F17E83C9}.Debug|x86.Build.0 = Debug|Any CPU
-		{A9241B64-7671-4729-BAE8-B008F17E83C9}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{A9241B64-7671-4729-BAE8-B008F17E83C9}.Release|Any CPU.Build.0 = Release|Any CPU
-		{A9241B64-7671-4729-BAE8-B008F17E83C9}.Release|x64.ActiveCfg = Release|Any CPU
-		{A9241B64-7671-4729-BAE8-B008F17E83C9}.Release|x64.Build.0 = Release|Any CPU
-		{A9241B64-7671-4729-BAE8-B008F17E83C9}.Release|x86.ActiveCfg = Release|Any CPU
-		{A9241B64-7671-4729-BAE8-B008F17E83C9}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
