@@ -25,8 +25,7 @@ public static class HgmmapManifest
     )
     {
         ArgumentNullException.ThrowIfNull(output);
-        if (maxDecompressedBytes <= 0)
-            throw new ArgumentOutOfRangeException(nameof(maxDecompressedBytes));
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxDecompressedBytes);
 
         if (compressed.IsEmpty)
             throw new InvalidDataException("Empty .hgmmap input.");
