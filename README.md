@@ -57,11 +57,6 @@ Block types:
   AudioKorean, JsonLipChinese, JsonLipEnglish, JsonLipJapanese, JsonLipKorean
 ```
 
-Post-VFS handling in `vfs`:
-
-- `InitBundle` / `Bundle` (`.ab`): Endfield VFS bundles are decrypted and repacked as standard `UnityFS` bundles (standard `UnityFS`/`UnityWeb`/`UnityRaw`/`UnityArchive` files pass through unchanged). Use `--raw` to keep the original `.ab` bytes.
-- `BundleManifest` (`.hgmmap`): Brotli-decompressed and written as `<name>.hgmmap.bin` (a validated binary manifest, not parsed JSON). Use `--raw` to keep the compressed `.hgmmap` file.
-
 ### pck
 
 Extracts `.pck` audio and, in `wav` mode, converts WEM to WAV. Names come from the Table block's AudioDialog when that block is present.
