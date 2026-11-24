@@ -11,6 +11,8 @@ public enum ContentKind
     Video,
     Audio,
     JsonData,
+    Bundle,
+    BundleManifest,
 }
 
 /// <summary>
@@ -29,11 +31,11 @@ public static class BlockRegistry
     private static readonly BlockDescriptor[] Entries =
     [
         new(EVFSBlockType.InitAudio, "07A1BB91", ContentKind.Audio, "Initial"),
-        new(EVFSBlockType.InitBundle, "0CE8FA57", ContentKind.Generic),
-        new(EVFSBlockType.BundleManifest, "1CDDBF1F", ContentKind.Generic),
+        new(EVFSBlockType.InitBundle, "0CE8FA57", ContentKind.Bundle),
+        new(EVFSBlockType.BundleManifest, "1CDDBF1F", ContentKind.BundleManifest),
         new(EVFSBlockType.InitialExtendData, "3C9D9D2D", ContentKind.Generic),
         new(EVFSBlockType.Audio, "24ED34CF", ContentKind.Audio, "Main"),
-        new(EVFSBlockType.Bundle, "7064D8E2", ContentKind.Generic),
+        new(EVFSBlockType.Bundle, "7064D8E2", ContentKind.Bundle),
         new(EVFSBlockType.DynamicStreaming, "23D53F5D", ContentKind.Generic),
         new(EVFSBlockType.Table, "42A8FCA6", ContentKind.Table),
         new(EVFSBlockType.Video, "55FC21C6", ContentKind.Video),

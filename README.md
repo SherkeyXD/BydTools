@@ -43,7 +43,7 @@ Options:
   --key <base64>             ChaCha20 key (32 bytes). Overrides --platform.
   --platform <name>          pc (default) or android, used when --key is omitted.
   --jobs <n>                 Chunks read at once. Default: processor count.
-  --raw                      Write JsonData files without MemoryPack decode.
+  --raw                      Write JsonData, Bundle (.ab), and BundleManifest (.hgmmap) without post-VFS decoding.
   --schema-dir <dir>         beyond-mp-schema export (overrides the embed). Ignored with --raw.
   -d, --debug                Print block declarations without extracting.
   -v, --verbose              Per-chunk and per-file details.
@@ -56,6 +56,11 @@ Block types:
   ExtendData, HotfixAudio, Terrain, AudioChinese, AudioEnglish, AudioJapanese,
   AudioKorean, JsonLipChinese, JsonLipEnglish, JsonLipJapanese, JsonLipKorean
 ```
+
+Post-VFS handling in `vfs`:
+
+- `InitBundle` / `Bundle` (`.ab`): Endfield VFS bundles are decrypted and repacked as standard `UnityFS` bundles (standard `UnityFS`/`UnityWeb`/`UnityRaw`/`UnityArchive` files pass through unchanged). Use `--raw` to keep the original `.ab` bytes.
+- `BundleManifest` (`.hgmmap`): Brotli-decompressed and written as `<name>.hgmmap.bin` (a validated binary manifest, not parsed JSON). Use `--raw` to keep the compressed `.hgmmap` file.
 
 ### pck
 
