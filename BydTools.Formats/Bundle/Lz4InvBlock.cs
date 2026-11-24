@@ -64,8 +64,21 @@ public static class Lz4InvBlock
                 throw new InvalidDataException("LZ4Inv match run exceeds the output.");
 
             int from = d - offset;
-            for (int i = 0; i < match; i++)
-                dst[d++] = dst[from++];
+            if (offset >= match)
+            {
+                dst.Slice(from, match).CopyTo(dst.Slice(d));
+                d += match;
+            }
+            else if (offset == 1)
+            {
+                dst.Slice(d, match).Fill(dst[from]);
+                d += match;
+            }
+            else
+            {
+                for (int i = 0; i < match; i++)
+                    dst[d++] = dst[from++];
+            }
         }
 
         return d;

@@ -191,18 +191,33 @@ public static class EndfieldBundle
             (int)blocksInfoOffset,
             (int)header.CompressedBlocksInfoSize
         );
-        byte[] blocksInfoBytes = DecodeBlocksInfoBytes(
-            compressedBlocksInfo,
-            (int)header.UncompressedBlocksInfoSize,
-            header.Flags & ArchiveCompressionMask
-        );
-
-        ParseBlocksAndNodes(
-            blocksInfoBytes,
-            out BundleStorageBlock[] blocks,
-            out BundleDirectoryNode[] nodes,
-            out long totalUncompressedSize
-        );
+        int blocksInfoLength = (int)header.UncompressedBlocksInfoSize;
+        byte[] blocksInfoBuf = blocksInfoLength > 0
+            ? ArrayPool<byte>.Shared.Rent(blocksInfoLength)
+            : [];
+        BundleStorageBlock[] blocks;
+        BundleDirectoryNode[] nodes;
+        long totalUncompressedSize;
+        try
+        {
+            Span<byte> blocksInfoSpan = blocksInfoBuf.AsSpan(0, blocksInfoLength);
+            DecodeBlocksInfoBytes(
+                compressedBlocksInfo,
+                blocksInfoSpan,
+                header.Flags & ArchiveCompressionMask
+            );
+            ParseBlocksAndNodes(
+                blocksInfoSpan,
+                out blocks,
+                out nodes,
+                out totalUncompressedSize
+            );
+        }
+        finally
+        {
+            if (blocksInfoBuf.Length > 0)
+                ArrayPool<byte>.Shared.Return(blocksInfoBuf);
+        }
 
         long cursor = dataStart;
         foreach (BundleStorageBlock block in blocks)
@@ -233,67 +248,105 @@ public static class EndfieldBundle
             cursor += consumed;
         }
 
-        byte[]? firstBlock = blocks.Length > 0
-            ? DecompressSingleBlock(data, dataStart, blocks[0])
-            : null;
-        string unityRevision = DetectUnityRevision(firstBlock, nodes) ?? DefaultUnityRevision;
-
-        byte[] standardBlocksInfo = BuildStandardBlocksInfo(blocks, nodes);
-        byte[] standardHeader = BuildStandardHeader(
-            unityRevision,
-            standardBlocksInfo.Length,
-            totalUncompressedSize
-        );
-
-        output.Write(standardHeader);
-        output.Write(standardBlocksInfo);
-
-        if (firstBlock != null)
+        if (blocks.Length == 0)
         {
-            output.Write(firstBlock);
-            long offset = dataStart + (blocks[0].Flags == 0 ? blocks[0].UncompressedSize : blocks[0].CompressedSize);
-            for (int i = 1; i < blocks.Length; i++)
+            byte[] emptyBlocksInfo = BuildStandardBlocksInfo(blocks, nodes);
+            byte[] emptyHeader = BuildStandardHeader(DefaultUnityRevision, emptyBlocksInfo.Length, totalUncompressedSize);
+            output.Write(emptyHeader);
+            output.Write(emptyBlocksInfo);
+            return;
+        }
+
+        BundleStorageBlock first = blocks[0];
+        int firstUncompSize = (int)first.UncompressedSize;
+        byte[]? firstBlockBuf = first.Flags == 5 && firstUncompSize > 0
+            ? ArrayPool<byte>.Shared.Rent(firstUncompSize)
+            : null;
+        try
+        {
+            ReadOnlySpan<byte> firstBlockSpan;
+            if (first.Flags == 0)
             {
-                BundleStorageBlock block = blocks[i];
-                WriteDecompressedBlock(data, offset, block, output);
-                offset += block.Flags == 0 ? block.UncompressedSize : block.CompressedSize;
+                firstBlockSpan = data.Slice((int)dataStart, firstUncompSize);
             }
+            else
+            {
+                Span<byte> dest = firstBlockBuf.AsSpan(0, firstUncompSize);
+                DecompressLz4InvBlock(data, dataStart, first, dest);
+                firstBlockSpan = dest;
+            }
+
+            string unityRevision = DetectUnityRevision(firstBlockSpan, nodes) ?? DefaultUnityRevision;
+            byte[] standardBlocksInfo = BuildStandardBlocksInfo(blocks, nodes);
+            byte[] standardHeader = BuildStandardHeader(
+                unityRevision,
+                standardBlocksInfo.Length,
+                totalUncompressedSize
+            );
+
+            output.Write(standardHeader);
+            output.Write(standardBlocksInfo);
+            output.Write(firstBlockSpan);
+        }
+        finally
+        {
+            if (firstBlockBuf != null)
+                ArrayPool<byte>.Shared.Return(firstBlockBuf);
+        }
+
+        long offset = dataStart + (first.Flags == 0 ? first.UncompressedSize : first.CompressedSize);
+        for (int i = 1; i < blocks.Length; i++)
+        {
+            BundleStorageBlock block = blocks[i];
+            WriteDecompressedBlock(data, offset, block, output);
+            offset += block.Flags == 0 ? block.UncompressedSize : block.CompressedSize;
         }
     }
 
-    private static byte[] DecodeBlocksInfoBytes(
+    private static void DecodeBlocksInfoBytes(
         ReadOnlySpan<byte> compressed,
-        int uncompressedSize,
+        Span<byte> destination,
         uint compressionType
     )
     {
         switch (compressionType)
         {
             case 0:
-                if (compressed.Length != uncompressedSize)
+                if (compressed.Length != destination.Length)
                 {
                     throw new InvalidDataException(
-                        $"Uncompressed BlocksInfo length {compressed.Length} != declared {uncompressedSize}."
+                        $"Uncompressed BlocksInfo length {compressed.Length} != declared {destination.Length}."
                     );
                 }
 
-                return compressed.ToArray();
+                compressed.CopyTo(destination);
+                break;
 
             case 2: // LZ4
             case 3: // LZ4HC
             {
-                byte[] decrypted = ArrayPool<byte>.Shared.Rent(compressed.Length);
+                byte[] decrypted = compressed.Length > 0
+                    ? ArrayPool<byte>.Shared.Rent(compressed.Length)
+                    : [];
                 try
                 {
                     Span<byte> decSpan = decrypted.AsSpan(0, compressed.Length);
                     compressed.CopyTo(decSpan);
                     EndfieldVfsCipher.TransformBlock(decSpan);
-                    return Lz4Block.Decompress(decSpan, uncompressedSize);
+                    int written = Lz4Block.Decompress(decSpan, destination);
+                    if (written != destination.Length)
+                    {
+                        throw new InvalidDataException(
+                            $"LZ4 block decoded {written} bytes, header declared {destination.Length}."
+                        );
+                    }
                 }
                 finally
                 {
-                    ArrayPool<byte>.Shared.Return(decrypted);
+                    if (decrypted.Length > 0)
+                        ArrayPool<byte>.Shared.Return(decrypted);
                 }
+                break;
             }
 
             default:
@@ -455,31 +508,6 @@ public static class EndfieldBundle
         }
     }
 
-    private static byte[] DecompressSingleBlock(
-        ReadOnlySpan<byte> data,
-        long dataOffset,
-        BundleStorageBlock block
-    )
-    {
-        if (block.Flags == 0)
-            return data.Slice((int)dataOffset, (int)block.UncompressedSize).ToArray();
-
-        int compSize = (int)block.CompressedSize;
-        int uncompSize = (int)block.UncompressedSize;
-        byte[] compBuf = ArrayPool<byte>.Shared.Rent(compSize);
-        try
-        {
-            Span<byte> compSpan = compBuf.AsSpan(0, compSize);
-            data.Slice((int)dataOffset, compSize).CopyTo(compSpan);
-            EndfieldVfsCipher.TransformBlock(compSpan);
-            return Lz4InvBlock.Decompress(compSpan, uncompSize);
-        }
-        finally
-        {
-            ArrayPool<byte>.Shared.Return(compBuf);
-        }
-    }
-
     private static void WriteDecompressedBlock(
         ReadOnlySpan<byte> data,
         long dataOffset,
@@ -493,37 +521,55 @@ public static class EndfieldBundle
             return;
         }
 
-        int compSize = (int)block.CompressedSize;
         int uncompSize = (int)block.UncompressedSize;
-        byte[] compBuf = ArrayPool<byte>.Shared.Rent(compSize);
-        byte[] uncompBuf = ArrayPool<byte>.Shared.Rent(uncompSize);
+        byte[] uncompBuf = uncompSize > 0 ? ArrayPool<byte>.Shared.Rent(uncompSize) : [];
+        try
+        {
+            Span<byte> uncompSpan = uncompBuf.AsSpan(0, uncompSize);
+            DecompressLz4InvBlock(data, dataOffset, block, uncompSpan);
+            output.Write(uncompSpan);
+        }
+        finally
+        {
+            if (uncompBuf.Length > 0)
+                ArrayPool<byte>.Shared.Return(uncompBuf);
+        }
+    }
+
+    private static void DecompressLz4InvBlock(
+        ReadOnlySpan<byte> data,
+        long dataOffset,
+        BundleStorageBlock block,
+        Span<byte> destination
+    )
+    {
+        int compSize = (int)block.CompressedSize;
+        int uncompSize = destination.Length;
+        byte[] compBuf = compSize > 0 ? ArrayPool<byte>.Shared.Rent(compSize) : [];
         try
         {
             Span<byte> compSpan = compBuf.AsSpan(0, compSize);
-            Span<byte> uncompSpan = uncompBuf.AsSpan(0, uncompSize);
             data.Slice((int)dataOffset, compSize).CopyTo(compSpan);
             EndfieldVfsCipher.TransformBlock(compSpan);
 
-            int written = Lz4InvBlock.Decompress(compSpan, uncompSpan);
+            int written = Lz4InvBlock.Decompress(compSpan, destination);
             if (written != uncompSize)
             {
                 throw new InvalidDataException(
                     $"LZ4Inv block decoded {written} bytes, header declared {uncompSize}."
                 );
             }
-
-            output.Write(uncompSpan);
         }
         finally
         {
-            ArrayPool<byte>.Shared.Return(compBuf);
-            ArrayPool<byte>.Shared.Return(uncompBuf);
+            if (compBuf.Length > 0)
+                ArrayPool<byte>.Shared.Return(compBuf);
         }
     }
 
-    private static string? DetectUnityRevision(byte[]? firstBlock, BundleDirectoryNode[] nodes)
+    private static string? DetectUnityRevision(ReadOnlySpan<byte> firstBlock, BundleDirectoryNode[] nodes)
     {
-        if (firstBlock == null)
+        if (firstBlock.IsEmpty)
             return null;
 
         foreach (BundleDirectoryNode node in nodes)
@@ -536,7 +582,7 @@ public static class EndfieldBundle
                 continue;
             }
 
-            ReadOnlySpan<byte> cab = firstBlock.AsSpan((int)node.Offset, (int)node.Size);
+            ReadOnlySpan<byte> cab = firstBlock.Slice((int)node.Offset, (int)node.Size);
             uint ver = BinaryPrimitives.ReadUInt32BigEndian(cab.Slice(8, 4));
             int versionOffset = ver >= 22 ? 48 : 20;
             if (ver < 7 || cab.Length <= versionOffset)
