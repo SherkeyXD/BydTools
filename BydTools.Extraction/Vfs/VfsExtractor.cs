@@ -2,6 +2,7 @@ using System.Buffers;
 using BydTools.Core;
 using BydTools.Core.IO;
 using BydTools.Extraction.Sink;
+using BydTools.Formats.Bundle;
 using BydTools.Formats.MemoryPack;
 using BydTools.Formats.Usm;
 using BydTools.VFS;
@@ -9,6 +10,28 @@ using BydTools.VFS;
 namespace BydTools.Extraction.Vfs;
 
 public sealed record VfsExtractResult(int Extracted, int Failed);
+
+public enum VfsCheckStatus
+{
+    Passed,
+    Skipped,
+    Failed,
+}
+
+public sealed record VfsBlockCheckResult(
+    string BlockName,
+    byte BlockType,
+    VfsCheckStatus Status,
+    string? SourceFile,
+    string? Reason = null
+);
+
+public sealed record VfsCheckResult(IReadOnlyList<VfsBlockCheckResult> Blocks)
+{
+    public int Passed => Blocks.Count(static b => b.Status == VfsCheckStatus.Passed);
+    public int Skipped => Blocks.Count(static b => b.Status == VfsCheckStatus.Skipped);
+    public int Failed => Blocks.Count(static b => b.Status == VfsCheckStatus.Failed);
+}
 
 public sealed class VfsExtractor
 {
@@ -112,36 +135,7 @@ public sealed class VfsExtractor
                     string relative = file.Name;
                     try
                     {
-                        if (string.IsNullOrEmpty(relative) && kind == ContentKind.Video)
-                        {
-                            string usmName = ReadUsmName(chunkReader, file) ?? $"{file.NameHash:X16}.usm";
-                            relative = Path.Combine("Video", usmName);
-                            if (_logger.IsVerboseEnabled)
-                                _logger.Verbose("    Recovered USM name: {0}", relative);
-                        }
-
-                        if (handler != null && handler.CanHandle(relative))
-                        {
-                            byte[] rented = chunkReader.RentAndReadFile(file, out int length);
-                            try
-                            {
-                                Memory<byte> data = rented.AsMemory(0, length);
-                                if (!handler.Handle(relative, data, sink))
-                                    sink.WriteRaw(relative, data.Span);
-                            }
-                            finally
-                            {
-                                if (rented.Length > 0)
-                                    ArrayPool<byte>.Shared.Return(rented);
-                            }
-                        }
-                        else
-                        {
-                            using var output = sink.Create(relative);
-                            chunkReader.CopyFileTo(file, output);
-                            output.Complete();
-                        }
-
+                        ExtractFile(chunkReader, file, kind, handler, sink, strictHandler: false, ref relative);
                         Interlocked.Increment(ref extracted);
                     }
                     catch (OperationCanceledException)
@@ -179,6 +173,281 @@ public sealed class VfsExtractor
                 : $"Done, {extracted} files extracted. {failed} failed."
         );
         return new VfsExtractResult(extracted, failed);
+    }
+
+    public VfsCheckResult Check(
+        VfsArchive archive,
+        string outputDirectory,
+        IProgressSink? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        progress ??= NullProgress.Instance;
+        if (archive.Blocks.Count == 0)
+        {
+            _logger.Info("No block declarations found.");
+            return new VfsCheckResult([]);
+        }
+
+        var blocks = archive.Blocks
+            .OrderBy(static b => b.DisplayName, StringComparer.Ordinal)
+            .ToArray();
+        progress.AddTotal(blocks.Length);
+
+        var results = new List<VfsBlockCheckResult>(blocks.Length);
+        foreach (VfsBlock block in blocks)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            VfsBlockCheckResult blockResult = CheckBlock(block, outputDirectory, cancellationToken);
+            results.Add(blockResult);
+            progress.Advance(1);
+        }
+
+        var summary = new VfsCheckResult(results);
+        _logger.Info(
+            "Check complete: {0} passed, {1} skipped, {2} failed.",
+            summary.Passed,
+            summary.Skipped,
+            summary.Failed);
+        return summary;
+    }
+
+    private VfsBlockCheckResult CheckBlock(
+        VfsBlock block,
+        string outputDirectory,
+        CancellationToken cancellationToken)
+    {
+        byte blockType = (byte)block.Info.BlockType;
+        int declaredFiles = 0;
+        var candidates = new List<(VfsChunk Chunk, VfsFile File)>();
+        foreach (VfsChunk chunk in block.Info.Chunks)
+        {
+            declaredFiles += chunk.Files.Count;
+            if (chunk.Files.Count == 0 || block.ResolveChunkPath(chunk) == null)
+                continue;
+
+            foreach (VfsFile file in chunk.Files)
+            {
+                if (file.Length >= 0)
+                    candidates.Add((chunk, file));
+            }
+        }
+
+        if (candidates.Count == 0)
+        {
+            string reason = declaredFiles == 0
+                ? "block has no files"
+                : "no chunk files found locally";
+            _logger.Info("SKIP  {0} ({1}): {2}", block.DisplayName, blockType, reason);
+            return new VfsBlockCheckResult(block.DisplayName, blockType, VfsCheckStatus.Skipped, null, reason);
+        }
+
+        ContentKind kind = block.Descriptor?.Kind ?? ContentKind.Generic;
+        string sourceName = "";
+        try
+        {
+            BeyondStringPool? pool = kind == ContentKind.JsonData && !_rawJsonData
+                ? LoadStringPool(block, cancellationToken)
+                : null;
+            IContentHandler? handler = CreateHandler(kind, pool);
+
+            var ordered = OrderCheckCandidates(candidates, kind, handler);
+            (VfsChunk Chunk, VfsFile File) selected = SelectCheckCandidate(block, ordered, kind, handler, cancellationToken);
+            sourceName = string.IsNullOrEmpty(selected.File.Name)
+                ? $"0x{selected.File.NameHash:X16}"
+                : selected.File.Name;
+
+            string blockOutput = Path.Combine(outputDirectory, SanitizeDirectorySegment(block.DisplayName));
+            var sink = new DirectoryOutputSink(blockOutput);
+            using var chunkReader = block.OpenChunkReader(selected.Chunk)
+                ?? throw new FileNotFoundException($"Chunk file not found: {selected.Chunk.FileName}");
+
+            string exported = selected.File.Name;
+            ExtractFile(chunkReader, selected.File, kind, handler, sink, strictHandler: true, ref exported);
+            _logger.Info("PASS  {0} ({1}) -> {2}", block.DisplayName, blockType, exported);
+            return new VfsBlockCheckResult(block.DisplayName, blockType, VfsCheckStatus.Passed, exported);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            if (string.IsNullOrEmpty(sourceName))
+                _logger.Info("FAIL  {0} ({1}): {2}", block.DisplayName, blockType, ex.Message);
+            else
+                _logger.Info("FAIL  {0} ({1}) [{2}]: {3}", block.DisplayName, blockType, sourceName, ex.Message);
+            return new VfsBlockCheckResult(
+                block.DisplayName,
+                blockType,
+                VfsCheckStatus.Failed,
+                string.IsNullOrEmpty(sourceName) ? null : sourceName,
+                ex.Message);
+        }
+    }
+
+    private static List<(VfsChunk Chunk, VfsFile File)> OrderCheckCandidates(
+        List<(VfsChunk Chunk, VfsFile File)> candidates,
+        ContentKind kind,
+        IContentHandler? handler) =>
+        candidates
+            .OrderByDescending(c => CanHandleCandidate(c.File.Name, kind, handler))
+            .ThenByDescending(c => !string.IsNullOrEmpty(c.File.Name) || kind == ContentKind.Video)
+            .ThenByDescending(static c => c.File.Length > 0)
+            .ThenByDescending(static c => c.File.Encrypted)
+            .ThenBy(static c => c.File.Length)
+            .ToList();
+
+    private static bool CanHandleCandidate(string fileName, ContentKind kind, IContentHandler? handler)
+    {
+        if (handler == null)
+            return true;
+        if (string.IsNullOrEmpty(fileName) && kind == ContentKind.Video)
+            return true;
+        return handler.CanHandle(fileName);
+    }
+
+    private static (VfsChunk Chunk, VfsFile File) SelectCheckCandidate(
+        VfsBlock block,
+        List<(VfsChunk Chunk, VfsFile File)> ordered,
+        ContentKind kind,
+        IContentHandler? handler,
+        CancellationToken cancellationToken)
+    {
+        const int maxProbeCount = 16;
+        if (handler is JsonDataHandler)
+        {
+            (VfsChunk Chunk, VfsFile File)? plainFallback = null;
+            int probed = 0;
+            foreach (var candidate in ordered)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!handler.CanHandle(candidate.File.Name) || candidate.File.Length == 0 || candidate.File.Length > 4 * 1024 * 1024)
+                    continue;
+                if (++probed > maxProbeCount)
+                    break;
+
+                using var chunkReader = block.OpenChunkReader(candidate.Chunk);
+                if (chunkReader == null)
+                    continue;
+                byte[] rented = chunkReader.RentAndReadFile(candidate.File, out int length);
+                try
+                {
+                    var classification = JsonDataMemoryPack.Classify(rented.AsSpan(0, length));
+                    if (classification == JsonDataClassification.MemoryPack)
+                        return candidate;
+                    if (classification == JsonDataClassification.PlainText && plainFallback == null)
+                        plainFallback = candidate;
+                }
+                finally
+                {
+                    if (rented.Length > 0)
+                        ArrayPool<byte>.Shared.Return(rented);
+                }
+            }
+
+            if (plainFallback != null)
+                return plainFallback.Value;
+        }
+        else if (handler is BundleHandler)
+        {
+            Span<byte> prefix = stackalloc byte[EndfieldBundle.MinimumHeaderBytes];
+            int probed = 0;
+            foreach (var candidate in ordered)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!handler.CanHandle(candidate.File.Name) || candidate.File.Length < 8)
+                    continue;
+                if (++probed > maxProbeCount)
+                    break;
+
+                using var chunkReader = block.OpenChunkReader(candidate.Chunk);
+                if (chunkReader == null)
+                    continue;
+                int read = chunkReader.ReadPrefix(candidate.File, prefix);
+                if (!EndfieldBundle.IsStandardUnityBundle(prefix[..read]))
+                    return candidate;
+            }
+        }
+
+        return ordered[0];
+    }
+
+    private void ExtractFile(
+        VfsChunkReader chunkReader,
+        VfsFile file,
+        ContentKind kind,
+        IContentHandler? handler,
+        DirectoryOutputSink sink,
+        bool strictHandler,
+        ref string relative)
+    {
+        if (string.IsNullOrEmpty(relative) && kind == ContentKind.Video)
+        {
+            string usmName = ReadUsmName(chunkReader, file) ?? $"{file.NameHash:X16}.usm";
+            relative = Path.Combine("Video", usmName);
+            if (_logger.IsVerboseEnabled)
+                _logger.Verbose("    Recovered USM name: {0}", relative);
+        }
+
+        if (handler != null && handler.CanHandle(relative))
+        {
+            byte[] rented = chunkReader.RentAndReadFile(file, out int length);
+            try
+            {
+                Memory<byte> data = rented.AsMemory(0, length);
+                if (!handler.Handle(relative, data, sink))
+                {
+                    if (strictHandler && handler is UsmHandler)
+                        throw new InvalidDataException("USM demux produced no output streams.");
+                    sink.WriteRaw(relative, data.Span);
+                }
+            }
+            finally
+            {
+                if (rented.Length > 0)
+                    ArrayPool<byte>.Shared.Return(rented);
+            }
+        }
+        else
+        {
+            using var output = sink.Create(relative);
+            chunkReader.CopyFileTo(file, output);
+            output.Complete();
+        }
+    }
+
+    private static BeyondStringPool? LoadStringPool(VfsBlock block, CancellationToken cancellationToken = default)
+    {
+        var files = new List<(string Name, byte[] Data)>();
+        foreach (var chunk in block.Info.Chunks)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!chunk.Files.Any(static file => BeyondStringPool.IndexOfFileName(file.Name) >= 0))
+                continue;
+            using var chunkReader = block.OpenChunkReader(chunk);
+            if (chunkReader == null)
+                continue;
+            foreach (var file in chunk.Files)
+            {
+                if (BeyondStringPool.IndexOfFileName(file.Name) < 0)
+                    continue;
+                files.Add((file.Name, chunkReader.ReadFile(file)));
+            }
+        }
+
+        return BeyondStringPool.TryLoad(files);
+    }
+
+    private static string SanitizeDirectorySegment(string name)
+    {
+        char[] invalid = Path.GetInvalidFileNameChars();
+        char[] chars = name.ToCharArray();
+        for (int i = 0; i < chars.Length; i++)
+        {
+            if (Array.IndexOf(invalid, chars[i]) >= 0)
+                chars[i] = '_';
+        }
+        return new string(chars);
     }
 
     private List<ChunkBatch> BuildBatches(
@@ -326,23 +595,7 @@ public sealed class VfsExtractor
     {
         try
         {
-            var files = new List<(string Name, byte[] Data)>();
-            foreach (var chunk in block.Info.Chunks)
-            {
-                if (!chunk.Files.Any(static file => BeyondStringPool.IndexOfFileName(file.Name) >= 0))
-                    continue;
-                using var chunkReader = block.OpenChunkReader(chunk);
-                if (chunkReader == null)
-                    continue;
-                foreach (var file in chunk.Files)
-                {
-                    if (BeyondStringPool.IndexOfFileName(file.Name) < 0)
-                        continue;
-                    files.Add((file.Name, chunkReader.ReadFile(file)));
-                }
-            }
-
-            return BeyondStringPool.TryLoad(files);
+            return LoadStringPool(block);
         }
         catch (Exception ex)
         {
